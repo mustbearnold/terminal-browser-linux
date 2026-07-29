@@ -53,11 +53,20 @@ function takeBoolFlag(args: string[], name: string): boolean {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const ELECTRON_DIST_BIN =
+  process.platform === "darwin"
+    ? ["terminal-browser.app", "Contents", "MacOS", "terminal-browser"]
+    : ["electron"];
+const ELECTRON_DEV_BIN =
+  process.platform === "darwin"
+    ? ["Electron.app", "Contents", "MacOS", "Electron"]
+    : ["electron"];
+
 function browserLaunchCommand(argv: string[]): { command: string[]; cwd: string } {
   const browserDir = path.resolve(__dirname, "..", "..", "browser");
   const electron = DIST_ROOT
-    ? path.join(DIST_ROOT, "electron", "terminal-browser.app", "Contents", "MacOS", "terminal-browser")
-    : path.join(browserDir, "node_modules", "electron", "dist", "Electron.app", "Contents", "MacOS", "Electron");
+    ? path.join(DIST_ROOT, "electron", ...ELECTRON_DIST_BIN)
+    : path.join(browserDir, "node_modules", "electron", "dist", ...ELECTRON_DEV_BIN);
   const main = path.join(browserDir, "dist", "main.js");
   for (const required of [electron, main]) {
     if (!fs.existsSync(required)) {
@@ -270,6 +279,10 @@ let cachedScale: number | null = null;
 
 function displayScale(): number {
   if (cachedScale !== null) return cachedScale;
+  if (process.platform !== "darwin") {
+    cachedScale = 1;
+    return cachedScale;
+  }
   try {
     const out = execFileSync(
       "osascript",
