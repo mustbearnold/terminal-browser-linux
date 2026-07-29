@@ -81,8 +81,10 @@ function browserLaunchCommand(argv: string[]): { command: string[]; cwd: string 
   }
   // Rendering is offscreen (into the terminal), so a display server is only
   // ceremony — headless ozone lets the browser run on plain SSH sessions.
+  // Its virtual screen defaults to 1x1 and windows clamp to it, so give it
+  // room for any pane size.
   if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
-    argv = [...argv, "--ozone-platform=headless"];
+    argv = [...argv, "--ozone-platform=headless", "--ozone-override-screen-size=8192,8192"];
   }
   ensureDataDir();
   const logDir = LOGS_DIR;
