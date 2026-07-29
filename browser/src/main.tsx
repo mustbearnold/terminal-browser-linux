@@ -7,13 +7,9 @@ import { app } from "electron";
 import { runDaemon } from "./daemon";
 import { LOGS_DIR, ensureDataDir } from "pixel-store";
 import { claimProfile } from "./profile";
-import { linuxSandboxAvailable } from "./sandbox";
 import { createSession } from "./session/session";
 import type { SessionHandle } from "./session/session";
 
-if (process.platform === "linux" && !linuxSandboxAvailable()) {
-  app.commandLine.appendSwitch("no-sandbox");
-}
 app.commandLine.appendSwitch("disable-renderer-backgrounding");
 app.commandLine.appendSwitch("disable-background-timer-throttling");
 app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");

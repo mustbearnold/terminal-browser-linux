@@ -19,6 +19,7 @@ import { control } from "./control";
 import { setupCommand } from "./editors";
 import { commandHelp, helpTopics, rootHelp } from "./help";
 import { locate, recordKey, reusable } from "./instances";
+import { linuxSandboxAvailable } from "./sandbox";
 import { lsCommand } from "./ls";
 import { instances } from "./registry";
 import type { InstanceRecord } from "./registry";
@@ -72,6 +73,11 @@ function browserLaunchCommand(argv: string[]): { command: string[]; cwd: string 
     if (!fs.existsSync(required)) {
       fail(`missing ${required} — build the browser first (pnpm --filter terminal-browser build)`);
     }
+  }
+  // Chromium decides on the sandbox before the main script runs, so the
+  // switch has to be on the real command line.
+  if (process.platform === "linux" && !linuxSandboxAvailable(electron)) {
+    argv = [...argv, "--no-sandbox"];
   }
   ensureDataDir();
   const logDir = LOGS_DIR;
