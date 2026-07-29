@@ -50,13 +50,17 @@ echo "publishing aggregate manifest for $CHANNEL/$VERSION ($PLATFORMS)"
 put "$CHANNEL/$VERSION/install.sh" "$ROOT/scripts/install.sh" text/x-shellscript
 put "$CHANNEL/$VERSION/manifest.json" "$MANIFEST" application/json
 
-# Flipped last so a failed upload never leaves the installer pointing at a
-# version whose tarballs are not all there yet.
-put "$CHANNEL/latest.json" "$MANIFEST" application/json no-store
-
-echo "published $VERSION to $CHANNEL"
+if [ "${FLIP_LATEST:-true}" = "true" ]; then
+  # Flipped last so a failed upload never leaves the installer pointing at a
+  # version whose tarballs are not all there yet.
+  put "$CHANNEL/latest.json" "$MANIFEST" application/json no-store
+  echo "published $VERSION to $CHANNEL"
+else
+  echo "published pinned $VERSION (latest.json untouched)"
+fi
 if [ -n "${RELEASE_ORIGIN:-}" ]; then
-  if [ "$CHANNEL" = "stable" ]; then LATEST="$RELEASE_ORIGIN"; else LATEST="$RELEASE_ORIGIN/dev"; fi
   echo "pinned=$RELEASE_ORIGIN/v/$VERSION"
-  echo "latest=$LATEST"
+  if [ "${FLIP_LATEST:-true}" = "true" ]; then
+    if [ "$CHANNEL" = "stable" ]; then echo "latest=$RELEASE_ORIGIN"; else echo "latest=$RELEASE_ORIGIN/dev"; fi
+  fi
 fi

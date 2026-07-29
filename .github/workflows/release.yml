@@ -26,6 +26,7 @@ jobs:
       channel: ${{ steps.v.outputs.channel }}
       version: ${{ steps.v.outputs.version }}
       ref: ${{ steps.v.outputs.ref }}
+      flip: ${{ steps.v.outputs.flip }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,14 +47,23 @@ jobs:
               tag -a "$VERSION" -m "terminal-browser $VERSION"
             git push origin "$VERSION"
             REF="$VERSION"
-          else
+          elif [ "$GITHUB_REF" = refs/heads/main ]; then
             CHANNEL=dev
             VERSION="main-$(git rev-parse --short HEAD)"
+            REF="$GITHUB_SHA"
+          else
+            # A branch build publishes a pinned version anyone can install via
+            # /install/v/<version>, without moving the dev channel.
+            CHANNEL=dev
+            FLIP=false
+            BRANCH="$(echo "${GITHUB_REF#refs/heads/}" | tr -c "a-zA-Z0-9._-" "-")"
+            VERSION="$BRANCH-$(git rev-parse --short HEAD)"
             REF="$GITHUB_SHA"
           fi
           echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "flip=${FLIP:-true}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: prepare
@@ -131,6 +141,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           RELEASE_ORIGIN: ${{ vars.RELEASE_ORIGIN }}
+          FLIP_LATEST: ${{ needs.prepare.outputs.flip }}
         run: |
           scripts/publish-r2-aggregate.sh | tee /tmp/publish.log
           grep -E '^(pinned|latest)=' /tmp/publish.log >> "$GITHUB_OUTPUT" || true
@@ -158,10 +169,12 @@ jobs:
             echo '```sh'
             echo "curl -fsSL ${{ steps.publish.outputs.pinned }} | bash"
             echo '```'
-            echo "Always current ${{ needs.prepare.outputs.channel }}:"
-            echo '```sh'
-            echo "curl -fsSL ${{ steps.publish.outputs.latest }} | bash"
-            echo '```'
+            if [ -n "${{ steps.publish.outputs.latest }}" ]; then
+              echo "Always current ${{ needs.prepare.outputs.channel }}:"
+              echo '```sh'
+              echo "curl -fsSL ${{ steps.publish.outputs.latest }} | bash"
+              echo '```'
+            fi
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
   worker:
