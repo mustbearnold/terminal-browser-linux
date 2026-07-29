@@ -34,6 +34,7 @@ export async function resolveOffscreenMode(sharedTextures: boolean): Promise<Off
   } else {
     mode = (await probeSharedTexture()) ? "shared-texture" : "bitmap";
   }
+  process.stderr.write(`offscreen mode: ${mode}\n`);
   return mode;
 }
 
