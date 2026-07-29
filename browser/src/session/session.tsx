@@ -10,6 +10,7 @@ import type { Backend } from "pixel-terminals";
 import { configureBrowserSession } from "../page/browser-session";
 import type { DownloadProgress } from "../page/browser-session";
 import { BrowserController } from "../page/controller";
+import { resolveOffscreenMode } from "../page/offscreen";
 import { initialBrowserState } from "../page/types";
 import type { BrowserState, BrowserSurfaceLayout } from "../page/types";
 import { zoomDirection } from "../page/zoom";
@@ -244,9 +245,7 @@ class Session {
         this.shutdown(error ? 1 : 0);
       },
     });
-    if (!this.root.sharedTextures) {
-      throw new Error("terminal-browser requires the patched Electron with shared texture support");
-    }
+    await resolveOffscreenMode(this.root.sharedTextures);
     this.popupSurface = this.root.createSurface();
     this.devtoolsSurface = this.root.createSurface();
     this.followCellZoom();

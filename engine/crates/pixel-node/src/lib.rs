@@ -6,6 +6,8 @@ mod iosurface;
 mod markdown;
 mod mend;
 mod ops;
+#[cfg(target_os = "linux")]
+mod pixmap;
 mod surface;
 
 use std::sync::Arc;
@@ -31,7 +33,7 @@ fn draw_frame(
     frame: &surface::SurfaceFrame,
 ) -> std::result::Result<u32, String> {
     match &frame.pixels {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         SurfacePixels::Texture(texture) => {
             let locked = texture.lock()?;
             engine
@@ -62,6 +64,19 @@ fn draw_frame(
             .map(|_| *height)
             .map_err(|error| error.to_string()),
     }
+}
+
+/// One plane of a dmabuf-backed shared texture, as Electron reports it on
+/// Linux. Offsets and sizes are in bytes.
+#[cfg(target_os = "linux")]
+#[napi(object)]
+pub struct SurfacePixmap {
+    pub fd: i32,
+    pub width: u32,
+    pub height: u32,
+    pub stride: u32,
+    pub offset: u32,
+    pub size: u32,
 }
 
 #[napi(object)]
@@ -230,25 +245,6 @@ impl PixelEngine {
         Ok(())
     }
 
-    #[cfg(target_os = "macos")]
-    #[napi]
-    pub fn update_surface_texture(
-        &self,
-        id: u32,
-        handle: Buffer,
-        damage: Option<DamageRect>,
-    ) -> Result<()> {
-        let surface =
-            iosurface::RetainedSurface::from_handle(handle.as_ref()).map_err(Error::from_reason)?;
-        self.surfaces.submit(
-            id,
-            SurfacePixels::Texture(surface),
-            damage.map(DamageRect::into_rect),
-        );
-        self.waker.wake();
-        Ok(())
-    }
-
     #[napi]
     pub fn remove_surface(&self, id: u32) {
         self.surfaces.remove(id);
@@ -376,5 +372,59 @@ impl PixelEngine {
             let _ = thread.join();
         }
         self.engine = None;
+    }
+}
+
+// Zero-copy frame submission is per-platform: each platform exports its own
+// method shaped after the handle Electron produces there, and the JS side
+// feature-detects which one exists.
+#[cfg(target_os = "macos")]
+#[napi]
+impl PixelEngine {
+    #[napi]
+    pub fn update_surface_texture(
+        &self,
+        id: u32,
+        handle: Buffer,
+        damage: Option<DamageRect>,
+    ) -> Result<()> {
+        let surface =
+            iosurface::RetainedSurface::from_handle(handle.as_ref()).map_err(Error::from_reason)?;
+        self.surfaces.submit(
+            id,
+            SurfacePixels::Texture(surface),
+            damage.map(DamageRect::into_rect),
+        );
+        self.waker.wake();
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[napi]
+impl PixelEngine {
+    #[napi]
+    pub fn update_surface_pixmap(
+        &self,
+        id: u32,
+        pixmap: SurfacePixmap,
+        damage: Option<DamageRect>,
+    ) -> Result<()> {
+        let surface = pixmap::PixmapSurface::from_plane(
+            pixmap.fd,
+            pixmap.width,
+            pixmap.height,
+            pixmap.stride,
+            pixmap.offset,
+            pixmap.size,
+        )
+        .map_err(Error::from_reason)?;
+        self.surfaces.submit(
+            id,
+            SurfacePixels::Texture(surface),
+            damage.map(DamageRect::into_rect),
+        );
+        self.waker.wake();
+        Ok(())
     }
 }

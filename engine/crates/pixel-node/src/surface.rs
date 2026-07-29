@@ -4,9 +4,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use pixel_core::surfaces::Rect;
 
+#[cfg(target_os = "macos")]
+pub use crate::iosurface::RetainedSurface as TextureSurface;
+#[cfg(target_os = "linux")]
+pub use crate::pixmap::PixmapSurface as TextureSurface;
+
 pub enum SurfacePixels {
-    #[cfg(target_os = "macos")]
-    Texture(crate::iosurface::RetainedSurface),
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    Texture(TextureSurface),
     Owned {
         bgra: Vec<u8>,
         width: u32,
