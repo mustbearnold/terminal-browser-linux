@@ -4,14 +4,17 @@ interface Env {
   STATS_KEY: string;
 }
 
-type Manifest = {
-  version: string;
-  channel: string;
-  platform: string;
+type PlatformBuild = {
   file: string;
   sha256: string;
   size: number;
+};
+
+type Manifest = {
+  version: string;
+  channel: string;
   published: string;
+  platforms: Record<string, PlatformBuild>;
 };
 
 const CHANNELS = ["stable", "dev"] as const;
@@ -29,19 +32,22 @@ async function readManifest(env: Env, key: string): Promise<Manifest | null> {
   return object.json<Manifest>();
 }
 
+const downloadUrl = (base: string, manifest: Manifest, build: PlatformBuild) =>
+  `${base}/dl/${manifest.channel}/${manifest.version}/${build.file}`;
+
 // The installer lives in R2 next to the tarball rather than inside this bundle:
 // uploading shell text as part of a Worker trips Cloudflare's own WAF, and this
 // way a pinned version serves the installer that shipped with it.
 async function renderInstaller(env: Env, manifest: Manifest, base: string): Promise<string | null> {
   const object = await env.RELEASES.get(`${manifest.channel}/${manifest.version}/install.sh`);
   if (!object) return null;
-  const url = `${base}/dl/${manifest.channel}/${manifest.version}/${manifest.file}`;
+  const table = Object.entries(manifest.platforms)
+    .map(([target, build]) => `${target} ${downloadUrl(base, manifest, build)} ${build.sha256} ${build.size}`)
+    .join("\n");
   return (await object.text())
-    .replaceAll("__DOWNLOAD_URL__", url)
+    .replaceAll("__PLATFORMS__", table)
     .replaceAll("__VERSION__", manifest.version)
-    .replaceAll("__CHANNEL__", manifest.channel)
-    .replaceAll("__SHA256__", manifest.sha256)
-    .replaceAll("__SIZE__", String(manifest.size));
+    .replaceAll("__CHANNEL__", manifest.channel);
 }
 
 async function installerResponse(env: Env, manifest: Manifest, base: string): Promise<Response> {
@@ -76,14 +82,20 @@ async function keyMatches(request: Request, env: Env): Promise<boolean> {
   return crypto.subtle.timingSafeEqual(a, b);
 }
 
-function recordDownload(env: Env, ctx: ExecutionContext, channel: string, version: string) {
+function recordDownload(
+  env: Env,
+  ctx: ExecutionContext,
+  channel: string,
+  version: string,
+  platform: string,
+) {
   const day = new Date().toISOString().slice(0, 10);
   ctx.waitUntil(
     env.STATS.prepare(
-      `INSERT INTO downloads (version, day, channel, count) VALUES (?1, ?2, ?3, 1)
-       ON CONFLICT (version, day, channel) DO UPDATE SET count = count + 1`,
+      `INSERT INTO downloads (version, day, channel, platform, count) VALUES (?1, ?2, ?3, ?4, 1)
+       ON CONFLICT (version, day, channel, platform) DO UPDATE SET count = count + 1`,
     )
-      .bind(version, day, channel)
+      .bind(version, day, channel, platform)
       .run()
       .then(() => undefined)
       .catch((error) => {
@@ -118,7 +130,10 @@ async function serveDownload(
 
   // A resumed download arrives with a range, so only unranged requests are
   // counted — otherwise one install could register several times.
-  if (!range && request.method === "GET") recordDownload(env, ctx, channel, version);
+  if (!range && request.method === "GET") {
+    const platform = file.match(/^terminal-browser-(.+)\.tar\.gz$/)?.[1] ?? "";
+    recordDownload(env, ctx, channel, version, platform);
+  }
 
   // R2 reports a range on unranged reads too, so the request header is what
   // decides between 200 and 206.
@@ -143,9 +158,9 @@ async function serveStats(request: Request, env: Env): Promise<Response> {
   const bind = channel ? [since, channel] : [since];
 
   const query = byDay
-    ? `SELECT version, channel, day, count FROM downloads ${where} ORDER BY day DESC, count DESC`
-    : `SELECT version, channel, SUM(count) AS count, MIN(day) AS first, MAX(day) AS last
-       FROM downloads ${where} GROUP BY version, channel ORDER BY count DESC`;
+    ? `SELECT version, channel, platform, day, count FROM downloads ${where} ORDER BY day DESC, count DESC`
+    : `SELECT version, channel, platform, SUM(count) AS count, MIN(day) AS first, MAX(day) AS last
+       FROM downloads ${where} GROUP BY version, channel, platform ORDER BY count DESC`;
 
   const { results } = await env.STATS.prepare(query)
     .bind(...bind)
@@ -186,7 +201,12 @@ export default {
       if (!manifest) return notFound();
       return jsonResponse({
         ...manifest,
-        url: `${installBase}/dl/${manifest.channel}/${manifest.version}/${manifest.file}`,
+        platforms: Object.fromEntries(
+          Object.entries(manifest.platforms).map(([target, build]) => [
+            target,
+            { ...build, url: downloadUrl(installBase, manifest, build) },
+          ]),
+        ),
         install: channel === "dev" ? `${installBase}/dev` : installBase,
       });
     }
