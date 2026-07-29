@@ -7,6 +7,7 @@ import path from "node:path";
  * neither is available the browser has to run unsandboxed or it won't start.
  * Renderer processes still get the seccomp layer either way. */
 export function linuxSandboxAvailable(): boolean {
+  if (process.getuid?.() === 0) return false;
   try {
     const helper = path.join(path.dirname(process.execPath), "chrome_sandbox");
     const setuidHelper = path.join(path.dirname(process.execPath), "chrome-sandbox");
