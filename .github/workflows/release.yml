@@ -56,7 +56,7 @@ jobs:
             # /install/v/<version>, without moving the dev channel.
             CHANNEL=dev
             FLIP=false
-            BRANCH="$(echo "${GITHUB_REF#refs/heads/}" | tr -c "a-zA-Z0-9._-" "-")"
+            BRANCH="$(printf %s "${GITHUB_REF#refs/heads/}" | tr -c "a-zA-Z0-9._-" "-")"
             VERSION="$BRANCH-$(git rev-parse --short HEAD)"
             REF="$GITHUB_SHA"
           fi
