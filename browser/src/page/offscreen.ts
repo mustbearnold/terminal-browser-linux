@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { BrowserWindow } from "electron";
 import { textureFrameOf } from "./paint";
 
@@ -34,7 +35,9 @@ export async function resolveOffscreenMode(sharedTextures: boolean): Promise<Off
   } else {
     mode = (await probeSharedTexture()) ? "shared-texture" : "bitmap";
   }
-  process.stderr.write(`offscreen mode: ${mode}\n`);
+  // fd write so the line lands in the log file even after the devtools
+  // console capture replaces process.stderr.write
+  fs.writeSync(2, `offscreen mode: ${mode}\n`);
   return mode;
 }
 

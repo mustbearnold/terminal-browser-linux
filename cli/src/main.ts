@@ -79,6 +79,11 @@ function browserLaunchCommand(argv: string[]): { command: string[]; cwd: string 
   if (process.platform === "linux" && !linuxSandboxAvailable(electron)) {
     argv = [...argv, "--no-sandbox"];
   }
+  // Rendering is offscreen (into the terminal), so a display server is only
+  // ceremony — headless ozone lets the browser run on plain SSH sessions.
+  if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
+    argv = [...argv, "--ozone-platform=headless"];
+  }
   ensureDataDir();
   const logDir = LOGS_DIR;
   fs.mkdirSync(logDir, { recursive: true });
