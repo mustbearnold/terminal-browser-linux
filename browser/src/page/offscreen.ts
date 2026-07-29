@@ -64,9 +64,11 @@ async function probeSharedTexture(): Promise<boolean> {
       });
     });
     const timedOut = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000));
-    await window.loadURL("about:blank");
-    window.webContents.invalidate();
-    return await Promise.race([painted, timedOut]);
+    const loaded = window
+      .loadURL("about:blank")
+      .then(() => window.webContents.invalidate())
+      .then(() => painted);
+    return await Promise.race([loaded, timedOut]);
   } catch {
     return false;
   } finally {
