@@ -13,9 +13,14 @@ export function matchesBinding(event: EngineKeyEvent, binding: KeyBinding | null
   return binding !== null && event.key.toLowerCase() === binding.key && matchesMods(event, binding);
 }
 
+// callers append the uppercased key right after this, so the non-mac form
+// ends in "+" to read as "Ctrl+Shift+F"
 export function bindingGlyphs(mods: KeyMods | null): string {
   if (!mods) return "";
-  return `${mods.super ? "⌘" : ""}${mods.ctrl ? "⌃" : ""}${mods.alt ? "⌥" : ""}${mods.shift ? "⇧" : ""}`;
+  if (process.platform === "darwin") {
+    return `${mods.super ? "⌘" : ""}${mods.ctrl ? "⌃" : ""}${mods.alt ? "⌥" : ""}${mods.shift ? "⇧" : ""}`;
+  }
+  return `${mods.super ? "Super+" : ""}${mods.ctrl ? "Ctrl+" : ""}${mods.alt ? "Alt+" : ""}${mods.shift ? "Shift+" : ""}`;
 }
 
 function parseMods(parts: string[]): KeyMods {

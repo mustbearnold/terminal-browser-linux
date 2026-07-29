@@ -155,11 +155,13 @@ class Session {
     this.partition = flagValue(ctx.argv, "--partition");
     const binding = (flag: string, fallback: string) =>
       parseKeyBinding(flagValue(ctx.argv, flag) ?? defaultBinding(fallback, ctx.env));
-    this.paletteBinding = binding("--palette-key", "super+p");
-    this.findBinding = binding("--find-key", "super+shift+f");
+    // linux window managers own the super key, so defaults move to ctrl there
+    const mac = process.platform === "darwin";
+    this.paletteBinding = binding("--palette-key", mac ? "super+p" : "ctrl+shift+p");
+    this.findBinding = binding("--find-key", mac ? "super+shift+f" : "ctrl+shift+f");
     // we should use 2 shortcuts for console, also not sure if console actually works as expected
-    this.devtoolsBinding = binding("--devtools-key", "super+shift+i");
-    this.consoleBinding = binding("--console-key", "super+alt+j");
+    this.devtoolsBinding = binding("--devtools-key", mac ? "super+shift+i" : "ctrl+shift+i");
+    this.consoleBinding = binding("--console-key", mac ? "super+alt+j" : "ctrl+alt+j");
     this.fallbackState = initialBrowserState(this.initialUrl());
     configureBrowserSession(this.partition, (progress) => this.showDownload(progress));
     this.tabs = new TabManager(

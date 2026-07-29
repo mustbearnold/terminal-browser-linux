@@ -1,4 +1,5 @@
 import { ghostty } from "./ghostty";
+import { ghosttyInline } from "./ghostty-inline";
 import { createKitty } from "./kitty";
 import { createTmux } from "./tmux";
 import { createWezterm } from "./wezterm";
@@ -20,11 +21,12 @@ export {
 
 export function detectBackend(env: NodeJS.ProcessEnv = process.env): Backend {
   const term = env.TERM ?? "";
+  const ghosttyBackend = process.platform === "darwin" ? ghostty : ghosttyInline;
   if (env.TMUX) return createTmux(env);
-  if (term.includes("ghostty")) return ghostty;
+  if (term.includes("ghostty")) return ghosttyBackend;
   if (term.includes("kitty")) return createKitty(env);
   if (env.TERM_PROGRAM === "ghostty" || env.GHOSTTY_RESOURCES_DIR) {
-    return ghostty;
+    return ghosttyBackend;
   }
   if (env.KITTY_WINDOW_ID || env.KITTY_PID) return createKitty(env);
   if (env.TERM_PROGRAM === "WezTerm" || env.WEZTERM_PANE) return createWezterm(env);

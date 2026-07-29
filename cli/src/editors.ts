@@ -14,7 +14,10 @@ export interface EditorResult {
 }
 
 function userDirs(): { name: string; dir: string }[] {
-  const support = path.join(os.homedir(), "Library", "Application Support");
+  const support =
+    process.platform === "darwin"
+      ? path.join(os.homedir(), "Library", "Application Support")
+      : path.join(os.homedir(), ".config");
   let names: string[];
   try {
     names = fs.readdirSync(support);
