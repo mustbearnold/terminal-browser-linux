@@ -58,6 +58,7 @@ jobs:
   build:
     needs: prepare
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: darwin-arm64

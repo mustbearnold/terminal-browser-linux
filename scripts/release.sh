@@ -85,12 +85,12 @@ echo "$VERSION" > "$STAGE/VERSION"
 TARBALL="$OUT/terminal-browser-$TARGET.tar.gz"
 tar -czf "$TARBALL" -C "$OUT" terminal-browser
 
-if command -v sha256sum >/dev/null 2>&1; then
-  SHA256="$(sha256sum "$TARBALL" | cut -d' ' -f1)"
-  SIZE="$(stat -c%s "$TARBALL")"
-else
+if [ "$TARGET" = darwin-arm64 ]; then
   SHA256="$(shasum -a 256 "$TARBALL" | cut -d' ' -f1)"
   SIZE="$(stat -f%z "$TARBALL")"
+else
+  SHA256="$(sha256sum "$TARBALL" | cut -d' ' -f1)"
+  SIZE="$(stat -c%s "$TARBALL")"
 fi
 
 cat > "$OUT/manifest-$TARGET.json" <<EOF
