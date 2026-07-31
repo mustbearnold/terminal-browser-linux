@@ -82,7 +82,7 @@ export class DevtoolsWindow {
     screen.on("display-added", this.onDisplayChange);
     screen.on("display-removed", this.onDisplayChange);
     screen.on("display-metrics-changed", this.onDisplayChange);
-    this.window.webContents.on("paint", (event, _dirtyRect, image) => {
+    this.window.webContents.on("paint", (event, dirtyRect, image) => {
       if (!this.visible) {
         event.texture?.release();
         return;
@@ -92,7 +92,7 @@ export class DevtoolsWindow {
           this.wholeSurfaceNext = false;
         }
       } else {
-        presentBitmap(this.surface, image);
+        presentBitmap(this.surface, image, dirtyRect);
       }
     });
     this.window.webContents.on("cursor-changed", (_event, type) => {

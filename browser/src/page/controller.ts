@@ -122,13 +122,13 @@ export class BrowserController {
     screen.on("display-removed", this.onDisplayChange);
     screen.on("display-metrics-changed", this.onDisplayChange);
     this.defaultUserAgent = this.window.webContents.getUserAgent();
-    this.window.webContents.on("paint", (event, _dirtyRect, image) => {
+    this.window.webContents.on("paint", (event, dirtyRect, image) => {
       if (event.texture) {
         if (presentTexture(this.surface, event.texture, this.wholeSurfaceNext)) {
           this.wholeSurfaceNext = false;
         }
       } else {
-        presentBitmap(this.surface, image);
+        presentBitmap(this.surface, image, dirtyRect);
       }
     });
     this.window.webContents.on("did-start-loading", () => this.updateState({ loading: true }));

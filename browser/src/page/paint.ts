@@ -1,4 +1,4 @@
-import type { NativeImage, OffscreenSharedTexture, TextureInfo } from "electron";
+import type { NativeImage, OffscreenSharedTexture, Rectangle, TextureInfo } from "electron";
 import type { Surface, SurfaceTexture } from "pixel-react";
 import { damageOf, paintedNothing } from "./types";
 
@@ -46,11 +46,15 @@ export function presentTexture(
   }
 }
 
-/** Presents one software paint (offscreen mode without shared textures).
- * The image is the whole window, so no damage is forwarded. */
-export function presentBitmap(surface: Surface, image: NativeImage): boolean {
+/** Presents one software paint (offscreen mode without shared textures). */
+export function presentBitmap(surface: Surface, image: NativeImage, dirtyRect: Rectangle): boolean {
   const size = image.getSize();
   if (size.width <= 0 || size.height <= 0) return false;
-  surface.present({ bgra: image.toBitmap(), width: size.width, height: size.height });
+  const x = Math.max(0, Math.min(dirtyRect.x, size.width));
+  const y = Math.max(0, Math.min(dirtyRect.y, size.height));
+  const width = Math.max(0, Math.min(dirtyRect.width, size.width - x));
+  const height = Math.max(0, Math.min(dirtyRect.height, size.height - y));
+  const damage = width > 0 && height > 0 ? { x, y, width, height } : undefined;
+  surface.present({ bgra: image.toBitmap(), width: size.width, height: size.height, damage });
   return true;
 }

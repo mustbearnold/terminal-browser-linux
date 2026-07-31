@@ -21,6 +21,31 @@ fn offset(rect: Rect, abs: PxRect, visible: PxRect) -> Rect {
     }
 }
 
+fn scaled_offset(rect: Rect, source: (u32, u32), abs: PxRect, visible: PxRect) -> Rect {
+    if rect.is_empty() || source.0 == 0 || source.1 == 0 {
+        return Rect::default();
+    }
+    let sx = abs.w / source.0 as f32;
+    let sy = abs.h / source.1 as f32;
+    let x1 = (abs.x + rect.x as f32 * sx).floor() - 1.0;
+    let y1 = (abs.y + rect.y as f32 * sy).floor() - 1.0;
+    let x2 = (abs.x + (rect.x + rect.w) as f32 * sx).ceil() + 1.0;
+    let y2 = (abs.y + (rect.y + rect.h) as f32 * sy).ceil() + 1.0;
+    let x1 = x1.max(visible.x).max(0.0) as u32;
+    let y1 = y1.max(visible.y).max(0.0) as u32;
+    let x2 = x2.min(visible.x + visible.w).max(0.0) as u32;
+    let y2 = y2.min(visible.y + visible.h).max(0.0) as u32;
+    if x2 <= x1 || y2 <= y1 {
+        return Rect::default();
+    }
+    Rect {
+        x: x1,
+        y: y1,
+        w: x2 - x1,
+        h: y2 - y1,
+    }
+}
+
 impl Engine {
     pub fn draw_surface(
         &mut self,
@@ -67,17 +92,14 @@ impl Engine {
             let view_size = self.comp.views[view].size;
             let tree = &self.comp.views[view].tree;
             let mut damage = Rect::default();
-            let mut scaled = false;
             for (abs, visible) in tree.surface_rects(surface) {
-                if abs.w.round() as u32 != surface_w || abs.h.round() as u32 != surface_h {
-                    scaled = true;
-                    break;
-                }
-                damage = damage.union(offset(changed, abs, visible));
-            }
-            if scaled {
-                self.comp.views[view].tree.mark_paint();
-                continue;
+                let mapped =
+                    if abs.w.round() as u32 == surface_w && abs.h.round() as u32 == surface_h {
+                        offset(changed, abs, visible)
+                    } else {
+                        scaled_offset(changed, (surface_w, surface_h), abs, visible)
+                    };
+                damage = damage.union(mapped);
             }
             let damage = damage.clamped(view_size.0, view_size.1);
             if !damage.is_empty() {
@@ -152,5 +174,73 @@ impl Engine {
             y: local.1 - rect.y,
         });
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scaled_damage_maps_into_the_destination() {
+        let damage = scaled_offset(
+            Rect {
+                x: 500,
+                y: 250,
+                w: 100,
+                h: 50,
+            },
+            (2000, 1000),
+            PxRect {
+                x: 10.0,
+                y: 20.0,
+                w: 1000.0,
+                h: 500.0,
+            },
+            PxRect {
+                x: 10.0,
+                y: 20.0,
+                w: 1000.0,
+                h: 500.0,
+            },
+        );
+        assert_eq!(
+            damage,
+            Rect {
+                x: 259,
+                y: 144,
+                w: 52,
+                h: 27,
+            }
+        );
+    }
+
+    #[test]
+    fn scaled_damage_is_clipped_to_the_visible_rect() {
+        let damage = scaled_offset(
+            Rect::sized(100, 100),
+            (100, 100),
+            PxRect {
+                x: 0.0,
+                y: 0.0,
+                w: 200.0,
+                h: 200.0,
+            },
+            PxRect {
+                x: 50.0,
+                y: 60.0,
+                w: 80.0,
+                h: 70.0,
+            },
+        );
+        assert_eq!(
+            damage,
+            Rect {
+                x: 50,
+                y: 60,
+                w: 80,
+                h: 70
+            }
+        );
     }
 }
