@@ -14,7 +14,7 @@ import type { DevtoolsDock } from "pixel-store";
 import { FaviconCache } from "./favicon";
 import { frameRate } from "./frame-rate";
 import { PageInput } from "./input";
-import { offscreenPreferences } from "./offscreen";
+import { offscreenMode, offscreenPreferences } from "./offscreen";
 import { presentBitmap, presentTexture } from "./paint";
 import { PopupWindow } from "./popup";
 import { cssSize, initialBrowserState } from "./types";
@@ -565,11 +565,12 @@ export class BrowserController {
 function browserRenderScale(layout: BrowserSurfaceLayout) {
   const explicit = Number(process.env.TERMINAL_BROWSER_RENDER_SCALE);
   if (Number.isFinite(explicit) && explicit > 0) {
-    return Math.max(0.5, Math.min(layout.scale, explicit));
+    return Math.max(0.5, Math.min(2, explicit));
   }
+  const quality = process.platform === "linux" && offscreenMode() === "bitmap" ? 1.25 : 1;
+  const preferred = Math.min(2, Math.max(1, layout.scale * quality));
   const maxPixels = Number(process.env.TERMINAL_BROWSER_MAX_PIXELS ?? 0);
-  if (!Number.isFinite(maxPixels) || maxPixels <= 0) return layout.scale;
+  if (!Number.isFinite(maxPixels) || maxPixels <= 0) return preferred;
   const cssPixels = layout.width * layout.height / (layout.scale * layout.scale);
-  return Math.max(0.5, Math.min(layout.scale, Math.sqrt(maxPixels / cssPixels)));
+  return Math.max(0.5, Math.min(preferred, Math.sqrt(maxPixels / cssPixels)));
 }
-

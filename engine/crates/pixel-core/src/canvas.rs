@@ -72,6 +72,11 @@ fn blend_pixel(dst: &mut [u8], src: &[u8], alpha: u8) {
     }
 }
 
+fn lerp(a: u8, b: u8, weight: u16) -> u8 {
+    let weight = u32::from(weight);
+    ((u32::from(a) * (256 - weight) + u32::from(b) * weight + 128) >> 8) as u8
+}
+
 fn blend_row(dst: &mut [u8], src: &[u8]) {
     if src.chunks_exact(4).all(|s| s[3] == 255) {
         dst.copy_from_slice(src);
@@ -536,13 +541,20 @@ impl Canvas {
         crate::profiler::count("surface.resampled", 1);
         let src_stride = src_w as usize * 4;
         let dst_stride = self.width as usize * 4;
-        let sample = |i: i64, origin: i64, dst_extent: u32, max: u32| {
-            let scaled = (i - origin) as u32 as u64 * max as u64 / dst_extent as u64;
-            (scaled as u32).min(max - 1) as usize
+        let sample = |i: i64, origin: i64, dst_extent: u32, src_extent: u32| {
+            let position =
+                ((i - origin) as f64 + 0.5) * src_extent as f64 / dst_extent as f64 - 0.5;
+            let position = position.clamp(0.0, (src_extent - 1) as f64);
+            let lo = position.floor() as usize;
+            let hi = (lo + 1).min(src_extent as usize - 1);
+            let weight = ((position - lo as f64) * 256.0).round() as u16;
+            (lo, hi, weight)
         };
-        // the x sample coordinates repeat on every row, so build them once
-        let columns: Vec<usize> = (x1..x2)
-            .map(|col| sample(col, x0, dst_w, src_w) * 4)
+        let columns: Vec<(usize, usize, u16)> = (x1..x2)
+            .map(|col| {
+                let (lo, hi, weight) = sample(col, x0, dst_w, src_w);
+                (lo * 4, hi * 4, weight)
+            })
             .collect();
         for row in y1..y2 {
             let (inset_l, inset_r) = corner_insets(radius, row - y0, i64::from(dst_h));
@@ -551,16 +563,23 @@ impl Canvas {
             if rx2 <= rx1 {
                 continue;
             }
-            let src_row = &src[sample(row, y0, dst_h, src_h) * src_stride..][..src_stride];
+            let (top, bottom, y_weight) = sample(row, y0, dst_h, src_h);
+            let top = &src[top * src_stride..][..src_stride];
+            let bottom = &src[bottom * src_stride..][..src_stride];
             let dst_off = row as usize * dst_stride + rx1 as usize * 4;
             let dst_row = &mut self.pixels[dst_off..dst_off + (rx2 - rx1) as usize * 4];
             let cols = &columns[(rx1 - x1) as usize..(rx2 - x1) as usize];
-            for (&col, dst) in cols.iter().zip(dst_row.chunks_exact_mut(4)) {
-                let s = &src_row[col..col + 4];
+            for (&(left, right, x_weight), dst) in cols.iter().zip(dst_row.chunks_exact_mut(4)) {
+                let mut s = [0; 4];
+                for channel in 0..4 {
+                    let upper = lerp(top[left + channel], top[right + channel], x_weight);
+                    let lower = lerp(bottom[left + channel], bottom[right + channel], x_weight);
+                    s[channel] = lerp(upper, lower, y_weight);
+                }
                 match s[3] {
-                    255 => dst.copy_from_slice(s),
+                    255 => dst.copy_from_slice(&s),
                     0 => {}
-                    sa => blend_pixel(dst, s, sa),
+                    sa => blend_pixel(dst, &s, sa),
                 }
             }
         }
@@ -912,6 +931,16 @@ mod tests {
             &[0, 0, 100, 255],
             "clip stops the last source pixel"
         );
+    }
+
+    #[test]
+    fn scaled_blit_filters_between_source_pixels() {
+        let source = [
+            0, 0, 0, 255, 100, 0, 0, 255, 0, 100, 0, 255, 100, 100, 0, 255,
+        ];
+        let mut canvas = Canvas::new(1, 1);
+        canvas.blit_scaled_rgba(0.0, 0.0, 1.0, 1.0, &source, 2, 2);
+        assert_eq!(&canvas.pixels, &[50, 50, 0, 255]);
     }
 
     #[test]
