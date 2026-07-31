@@ -68,7 +68,8 @@ if [ "$TARGET" = darwin-arm64 ]; then
   codesign --force --sign - --timestamp=none "$APP" 2>/dev/null
   ELECTRON_EXE="electron/terminal-browser.app/Contents/MacOS/terminal-browser"
 else
-  cp -a "$ELECTRON_DIST/." "$STAGE/electron/"
+  rm -rf "$STAGE/electron"
+  cp -a "$ELECTRON_DIST" "$STAGE/electron"
   ELECTRON_EXE="electron/electron"
 fi
 
