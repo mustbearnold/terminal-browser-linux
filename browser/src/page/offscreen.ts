@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { BrowserWindow } from "electron";
+import { app, BrowserWindow } from "electron";
 import { textureFrameOf } from "./paint";
 
 /** How offscreen windows deliver frames to the engine. "shared-texture" is
@@ -58,9 +58,20 @@ async function probeSharedTexture(): Promise<boolean> {
     const painted = new Promise<boolean>((resolve) => {
       window.webContents.on("paint", (event) => {
         const texture = event.texture;
-        if (!texture) return resolve(false);
+        if (!texture) {
+          fs.writeSync(
+            2,
+            `shared texture probe: paint had no texture; gpu features: ${JSON.stringify(app.getGPUFeatureStatus())}\n`,
+          );
+          return resolve(false);
+        }
         try {
-          resolve(textureFrameOf(texture.textureInfo) !== null);
+          const info = texture.textureInfo;
+          const supported = textureFrameOf(info) !== null;
+          if (!supported) {
+            fs.writeSync(2, `shared texture probe: unsupported ${JSON.stringify(info)}\n`);
+          }
+          resolve(supported);
         } finally {
           texture.release();
         }
