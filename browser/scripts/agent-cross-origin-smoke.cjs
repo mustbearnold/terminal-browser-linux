@@ -97,6 +97,13 @@ async function run() {
       assert.ok((diagnosticQuery.diagnostics?.elementsScanned ?? 0) > 0);
       assert.equal(diagnosticQuery.diagnostics?.queries[0]?.index, 0);
       assert.equal(diagnosticQuery.diagnostics?.queries[0]?.matchCount, 1);
+      const cachedDiagnosticQuery = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "Frame action", exact: true },
+        options: { frameId: frameButton.frameId, limit: 1, diagnostics: "summary" },
+      });
+      assert.equal(cachedDiagnosticQuery.diagnostics?.queries[0]?.cacheHit, true);
+      assert.equal(cachedDiagnosticQuery.diagnostics?.queries[0]?.elementsEvaluated, 0);
       const cssRead = await client.call("page.read", {
         pageId,
         target: { locator: { kind: "css", value: 'button[aria-label="Frame action"]' } },
@@ -234,6 +241,12 @@ async function run() {
           value: "Ada",
         },
       });
+      const postMutationQuery = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "textbox", name: "Frame name", exact: true },
+        options: { frameId: activeFrameId, limit: 1, diagnostics: "summary" },
+      });
+      assert.equal(postMutationQuery.diagnostics?.queries[0]?.cacheHit, false);
       const valueDelta = await client.snapshotDelta(pageId, deltaBase);
       assert.equal(valueDelta.mode, "incremental", "cross-origin frame input did not use the incremental delta path");
       const typed = await client.call("page.act", {
@@ -342,6 +355,9 @@ async function run() {
         queryDiagnosticsVerified: queryBatch.diagnostics?.mode === "live"
           && queryBatch.diagnostics.framesSearched === 2
           && diagnosticQuery.diagnostics?.framesSearched === 1,
+        queryCacheVerified: cachedDiagnosticQuery.diagnostics?.queries[0]?.cacheHit === true
+          && cachedDiagnosticQuery.diagnostics.queries[0].elementsEvaluated === 0,
+        queryCacheInvalidationVerified: postMutationQuery.diagnostics?.queries[0]?.cacheHit === false,
         stateLocatorVerified: queryBatch.queries[2].nodes[0]?.state?.checked === false,
         mixedFrameBatchVerified: queryBatch.queries[3].nodes[0]?.frameId === "main",
         idempotentReplayVerified: scrolledRetry.replayed === true,

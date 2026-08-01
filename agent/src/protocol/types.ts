@@ -101,6 +101,7 @@ export interface PageQueryOptions {
 
 export interface PageQueryDiagnostic {
   index: number;
+  cacheHit: boolean;
   elementsEvaluated: number;
   matchCount: number;
   hiddenMatchCount: number;

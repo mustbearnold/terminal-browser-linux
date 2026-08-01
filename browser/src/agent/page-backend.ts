@@ -14,6 +14,7 @@ import {
   matchesWaitElementState,
   targetResolutionDetails,
   throwIfAborted,
+  stableSerialize,
 } from "terminal-browser-agent";
 import type {
   ActionEffect,
@@ -156,12 +157,18 @@ type LiveLocatorEvaluation = {
   results: LiveLocatorResult[];
   diagnostics?: PageQueryDiagnostics;
 };
+type LiveLocatorCacheEntry = {
+  epoch: number;
+  frameSignature: string;
+  result: LiveLocatorResult;
+};
 type LiveTextResult = { ok: boolean; matches?: boolean };
 
 const AGENT_STATE_KEY = "__terminalBrowserAgent";
 const AGENT_EVENT_CHANNEL = "terminal-browser.agent";
 const MAIN_FRAME_ID = asFrameId("main");
 const LIVE_LOCATOR_MAX_CANDIDATES = 32;
+const LIVE_LOCATOR_CACHE_LIMIT = 128;
 const WAIT_FALLBACK_MS = 250;
 const WAIT_WAKE_EVENTS = new Set<AgentEvent["event"]>([
   "navigation",
@@ -176,6 +183,9 @@ export class ElectronPageBackend implements PageBackend {
   private readonly agentKey = AGENT_STATE_KEY;
   private sequence = 0;
   private remoteRevision = 0;
+  private observedPageState: { documentId: string; revision: number } | null = null;
+  private liveQueryEpoch = 0;
+  private readonly liveLocatorCache = new Map<string, LiveLocatorCacheEntry>();
   private readonly snapshotCache = new Map<string, CapturedSnapshot>();
   private readonly snapshotFrameStates = new Map<string, Map<string, FrameSnapshotState>>();
   private lastSnapshot: CapturedSnapshot | null = null;
@@ -204,10 +214,12 @@ export class ElectronPageBackend implements PageBackend {
     const page = this.state();
     const scriptState = await this.readScriptState(signal);
     throwIfAborted(signal);
+    const revision = this.effectiveRevision(scriptState);
+    this.observePageState(scriptState.documentId, revision);
     return {
       pageId: this.pageId,
       documentId: asDocumentId(scriptState.documentId),
-      revision: this.effectiveRevision(scriptState),
+      revision,
       url: page.url,
       title: page.title,
       active: this.active(),
@@ -365,12 +377,28 @@ export class ElectronPageBackend implements PageBackend {
       const protocolFrameId = frame.parentId === null ? "main" : frame.id;
       return queries.some((query) => String(query.frameId) === protocolFrameId);
     });
+    const cacheEpoch = this.liveQueryEpoch;
+    const frameSignature = liveFrameSignature(frames);
     const aggregate = queries.map(() => emptyLiveLocatorResult());
+    const cacheHits = queries.map((query) => {
+      const entry = this.liveLocatorCache.get(liveLocatorCacheKey(query));
+      if (!entry || entry.epoch !== cacheEpoch || entry.frameSignature !== frameSignature) return false;
+      return true;
+    });
+    for (const [index, cacheHit] of cacheHits.entries()) {
+      if (!cacheHit) continue;
+      const entry = this.liveLocatorCache.get(liveLocatorCacheKey(queries[index]));
+      if (entry) aggregate[index] = cloneLiveLocatorResult(entry.result);
+    }
+    const expectedFrames = queries.map((query) => frames.filter((frame) => (
+      query.frameId === undefined || String(query.frameId) === (frame.parentId === null ? "main" : frame.id)
+    )).length);
+    const evaluatedFrames = queries.map(() => 0);
     const values = await Promise.all(frames.map(async (frame) => {
       throwIfAborted(signal);
       const protocolFrameId = frame.parentId === null ? "main" : frame.id;
       const entries = queries.flatMap((query, index) => (
-        query.frameId === undefined || String(query.frameId) === protocolFrameId
+        !cacheHits[index] && (query.frameId === undefined || String(query.frameId) === protocolFrameId)
           ? [{ index, query }]
           : []
       ));
@@ -398,11 +426,18 @@ export class ElectronPageBackend implements PageBackend {
     let shadowRootsSearched = 0;
     const queryDiagnostics = queries.map((query, index): PageQueryDiagnostic | null => (
       query.diagnostics
-        ? { index, elementsEvaluated: 0, matchCount: 0, hiddenMatchCount: 0 }
+        ? {
+            index,
+            cacheHit: cacheHits[index],
+            elementsEvaluated: 0,
+            matchCount: aggregate[index].candidateCount ?? 0,
+            hiddenMatchCount: aggregate[index].hiddenCandidateCount ?? 0,
+          }
         : null
     ));
     for (const value of values) {
       if (!value) continue;
+      for (const { index } of value.entries) evaluatedFrames[index] += 1;
       if (diagnosticsRequested && value.raw.diagnostics) {
         elementsScanned += value.raw.diagnostics.elementsScanned;
         shadowRootsSearched += value.raw.diagnostics.shadowRootsSearched;
@@ -411,6 +446,7 @@ export class ElectronPageBackend implements PageBackend {
           if (!entry) continue;
           const aggregateDiagnostic = queryDiagnostics[entry.index];
           if (!aggregateDiagnostic) continue;
+          aggregateDiagnostic.cacheHit = false;
           aggregateDiagnostic.elementsEvaluated += diagnostic.elementsEvaluated;
           aggregateDiagnostic.matchCount += diagnostic.matchCount;
           aggregateDiagnostic.hiddenMatchCount += diagnostic.hiddenMatchCount;
@@ -448,6 +484,28 @@ export class ElectronPageBackend implements PageBackend {
         || (result.hiddenCandidateCount ?? 0) > (result.hiddenCandidates?.length ?? 0),
       ...(result.invalid === true ? {} : { ok: true }),
     }));
+    if (this.liveQueryEpoch === cacheEpoch) {
+      for (const [index, result] of results.entries()) {
+        if (
+          cacheHits[index] ||
+          expectedFrames[index] === 0 ||
+          evaluatedFrames[index] !== expectedFrames[index] ||
+          result.invalid === true
+        ) continue;
+        const key = liveLocatorCacheKey(queries[index]);
+        this.liveLocatorCache.delete(key);
+        this.liveLocatorCache.set(key, {
+          epoch: cacheEpoch,
+          frameSignature,
+          result: cacheableLiveLocatorResult(result),
+        });
+      }
+      while (this.liveLocatorCache.size > LIVE_LOCATOR_CACHE_LIMIT) {
+        const oldest = this.liveLocatorCache.keys().next().value;
+        if (oldest === undefined) break;
+        this.liveLocatorCache.delete(oldest);
+      }
+    }
     return {
       results,
       ...(diagnosticsRequested ? {
@@ -1704,6 +1762,16 @@ export class ElectronPageBackend implements PageBackend {
     return state.revision + this.remoteRevision;
   }
 
+  private observePageState(documentId: string, revision: number): void {
+    if (
+      this.observedPageState !== null &&
+      (this.observedPageState.documentId !== documentId || this.observedPageState.revision !== revision)
+    ) {
+      this.invalidateSnapshots();
+    }
+    this.observedPageState = { documentId, revision };
+  }
+
   private async inspect(ref: string, frameId: string, signal?: AbortSignal): Promise<ElementInspection> {
     throwIfAborted(signal);
     const source = inspectScript(this.agentKey, ref, frameId);
@@ -1794,6 +1862,8 @@ export class ElectronPageBackend implements PageBackend {
 
   private invalidateSnapshots(): void {
     this.lastSnapshotInvalidated = true;
+    this.liveQueryEpoch += 1;
+    this.liveLocatorCache.clear();
   }
 
   private transitionEffects(before: PageIdentity, after: PageIdentity): ActionEffect[] {
@@ -3080,6 +3150,37 @@ function isSnapshotNode(value: unknown): value is SnapshotNode {
 
 function frameKey(frame: BrowserAgentFrame): string {
   return frame.parentId === null ? "main" : frame.id;
+}
+
+function liveLocatorCacheKey(query: LiveLocatorRequest): string {
+  return stableSerialize({
+    locator: query.locator,
+    includeHidden: query.includeHidden,
+    maxCandidates: query.maxCandidates,
+    frameId: query.frameId,
+  });
+}
+
+function liveFrameSignature(frames: readonly BrowserAgentFrame[]): string {
+  return stableSerialize(frames.map((frame) => ({
+    id: frame.id,
+    parentId: frame.parentId,
+    url: frame.url,
+    origin: frame.origin,
+  })));
+}
+
+function cloneLiveLocatorResult(result: LiveLocatorResult): LiveLocatorResult {
+  return {
+    ...result,
+    ...(result.candidates === undefined ? {} : { candidates: [...result.candidates] }),
+    ...(result.hiddenCandidates === undefined ? {} : { hiddenCandidates: [...result.hiddenCandidates] }),
+  };
+}
+
+function cacheableLiveLocatorResult(result: LiveLocatorResult): LiveLocatorResult {
+  const { diagnostics: _diagnostics, ...cached } = cloneLiveLocatorResult(result);
+  return cached;
 }
 
 function rebuildIncrementalNodes(

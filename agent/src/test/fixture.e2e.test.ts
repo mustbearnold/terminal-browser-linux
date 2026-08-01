@@ -130,6 +130,7 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(query.diagnostics?.queriesEvaluated, 1);
   assert.ok((query.diagnostics?.elementsScanned ?? 0) > 0);
   assert.deepEqual(query.diagnostics?.queries.map(({ index }) => index), [0]);
+  assert.equal(query.diagnostics?.queries[0]?.cacheHit, false);
   assert.equal(query.diagnostics?.queries[0]?.matchCount, 1);
   assert.ok((query.diagnostics?.queries[0]?.elementsEvaluated ?? 0) > 0);
 

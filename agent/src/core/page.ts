@@ -833,6 +833,7 @@ function snapshotQueryDiagnostics(
     elementsScanned: snapshot.nodes.length,
     queries: queries.map((query) => ({
       ...query,
+      cacheHit: false,
       elementsEvaluated: snapshot.nodes.length,
     })),
   };
