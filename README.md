@@ -40,6 +40,11 @@ Actions return a full post-action snapshot by default. Set `output.snapshot` to
 Use `expect.element` for target-specific post-action verification; its optional
 state uses the same semantic fields as `page.wait`.
 
+For large pages, use `page.snapshot.window` with a bounded `limit`. The first
+window reports `totalNodes` and a revision-bound `nextCursor`; send that cursor
+alone to continue without transferring one oversized snapshot. A cursor becomes
+stale when the page changes, so the agent can restart from a fresh window.
+
 Locator failures include bounded candidate summaries, hidden-candidate counts,
 and whether the snapshot was truncated so an agent can recover without blindly
 repeating the same lookup.

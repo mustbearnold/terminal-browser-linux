@@ -122,6 +122,15 @@ export class AgentRequestRouter {
         return await this.page(request.pageId).frames(signal);
       case "page.snapshot":
         return await this.page(request.pageId).snapshot(request.options, signal);
+      case "page.snapshot.window": {
+        const page = this.page(request.pageId);
+        if (!page.snapshotWindow) {
+          throw new AgentError("CAPABILITY_UNAVAILABLE", "snapshot windows are unavailable", {
+            details: { capability: "snapshot.window" },
+          });
+        }
+        return await page.snapshotWindow(request.options, request.cursor, signal);
+      }
       case "page.snapshot.delta":
         return await this.page(request.pageId).snapshotDelta(request.base, request.options, signal);
       case "page.capture": {

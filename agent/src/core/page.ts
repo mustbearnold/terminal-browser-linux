@@ -19,9 +19,12 @@ import type {
   PageDialogResult,
   PageFrameSnapshot,
   PageSnapshot,
+  PageSnapshotWindow,
   PageSnapshotDelta,
   SnapshotOptions,
   SnapshotToken,
+  SnapshotWindowCursor,
+  SnapshotWindowOptions,
   Target,
   WaitCondition,
   WaitResult,
@@ -40,6 +43,11 @@ export interface PageBackend {
   identity(signal?: AbortSignal): Promise<PageIdentity>;
   frames(signal?: AbortSignal): Promise<PageFrameSnapshot>;
   snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<Omit<PageSnapshot, "snapshotId">>;
+  snapshotWindow?(
+    options: SnapshotWindowOptions | undefined,
+    offset: number,
+    signal?: AbortSignal,
+  ): Promise<SnapshotWindowCapture>;
   snapshotDelta?(
     base: PageSnapshot,
     options?: SnapshotOptions,
@@ -73,6 +81,11 @@ export interface PageSession {
   ): Promise<ResolvedTarget>;
   frames(signal?: AbortSignal): Promise<PageFrameSnapshot>;
   snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<PageSnapshot>;
+  snapshotWindow?(
+    options?: SnapshotWindowOptions,
+    cursor?: SnapshotWindowCursor,
+    signal?: AbortSignal,
+  ): Promise<PageSnapshotWindow>;
   snapshotDelta(base: SnapshotToken, options?: SnapshotOptions, signal?: AbortSignal): Promise<PageSnapshotDelta>;
   capture?(options?: CaptureOptions, signal?: AbortSignal): Promise<PageCapture>;
   assertFresh(token: SnapshotToken): void;
@@ -98,6 +111,7 @@ export interface PageSession {
 export class RevisionedPageSession implements PageSession {
   private snapshotSequence = 0;
   private readonly snapshotHistory = new Map<string, SnapshotHistoryEntry>();
+  private readonly snapshotWindowHistory = new Map<string, SnapshotWindowHistoryEntry>();
   private actionTail: Promise<void> = Promise.resolve();
   private readonly snapshotLocator = new SnapshotLocatorResolver();
 
@@ -140,6 +154,109 @@ export class RevisionedPageSession implements PageSession {
     };
     this.rememberSnapshot(snapshot, options);
     return snapshot;
+  }
+
+  async snapshotWindow(
+    options?: SnapshotWindowOptions,
+    cursor?: SnapshotWindowCursor,
+    signal?: AbortSignal,
+  ): Promise<PageSnapshotWindow> {
+    throwIfAborted(signal);
+    if (!this.backend.snapshotWindow) {
+      throw new AgentError("CAPABILITY_UNAVAILABLE", "snapshot windows are unavailable", {
+        details: { capability: "snapshot.window" },
+      });
+    }
+
+    const entry = cursor === undefined ? undefined : this.snapshotWindowHistory.get(String(cursor.snapshotId));
+    if (cursor !== undefined && !entry) {
+      throw new AgentError("SNAPSHOT_NOT_FOUND", "snapshot window cursor is no longer available", {
+        retryable: true,
+        details: { snapshotId: cursor.snapshotId },
+      });
+    }
+
+    const normalizedOptions = options === undefined ? undefined : normalizeSnapshotWindowOptions(options);
+    const windowOptions = entry?.options ?? normalizedOptions ?? normalizeSnapshotWindowOptions();
+    if (entry && normalizedOptions !== undefined && snapshotWindowOptionsKey(normalizedOptions) !== entry.optionsKey) {
+      throw new AgentError("INVALID_REQUEST", "snapshot window options must match the cursor options", {
+        details: { snapshotId: String(cursor?.snapshotId) },
+      });
+    }
+    if (cursor !== undefined) {
+      if (
+        cursor.pageId !== this.pageId ||
+        cursor.documentId !== entry!.snapshot.documentId ||
+        cursor.revision !== entry!.snapshot.revision ||
+        cursor.limit !== entry!.limit ||
+        !Number.isSafeInteger(cursor.offset) ||
+        cursor.offset < 0 ||
+        !Number.isSafeInteger(cursor.limit) ||
+        cursor.limit < 1 ||
+        cursor.offset > Number.MAX_SAFE_INTEGER - cursor.limit
+      ) {
+        throw new AgentError("INVALID_REQUEST", "snapshot window cursor does not match its snapshot", {
+          details: { snapshotId: cursor.snapshotId },
+        });
+      }
+      this.ledger.assertFresh(cursor);
+    }
+
+    const offset = cursor?.offset ?? 0;
+    const captured = await this.backend.snapshotWindow(windowOptions, offset, signal);
+    throwIfAborted(signal);
+    const state = this.ledger.synchronize(captured.pageId, captured.documentId, captured.revision);
+    if (cursor !== undefined && (state.documentId !== cursor.documentId || state.revision !== cursor.revision)) {
+      throw new AgentError("STALE_SNAPSHOT", "snapshot window is no longer current", {
+        retryable: true,
+        details: {
+          pageId: this.pageId,
+          expectedDocumentId: state.documentId,
+          expectedRevision: state.revision,
+          receivedDocumentId: cursor.documentId,
+          receivedRevision: cursor.revision,
+        },
+      });
+    }
+    if (
+      captured.pageId !== this.pageId ||
+      captured.offset !== offset ||
+      captured.limit !== windowOptions.limit ||
+      captured.nodes.length > captured.limit ||
+      captured.totalNodes < captured.nodes.length ||
+      !Number.isSafeInteger(captured.totalNodes) ||
+      captured.totalNodes < 0
+    ) {
+      throw new AgentError("INTERNAL_ERROR", "snapshot window backend returned an invalid window");
+    }
+
+    const snapshotId = cursor?.snapshotId ?? asSnapshotId(`${this.pageId}:window:${++this.snapshotSequence}`);
+    if (cursor === undefined) {
+      this.rememberSnapshotWindow({
+        snapshot: { ...captured, snapshotId, offset: 0, limit: windowOptions.limit, done: false },
+        options: windowOptions,
+        optionsKey: snapshotWindowOptionsKey(windowOptions),
+        limit: windowOptions.limit,
+      });
+    }
+    const done = captured.truncated || offset + captured.nodes.length >= captured.totalNodes;
+    return {
+      ...captured,
+      snapshotId,
+      done,
+      ...(done
+        ? {}
+        : {
+            nextCursor: {
+              pageId: this.pageId,
+              documentId: state.documentId,
+              revision: state.revision,
+              snapshotId,
+              offset: offset + captured.nodes.length,
+              limit: windowOptions.limit,
+            },
+          }),
+    };
   }
 
   async snapshotDelta(base: SnapshotToken, options?: SnapshotOptions, signal?: AbortSignal): Promise<PageSnapshotDelta> {
@@ -289,6 +406,15 @@ export class RevisionedPageSession implements PageSession {
     }
   }
 
+  private rememberSnapshotWindow(entry: SnapshotWindowHistoryEntry): void {
+    this.snapshotWindowHistory.set(String(entry.snapshot.snapshotId), entry);
+    while (this.snapshotWindowHistory.size > 32) {
+      const oldest = this.snapshotWindowHistory.keys().next().value;
+      if (oldest === undefined) return;
+      this.snapshotWindowHistory.delete(oldest);
+    }
+  }
+
   private async actionOutput(
     output: ActionOutputOptions | undefined,
     signal?: AbortSignal,
@@ -311,6 +437,18 @@ interface SnapshotHistoryEntry {
   optionsKey: string;
 }
 
+interface SnapshotWindowHistoryEntry {
+  snapshot: PageSnapshotWindow;
+  options: SnapshotWindowOptions;
+  optionsKey: string;
+  limit: number;
+}
+
+export type SnapshotWindowCapture = Omit<PageSnapshotWindow, "snapshotId" | "nextCursor">;
+
+const DEFAULT_SNAPSHOT_WINDOW_LIMIT = 128;
+const MAX_SNAPSHOT_WINDOW_LIMIT = 1000;
+
 function snapshotOptionsKey(options?: SnapshotOptions): string {
   return JSON.stringify({
     interactiveOnly: options?.interactiveOnly ?? true,
@@ -318,4 +456,22 @@ function snapshotOptionsKey(options?: SnapshotOptions): string {
     includeText: options?.includeText !== false,
     maxNodes: options?.maxNodes ?? 1000,
   });
+}
+
+function normalizeSnapshotWindowOptions(options?: SnapshotWindowOptions): SnapshotWindowOptions & { limit: number } {
+  const limit = options?.limit ?? DEFAULT_SNAPSHOT_WINDOW_LIMIT;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_SNAPSHOT_WINDOW_LIMIT) {
+    throw new AgentError("INVALID_REQUEST", `snapshot window limit must be between 1 and ${MAX_SNAPSHOT_WINDOW_LIMIT}`);
+  }
+  return {
+    interactiveOnly: options?.interactiveOnly ?? true,
+    includeGeometry: options?.includeGeometry !== false,
+    includeText: options?.includeText !== false,
+    limit,
+  };
+}
+
+function snapshotWindowOptionsKey(options: SnapshotWindowOptions): string {
+  const normalized = normalizeSnapshotWindowOptions(options);
+  return JSON.stringify(normalized);
 }

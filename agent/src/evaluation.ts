@@ -279,6 +279,42 @@ export function fixtureScenarios(pageId: PageId): readonly AgentEvaluationScenar
       },
     },
     {
+      id: "snapshot-window-paginates-within-a-revision",
+      name: "snapshot-window-paginates-within-a-revision",
+      async run(client) {
+        const first = await client.call("page.snapshot.window", {
+          pageId,
+          options: { interactiveOnly: false, limit: 4 },
+        });
+        const snapshotId = first.snapshotId;
+        const offsets = [first.offset];
+        let current = first;
+        let nodes = [...first.nodes];
+        while (!current.done) {
+          if (!current.nextCursor) return { passed: false, reason: "snapshot window omitted its continuation cursor" };
+          current = await client.call("page.snapshot.window", { pageId, cursor: current.nextCursor });
+          if (current.snapshotId !== snapshotId) {
+            return { passed: false, reason: "snapshot window changed snapshot identity while paginating" };
+          }
+          offsets.push(current.offset);
+          nodes = nodes.concat(current.nodes);
+        }
+        const monotonic = offsets.every((offset, index) => index === 0 || offset > offsets[index - 1]);
+        return {
+          passed: first.totalNodes === nodes.length
+            && current.done
+            && monotonic
+            && first.truncated === false
+            && first.nodes.some((node) => node.box !== undefined),
+          metrics: {
+            windowPages: offsets.length,
+            windowNodes: nodes.length,
+            windowLimit: first.limit,
+          },
+        };
+      },
+    },
+    {
       id: "snapshot-locates-semantic-control",
       name: "snapshot-locates-semantic-control",
       async run(client) {

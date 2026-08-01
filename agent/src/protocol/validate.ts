@@ -82,6 +82,19 @@ function validateSnapshotOptions(value: unknown): void {
   if (options.maxNodes !== undefined) requirePositiveInteger(options.maxNodes, "options.maxNodes");
 }
 
+function validateSnapshotWindowOptions(value: unknown): void {
+  const options = requireObject(value, "options");
+  optionalBoolean(options, "interactiveOnly", "options.interactiveOnly");
+  optionalBoolean(options, "includeGeometry", "options.includeGeometry");
+  optionalBoolean(options, "includeText", "options.includeText");
+  if (options.limit !== undefined) {
+    requirePositiveInteger(options.limit, "options.limit");
+    if (Number(options.limit) > 1000) {
+      throw new AgentError("INVALID_MESSAGE", "options.limit must be at most 1000");
+    }
+  }
+}
+
 function validateCaptureOptions(value: unknown): void {
   const options = requireObject(value, "options");
   if (options.format !== undefined) requireOneOf(options.format, "options.format", ["png", "jpeg", "webp"]);
@@ -100,6 +113,16 @@ function validateSnapshotToken(value: unknown, field: string): void {
   requireString(token.documentId, `${field}.documentId`);
   requireNonNegativeInteger(token.revision, `${field}.revision`);
   requireString(token.snapshotId, `${field}.snapshotId`);
+}
+
+function validateSnapshotWindowCursor(value: unknown, field: string): void {
+  validateSnapshotToken(value, field);
+  const cursor = requireObject(value, field);
+  requireNonNegativeInteger(cursor.offset, `${field}.offset`);
+  requirePositiveInteger(cursor.limit, `${field}.limit`);
+  if (Number(cursor.limit) > 1000) {
+    throw new AgentError("INVALID_MESSAGE", `${field}.limit must be at most 1000`);
+  }
 }
 
 function validateLocator(value: unknown, field: string): void {
@@ -293,6 +316,7 @@ function validateRequest(message: Record<string, unknown>): void {
     case "pages.close":
     case "page.frames":
     case "page.snapshot":
+    case "page.snapshot.window":
     case "page.snapshot.delta":
     case "page.capture":
     case "page.read":
@@ -308,6 +332,10 @@ function validateRequest(message: Record<string, unknown>): void {
   }
 
   if (op === "page.snapshot" && message.options !== undefined) validateSnapshotOptions(message.options);
+  if (op === "page.snapshot.window") {
+    if (message.options !== undefined) validateSnapshotWindowOptions(message.options);
+    if (message.cursor !== undefined) validateSnapshotWindowCursor(message.cursor, "cursor");
+  }
   if (op === "page.snapshot.delta") {
     validateSnapshotToken(message.base, "base");
     if (message.options !== undefined) validateSnapshotOptions(message.options);

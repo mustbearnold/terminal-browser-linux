@@ -146,6 +146,32 @@ test("validates nested agent request shapes at the wire boundary", () => {
   });
   assert.equal(valid.kind, "request");
 
+  const window = parseAgentMessage({
+    ...listRequest(),
+    op: "page.snapshot.window",
+    pageId: "page-1",
+    options: { interactiveOnly: false, limit: 8 },
+    cursor: {
+      pageId: "page-1",
+      documentId: "document-1",
+      revision: 3,
+      snapshotId: "snapshot-window-1",
+      offset: 8,
+      limit: 8,
+    },
+  });
+  assert.equal(window.kind, "request");
+
+  assert.throws(
+    () => parseAgentMessage({
+      ...listRequest(),
+      op: "page.snapshot.window",
+      pageId: "page-1",
+      options: { limit: 1001 },
+    }),
+    (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
+  );
+
   const reload = parseAgentMessage({
     ...listRequest(),
     op: "page.act",

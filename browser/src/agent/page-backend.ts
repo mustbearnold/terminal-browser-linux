@@ -34,11 +34,13 @@ import type {
   PageId,
   PageIdentity,
   PageSnapshot,
+  PageSnapshotWindow,
   SnapshotDeltaCapture,
   LocatorResolutionOptions,
   ResolvedTarget,
   SnapshotView,
   SnapshotOptions,
+  SnapshotWindowOptions,
   SnapshotNode,
   SnapshotToken,
   Target,
@@ -63,6 +65,7 @@ type FrameSnapshot = {
   nodes: CapturedSnapshot["nodes"];
   truncated: boolean;
 };
+type WindowFrameSnapshot = FrameSnapshot & { totalNodes: number };
 type PageScriptState = { documentId: string; revision: number };
 type FrameSnapshotState = { documentId: string; revision: number };
 type IncrementalSnapshotResult = {
@@ -330,6 +333,119 @@ export class ElectronPageBackend implements PageBackend {
     this.lastSnapshotOptions = optionsKey;
     this.lastSnapshotInvalidated = false;
     return captured;
+  }
+
+  async snapshotWindow(
+    options?: SnapshotWindowOptions,
+    offset = 0,
+    signal?: AbortSignal,
+  ): Promise<Omit<PageSnapshotWindow, "snapshotId" | "nextCursor">> {
+    throwIfAborted(signal);
+    const limit = options?.limit ?? 128;
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1) {
+      throw new AgentError("INVALID_REQUEST", "snapshot window offset and limit must be positive safe integers");
+    }
+    if (offset > Number.MAX_SAFE_INTEGER - limit) {
+      throw new AgentError("INVALID_REQUEST", "snapshot window range exceeds the safe integer limit");
+    }
+
+    const frames = await this.controller.agentFrames();
+    throwIfAborted(signal);
+    const mainFrame = frames.find((frame) => frame.parentId === null);
+    if (!mainFrame) throw new AgentError("INTERNAL_ERROR", "browser frame tree has no main frame");
+    this.mainBrowserFrameId = mainFrame.id;
+    const offsets = await this.frameOffsets(frames, signal);
+    const counts = await Promise.all(
+      frames.map((frame) => this.captureWindowFrame(frame, options, 0, 0, signal)),
+    );
+    throwIfAborted(signal);
+    const countValues = counts.map(({ frame, value }) => {
+      if (!isWindowFrameSnapshot(value)) {
+        throw new AgentError("INTERNAL_ERROR", `frame ${frame.id} returned an invalid snapshot window count`);
+      }
+      return { frame, value };
+    });
+    const totalNodes = countValues.reduce((total, entry) => total + entry.value.totalNodes, 0);
+    const windowEnd = offset + limit;
+    let frameStart = 0;
+    const ranges = countValues.map((entry) => {
+      const start = frameStart;
+      frameStart += entry.value.totalNodes;
+      const localOffset = Math.max(0, offset - start);
+      const localEnd = Math.min(entry.value.totalNodes, windowEnd - start);
+      return {
+        ...entry,
+        localOffset,
+        localLimit: Math.max(0, localEnd - localOffset),
+      };
+    });
+    const windows = await Promise.all(
+      ranges.map(async (range) => {
+        if (range.localLimit === 0) return { frame: range.frame, value: { ...range.value, nodes: [] } };
+        const captured = await this.captureWindowFrame(
+          range.frame,
+          options,
+          range.localOffset,
+          range.localLimit,
+          signal,
+        );
+        if (!isWindowFrameSnapshot(captured.value)) {
+          throw new AgentError("INTERNAL_ERROR", `frame ${range.frame.id} returned an invalid snapshot window`);
+        }
+        return captured;
+      }),
+    );
+    throwIfAborted(signal);
+    const mainCount = countValues.find(({ frame }) => frame.id === mainFrame.id);
+    if (!mainCount) throw new AgentError("INTERNAL_ERROR", "main frame snapshot count is unavailable");
+    const windowValues = windows.map(({ frame, value }) => {
+      if (!isWindowFrameSnapshot(value)) {
+        throw new AgentError("INTERNAL_ERROR", `frame ${frame.id} returned an invalid snapshot window`);
+      }
+      const count = countValues.find((entry) => entry.frame.id === frame.id);
+      if (!count || count.value.documentId !== value.documentId || count.value.revision !== value.revision) {
+        throw new AgentError("STALE_SNAPSHOT", "page changed while reading the snapshot window", {
+          retryable: true,
+        });
+      }
+      return { frame, value };
+    });
+    const after = await this.readScriptState(signal);
+    const currentRevision = this.effectiveRevision(after);
+    if (
+      after.documentId !== mainCount.value.documentId ||
+      currentRevision !== mainCount.value.revision
+    ) {
+      throw new AgentError("STALE_SNAPSHOT", "page changed while reading the snapshot window", {
+        retryable: true,
+      });
+    }
+    const nodes = windowValues.flatMap(({ frame, value }) => {
+      const offsetForFrame = offsets.get(frame.id) ?? { x: 0, y: 0 };
+      return value.nodes.map((node) => ({
+        ...node,
+        ...(node.box
+          ? { box: { ...node.box, x: node.box.x + offsetForFrame.x, y: node.box.y + offsetForFrame.y } }
+          : {}),
+      }));
+    });
+    const truncated = countValues.some(({ value }) => value.truncated)
+      || windowValues.some(({ value }) => value.truncated);
+    const done = truncated || offset + nodes.length >= totalNodes;
+    return {
+      pageId: this.pageId,
+      documentId: asDocumentId(after.documentId),
+      revision: currentRevision,
+      url: mainCount.value.url,
+      title: mainCount.value.title,
+      rootFrameId: MAIN_FRAME_ID,
+      offset,
+      limit,
+      totalNodes,
+      nodes,
+      truncated,
+      done,
+    };
   }
 
   async snapshotDelta(
@@ -1132,6 +1248,30 @@ export class ElectronPageBackend implements PageBackend {
     }
   }
 
+  private async captureWindowFrame(
+    frame: BrowserAgentFrame,
+    options: SnapshotWindowOptions | undefined,
+    offset: number,
+    limit: number,
+    signal?: AbortSignal,
+  ): Promise<{ frame: BrowserAgentFrame; value: unknown }> {
+    throwIfAborted(signal);
+    const frameId = frame.parentId === null ? "main" : frame.id;
+    try {
+      const source = snapshotWindowScript(this.agentKey, options, frameId, offset, limit);
+      const value = frame.parentId === null
+        ? await this.controller.runJs(source)
+        : await this.controller.runJsInFrame(frame.id, source);
+      return { frame, value };
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      const currentFrames = await this.controller.agentFrames().catch(() => []);
+      if (!currentFrames.some((candidate) => candidate.id === frame.id)) return { frame, value: null };
+      const message = error instanceof Error ? error.message : String(error);
+      throw new AgentError("INTERNAL_ERROR", `frame ${frame.id} snapshot window failed: ${message}`, { retryable: true });
+    }
+  }
+
   private async frameOffsets(
     frames: readonly BrowserAgentFrame[],
     signal?: AbortSignal,
@@ -1554,6 +1694,59 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined, frame
       title: document.title,
       rootFrameId: state.frameId,
       nodes,
+      truncated,
+    };
+  })()`;
+}
+
+function snapshotWindowScript(
+  key: string,
+  options: SnapshotWindowOptions | undefined,
+  frameId: string,
+  offset: number,
+  limit: number,
+): string {
+  return `(() => {
+    ${agentStateSetupScript(key, frameId)}
+    const options = ${JSON.stringify(options ?? {})};
+    const windowOffset = ${JSON.stringify(offset)};
+    const windowLimit = ${JSON.stringify(limit)};
+    const interactiveOnly = options.interactiveOnly ?? true;
+    const includeGeometry = options.includeGeometry !== false;
+    const includeText = options.includeText !== false;
+    const nodes = [];
+    let totalNodes = 0;
+    let truncated = false;
+    state.snapshotRevision = state.revision;
+
+    ${snapshotNodeHelpersScript()}
+    const visit = (el, parent, parentVisible) => {
+      if (!el) return;
+      const captured = captureNode(el, parent, parentVisible);
+      let nextParent = parent;
+      if (captured.included && captured.node) {
+        const nodeIndex = totalNodes++;
+        if (nodeIndex >= windowOffset && nodeIndex < windowOffset + windowLimit) {
+          nodes.push(captured.node);
+        }
+        nextParent = captured.ref;
+      }
+      for (const child of el.children) visit(child, nextParent, captured.visible);
+      if (el.shadowRoot) {
+        state.observeRoot(el.shadowRoot);
+        for (const child of el.shadowRoot.children) visit(child, nextParent, captured.visible);
+      }
+    };
+    visit(document.body || document.documentElement, null, true);
+    return {
+      pageId: "",
+      documentId: state.documentId,
+      revision: state.revision,
+      url: location.href,
+      title: document.title,
+      rootFrameId: state.frameId,
+      nodes,
+      totalNodes,
       truncated,
     };
   })()`;
@@ -2281,6 +2474,12 @@ function isFrameSnapshot(value: unknown): value is FrameSnapshot {
     Array.isArray(snapshot.nodes) &&
     typeof snapshot.truncated === "boolean"
   );
+}
+
+function isWindowFrameSnapshot(value: unknown): value is WindowFrameSnapshot {
+  if (!isFrameSnapshot(value)) return false;
+  const snapshot = value as Record<string, unknown>;
+  return Number.isSafeInteger(snapshot.totalNodes) && Number(snapshot.totalNodes) >= 0;
 }
 
 function isCssQueryResult(value: unknown): value is CssQueryResult {

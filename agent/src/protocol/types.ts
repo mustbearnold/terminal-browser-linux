@@ -24,6 +24,7 @@ export type AgentCapability =
   | "pages.activate"
   | "pages.close"
   | "snapshot.read"
+  | "snapshot.window"
   | "page.frames"
   | "page.read"
   | "page.act"
@@ -82,6 +83,13 @@ export interface SnapshotOptions {
   maxNodes?: number;
 }
 
+export interface SnapshotWindowOptions {
+  interactiveOnly?: boolean;
+  includeGeometry?: boolean;
+  includeText?: boolean;
+  limit?: number;
+}
+
 export interface SnapshotNodeState {
   checked?: boolean;
   disabled?: boolean;
@@ -125,12 +133,30 @@ export interface SnapshotToken {
   snapshotId: SnapshotId;
 }
 
+export interface SnapshotWindowCursor extends SnapshotToken {
+  offset: number;
+  limit: number;
+}
+
 export interface PageSnapshot extends SnapshotToken {
   url: string;
   title: string;
   rootFrameId: FrameId;
   nodes: readonly SnapshotNode[];
   truncated: boolean;
+}
+
+export interface PageSnapshotWindow extends SnapshotToken {
+  url: string;
+  title: string;
+  rootFrameId: FrameId;
+  offset: number;
+  limit: number;
+  totalNodes: number;
+  nodes: readonly SnapshotNode[];
+  truncated: boolean;
+  done: boolean;
+  nextCursor?: SnapshotWindowCursor;
 }
 
 export interface SnapshotDeltaNode {
@@ -319,6 +345,12 @@ export type AgentRequest =
   | (AgentRequestEnvelope & { op: "pages.close"; pageId: PageId })
   | (AgentRequestEnvelope & { op: "page.frames"; pageId: PageId })
   | (AgentRequestEnvelope & { op: "page.snapshot"; pageId: PageId; options?: SnapshotOptions })
+  | (AgentRequestEnvelope & {
+      op: "page.snapshot.window";
+      pageId: PageId;
+      options?: SnapshotWindowOptions;
+      cursor?: SnapshotWindowCursor;
+    })
   | (AgentRequestEnvelope & {
       op: "page.snapshot.delta";
       pageId: PageId;

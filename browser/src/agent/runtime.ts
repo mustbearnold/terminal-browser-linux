@@ -39,6 +39,7 @@ export class BrowserAgentRuntime implements AgentRuntime {
       "pages.activate",
       "pages.close",
       "snapshot.read",
+      "snapshot.window",
       "snapshot.delta",
       "page.frames",
       "page.read",

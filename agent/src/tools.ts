@@ -47,6 +47,7 @@ export interface AgentToolOperationMap {
   terminal_browser_pages_close: "pages.close";
   terminal_browser_page_frames: "page.frames";
   terminal_browser_page_snapshot: "page.snapshot";
+  terminal_browser_page_snapshot_window: "page.snapshot.window";
   terminal_browser_page_snapshot_delta: "page.snapshot.delta";
   terminal_browser_page_capture: "page.capture";
   terminal_browser_page_read: "page.read";
@@ -98,6 +99,11 @@ export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
   tool("terminal_browser_page_snapshot", "Read a semantic DOM snapshot.", "page.snapshot", "snapshot.read", object({
     pageId: string("Page identifier."),
     options: snapshotOptions(),
+  }, ["pageId"])),
+  tool("terminal_browser_page_snapshot_window", "Read a bounded, revision-consistent window of a semantic DOM snapshot.", "page.snapshot.window", "snapshot.window", object({
+    pageId: string("Page identifier."),
+    options: snapshotWindowOptions(),
+    cursor: snapshotWindowCursor(),
   }, ["pageId"])),
   tool("terminal_browser_page_snapshot_delta", "Read only the changes from a prior semantic DOM snapshot.", "page.snapshot.delta", "snapshot.delta", object({
     pageId: string("Page identifier."),
@@ -306,6 +312,26 @@ function snapshotOptions(): AgentToolSchema {
     includeText: boolean("Include element text."),
     maxNodes: number("Maximum nodes to include."),
   });
+}
+
+function snapshotWindowOptions(): AgentToolSchema {
+  return object({
+    interactiveOnly: boolean("Only include interactive elements."),
+    includeGeometry: boolean("Include element geometry."),
+    includeText: boolean("Include element text."),
+    limit: number("Maximum nodes to return in this window."),
+  });
+}
+
+function snapshotWindowCursor(): AgentToolSchema {
+  return object({
+    pageId: string("Page identifier."),
+    documentId: string("Document identifier."),
+    revision: number("DOM revision."),
+    snapshotId: string("Window snapshot identifier."),
+    offset: number("Zero-based node offset."),
+    limit: number("Window size."),
+  }, ["pageId", "documentId", "revision", "snapshotId", "offset", "limit"]);
 }
 
 function captureOptions(): AgentToolSchema {

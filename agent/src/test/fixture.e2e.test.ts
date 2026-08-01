@@ -7,6 +7,7 @@ import type {
   AgentRequest,
   AgentResponse,
   PageSnapshot,
+  PageSnapshotWindow,
   PageSnapshotDelta,
   SnapshotNode,
 } from "../protocol/types";
@@ -107,6 +108,37 @@ test("runs the deterministic agent control contract", async () => {
   );
   assert.equal(snapshot.nodes.some((node) => node.role === "generic"), true);
 
+  const firstWindow = result<PageSnapshotWindow>(await router.handle(
+    request("page.snapshot.window", {
+      pageId: FIXTURE_PAGE_ID,
+      options: { interactiveOnly: false, includeGeometry: false, limit: 2 },
+    }),
+    context,
+  ));
+  assert.equal(firstWindow.offset, 0);
+  assert.equal(firstWindow.limit, 2);
+  assert.equal(firstWindow.totalNodes, 3);
+  assert.equal(firstWindow.nodes.length, 2);
+  assert.equal(firstWindow.done, false);
+  assert.ok(firstWindow.nextCursor);
+  const lastWindow = result<PageSnapshotWindow>(await router.handle(
+    request("page.snapshot.window", { pageId: FIXTURE_PAGE_ID, cursor: firstWindow.nextCursor }),
+    context,
+  ));
+  assert.equal(lastWindow.snapshotId, firstWindow.snapshotId);
+  assert.equal(lastWindow.offset, 2);
+  assert.equal(lastWindow.nodes.length, 1);
+  assert.equal(lastWindow.done, true);
+  const tamperedCursor = await router.handle(
+    request("page.snapshot.window", {
+      pageId: FIXTURE_PAGE_ID,
+      cursor: { ...firstWindow.nextCursor!, revision: firstWindow.nextCursor!.revision + 1 },
+    }),
+    context,
+  );
+  assert.equal(tamperedCursor.ok, false);
+  assert.equal(tamperedCursor.error?.code, "INVALID_REQUEST");
+
   const hiddenWait = result<{ satisfied: boolean }>(await router.handle(
     request("page.wait", {
       pageId: FIXTURE_PAGE_ID,
@@ -173,6 +205,13 @@ test("runs the deterministic agent control contract", async () => {
   );
   assert.equal(filled.verified, true);
   assert.equal(filled.proof?.value, "Ada");
+
+  const staleWindow = await router.handle(
+    request("page.snapshot.window", { pageId: FIXTURE_PAGE_ID, cursor: firstWindow.nextCursor }),
+    context,
+  );
+  assert.equal(staleWindow.ok, false);
+  assert.equal(staleWindow.error?.code, "STALE_SNAPSHOT");
 
   const typed = result<{ verified: boolean; proof?: { value?: string }; snapshot?: PageSnapshot }>(
     await router.handle(

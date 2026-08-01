@@ -24,6 +24,7 @@ import {
   type PageIdentity,
   type PageId,
   type PageSnapshot,
+  type SnapshotWindowOptions,
   type SnapshotOptions,
   type SnapshotToken,
   type WaitCondition,
@@ -50,6 +51,7 @@ export class FixtureRuntime implements AgentRuntime {
       "pages.activate",
       "pages.close",
       "snapshot.read",
+      "snapshot.window",
       "snapshot.delta",
       "page.frames",
       "page.read",
@@ -220,6 +222,26 @@ class FixturePageBackend implements PageBackend {
       rootFrameId: FRAME_ID,
       nodes,
       truncated: nodes.length < visibleNodes.length,
+    };
+  }
+
+  async snapshotWindow(options?: SnapshotWindowOptions, offset = 0, signal?: AbortSignal) {
+    throwIfAborted(signal);
+    const limit = options?.limit ?? 128;
+    const snapshot = await this.snapshot({
+      interactiveOnly: options?.interactiveOnly,
+      includeGeometry: options?.includeGeometry,
+      includeText: options?.includeText,
+      maxNodes: 1000,
+    }, signal);
+    const nodes = snapshot.nodes.slice(offset, offset + limit);
+    return {
+      ...snapshot,
+      offset,
+      limit,
+      totalNodes: snapshot.nodes.length,
+      nodes,
+      done: snapshot.truncated || offset + nodes.length >= snapshot.nodes.length,
     };
   }
 
