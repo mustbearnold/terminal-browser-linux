@@ -3,14 +3,17 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { app, net, session } from "electron";
-import type { Session } from "electron";
+import type { Session, WebContents } from "electron";
 
 export interface DownloadProgress {
+  id: string;
+  url: string;
   name: string;
   savePath: string;
   received: number;
   total: number;
   state: "progressing" | "done" | "failed";
+  mimeType: string;
 }
 
 const GRANTED = new Set([
@@ -24,7 +27,7 @@ const configured = new WeakSet<Session>();
 
 export function configureBrowserSession(
   partition: string | null,
-  onDownload: (progress: DownloadProgress) => void,
+  onDownload: (contents: WebContents, progress: DownloadProgress) => void,
 ): Session {
   const target = partition ? session.fromPartition(partition) : session.defaultSession;
   if (configured.has(target)) return target;
@@ -45,16 +48,21 @@ export function configureBrowserSession(
     return net.fetch(request, { bypassCustomProtocolHandlers: true });
   });
 
-  target.on("will-download", (_event, item) => {
+  let downloadSequence = 0;
+  target.on("will-download", (_event, item, contents) => {
+    const id = `download-${++downloadSequence}`;
     const savePath = downloadPath(item.getFilename());
     item.setSavePath(savePath);
     const report = (state: DownloadProgress["state"]) =>
-      onDownload({
+      onDownload(contents, {
+        id,
+        url: item.getURL(),
         name: path.basename(savePath),
         savePath,
         received: item.getReceivedBytes(),
         total: item.getTotalBytes(),
         state,
+        mimeType: item.getMimeType(),
       });
     item.on("updated", (_updated, state) =>
       report(state === "interrupted" ? "failed" : "progressing"),

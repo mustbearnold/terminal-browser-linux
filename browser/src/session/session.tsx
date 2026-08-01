@@ -172,7 +172,23 @@ class Session {
     this.devtoolsBinding = binding("--devtools-key", mac ? "super+shift+i" : "ctrl+shift+i");
     this.consoleBinding = binding("--console-key", mac ? "super+alt+j" : "ctrl+alt+j");
     this.fallbackState = initialBrowserState(this.initialUrl());
-    configureBrowserSession(this.partition, (progress) => this.showDownload(progress));
+    configureBrowserSession(this.partition, (contents, progress) => {
+      this.showDownload(progress);
+      const tab = this.tabs.all().find((candidate) => candidate.controller.ownsWebContents(contents));
+      tab?.controller.emitAgentEvent({
+        type: "download",
+        data: {
+          downloadId: progress.id,
+          url: progress.url,
+          filename: progress.name,
+          path: progress.savePath,
+          receivedBytes: progress.received,
+          totalBytes: progress.total,
+          state: progress.state,
+          mimeType: progress.mimeType,
+        },
+      });
+    });
     this.tabs = new TabManager(
       {
         createController: (url, visible, onState) =>

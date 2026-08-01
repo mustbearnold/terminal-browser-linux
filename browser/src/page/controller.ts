@@ -1,4 +1,5 @@
 import { BrowserWindow, screen } from "electron";
+import type { WebContents } from "electron";
 import type {
   EngineKeyEvent,
   PastedImage,
@@ -38,6 +39,46 @@ export type BrowserAgentFrameLifecycle =
   | { type: "attached"; frameId: string; parentId: string }
   | { type: "navigated"; frameId: string; parentId: string; url: string; origin: string }
   | { type: "detached"; frameId: string };
+
+export type BrowserAgentEvent =
+  | {
+      type: "console";
+      data: {
+        level: "verbose" | "info" | "warning" | "error";
+        message: string;
+        line: number;
+        sourceId: string;
+      };
+    }
+  | {
+      type: "page.error";
+      data:
+        | {
+            kind: "load";
+            code: number;
+            description: string;
+            url: string;
+            mainFrame: boolean;
+          }
+        | {
+            kind: "renderer";
+            reason: string;
+            exitCode: number;
+          };
+    }
+  | {
+      type: "download";
+      data: {
+        downloadId: string;
+        url: string;
+        filename: string;
+        path: string;
+        receivedBytes: number;
+        totalBytes: number;
+        state: "progressing" | "done" | "failed";
+        mimeType: string;
+      };
+    };
 
 export class BrowserController {
   readonly surface: Surface;
@@ -82,6 +123,7 @@ export class BrowserController {
   onContextMenu: ((params: Electron.ContextMenuParams) => void) | null = null;
   onLifecycleEvent: ((event: BrowserLifecycleEvent) => void) | null = null;
   onFrameLifecycle: ((event: BrowserAgentFrameLifecycle) => void) | null = null;
+  onAgentEvent: ((event: BrowserAgentEvent) => void) | null = null;
 
   constructor(
     surface: Surface,
@@ -163,6 +205,35 @@ export class BrowserController {
       if (urlHost(url) !== urlHost(this.state.url)) this.updateState({ favicon: null });
       this.updateNavigation(false, url);
       this.onLifecycleEvent?.({ type: "navigation", url, inPage: false });
+    });
+    this.window.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+      this.emitAgentEvent({
+        type: "console",
+        data: { level: consoleLevel(level), message, line, sourceId },
+      });
+    });
+    this.window.webContents.on(
+      "did-fail-load",
+      (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+        if (errorCode === -3) return;
+        this.emitAgentEvent({
+          type: "page.error",
+          data: {
+            kind: "load",
+            code: errorCode,
+            description: errorDescription,
+            url: validatedURL,
+            mainFrame: isMainFrame,
+          },
+        });
+      },
+    );
+    this.window.webContents.on("render-process-gone", (_event, details) => {
+      if (details.reason === "clean-exit") return;
+      this.emitAgentEvent({
+        type: "page.error",
+        data: { kind: "renderer", reason: details.reason, exitCode: details.exitCode },
+      });
     });
     this.window.webContents.on("page-favicon-updated", (_event, favicons) => {
       void this.loadFavicon(favicons);
@@ -385,6 +456,14 @@ export class BrowserController {
     else this.emitHandlers.delete(channel);
   }
 
+  ownsWebContents(contents: WebContents): boolean {
+    return this.window.webContents === contents;
+  }
+
+  emitAgentEvent(event: BrowserAgentEvent): void {
+    if (!this.stopped) this.onAgentEvent?.(event);
+  }
+
   runJs(source: string): Promise<unknown> {
     return this.window.webContents.executeJavaScript(source, true);
   }
@@ -571,6 +650,7 @@ export class BrowserController {
     screen.off("display-metrics-changed", this.onDisplayChange);
     this.onLifecycleEvent = null;
     this.onFrameLifecycle = null;
+    this.onAgentEvent = null;
     this.emitHandlers.clear();
     this.surface.close();
     this.window.destroy();
@@ -680,6 +760,10 @@ interface CdpFrameTree {
     securityOrigin: string;
   };
   childFrames?: CdpFrameTree[];
+}
+
+function consoleLevel(level: number): "verbose" | "info" | "warning" | "error" {
+  return ["verbose", "info", "warning", "error"][level] as "verbose" | "info" | "warning" | "error" ?? "info";
 }
 
 function browserRenderScale(layout: BrowserSurfaceLayout) {

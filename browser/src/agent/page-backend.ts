@@ -39,7 +39,12 @@ import type {
   WaitCondition,
   WaitResult,
 } from "terminal-browser-agent";
-import type { BrowserAgentFrame, BrowserAgentFrameLifecycle, BrowserController } from "../page/controller";
+import type {
+  BrowserAgentEvent,
+  BrowserAgentFrame,
+  BrowserAgentFrameLifecycle,
+  BrowserController,
+} from "../page/controller";
 import type { BrowserLifecycleEvent, BrowserState } from "../page/types";
 
 type CapturedSnapshot = Omit<PageSnapshot, "snapshotId">;
@@ -125,6 +130,7 @@ export class ElectronPageBackend implements PageBackend {
     this.controller.onEmit(AGENT_EVENT_CHANNEL, (data) => this.handlePageEvent(data));
     this.controller.onLifecycleEvent = (event) => this.handleLifecycleEvent(event);
     this.controller.onFrameLifecycle = (event) => this.handleFrameLifecycle(event);
+    this.controller.onAgentEvent = (event) => this.handleAgentEvent(event);
   }
 
   async identity(signal?: AbortSignal): Promise<PageIdentity> {
@@ -1149,6 +1155,10 @@ export class ElectronPageBackend implements PageBackend {
     if (data?.frameId && data.frameId !== "main") this.remoteRevision += 1;
     this.invalidateSnapshots();
     this.emit("dom.changed", event.data);
+  }
+
+  private handleAgentEvent(event: BrowserAgentEvent): void {
+    this.emit(event.type, event.data);
   }
 
   private handleLifecycleEvent(event: BrowserLifecycleEvent): void {

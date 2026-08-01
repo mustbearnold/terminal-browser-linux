@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const http = require("node:http");
+const net = require("node:net");
 const {
   AgentClient,
   createAgentEvaluationProvenance,
@@ -49,6 +50,7 @@ const frameHtml = `<!doctype html><meta charset="utf-8"><title>Frame evaluation 
 const crossOriginChildHtml = `<!doctype html><label>Frame name <input aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input type="checkbox" aria-label="Frame enabled">Frame enabled</label><div role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
 const navigationStartHtml = `<!doctype html><meta charset="utf-8"><title>Navigation start</title><button aria-label="Start action">Start action</button><output>Navigation start</output>`;
 const navigationNextHtml = `<!doctype html><meta charset="utf-8"><title>Navigation next</title><label>Recovered name <input aria-label="Recovered name"></label><button aria-label="Next action" onclick="document.querySelector('output').textContent='Next clicked'">Next action</button><output>Next ready</output>`;
+const eventHtml = `<!doctype html><meta charset="utf-8"><title>Native event fixture</title><button aria-label="Emit console" onclick="console.warn('agent console probe')">Emit console</button>`;
 
 async function expectCode(promise, code) {
   await assert.rejects(promise, (error) => error && error.code === code);
@@ -431,6 +433,70 @@ function tabActivationScenarios(pageId, otherPageId) {
   }];
 }
 
+function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
+  return [{
+    id: "native-page-events-are-delivered",
+    name: "native-page-events-are-delivered",
+    async run(client) {
+      const events = [];
+      let downloadedPath;
+      const unsubscribe = client.onEvent((event) => {
+        if (["console", "download", "page.error"].includes(event.event)) events.push(event);
+      });
+      try {
+        await client.call("page.wait", { pageId: eventPageId, condition: { type: "text", value: "Emit console" }, timeoutMs: 3_000 });
+        await client.call("page.wait", { pageId: downloadPageId, condition: { type: "text", value: "Download file" }, timeoutMs: 3_000 });
+        await client.observe(eventPageId, ["console", "page.error"]);
+        await client.observe(downloadPageId, ["download"]);
+        await client.call("pages.activate", { pageId: eventPageId });
+        await client.call("page.act", {
+          pageId: eventPageId,
+          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Emit console", exact: true } } },
+        });
+        const consoleEvent = await waitFor(() => events.find(
+          (event) => event.event === "console" && event.data?.message === "agent console probe",
+        ));
+        await client.call("pages.activate", { pageId: downloadPageId });
+        await client.call("page.act", {
+          pageId: downloadPageId,
+          action: { type: "click", target: { locator: { kind: "role", role: "link", name: "Download file", exact: true } } },
+        });
+        const downloadEvent = await waitFor(() => events.find(
+          (event) => event.event === "download" && event.data?.state === "done",
+        ));
+        downloadedPath = downloadEvent?.data?.path;
+        await client.call("pages.activate", { pageId: eventPageId });
+        await client.call("page.act", {
+          pageId: eventPageId,
+          action: { type: "navigate", url: failureUrl },
+          expect: { title: "unreachable", timeoutMs: 500 },
+        });
+        const errorEvent = await waitFor(() => events.find(
+          (event) => event.event === "page.error" && event.data?.kind === "load",
+        ));
+        const passed = consoleEvent?.data?.level === "warning"
+          && downloadEvent?.data?.filename === "agent-control-download.txt"
+          && downloadEvent?.data?.receivedBytes > 0
+          && errorEvent?.data?.mainFrame === true
+          && errorEvent?.data?.code !== 0;
+        return {
+          passed,
+          metrics: {
+            consoleEvents: events.filter((event) => event.event === "console").length,
+            downloadStates: new Set(events.filter((event) => event.event === "download").map((event) => event.data?.state)).size,
+            pageErrors: events.filter((event) => event.event === "page.error").length,
+          },
+        };
+      } finally {
+        unsubscribe();
+        if (typeof downloadedPath === "string") {
+          try { fs.unlinkSync(downloadedPath); } catch {}
+        }
+      }
+    },
+  }];
+}
+
 async function run() {
   const existing = new Set(listSockets());
   const { host, output } = launchHost();
@@ -442,11 +508,17 @@ async function run() {
   let framePageId;
   let crossOriginPageId;
   let navigationPageId;
+  let eventPageId;
+  let downloadPageId;
   let navigationServer;
+  let downloadServer;
+  let failurePort;
   try {
     childServer = await serve(crossOriginChildHtml);
     parentServer = await serve(`<!doctype html><meta charset="utf-8"><title>Cross-origin evaluation fixture</title><button aria-label="Navigate frame" onclick="document.querySelector('iframe').src='http://127.0.0.1:${childServer.port}/frame-next.html'">Navigate frame</button><button aria-label="Remove frame" onclick="document.querySelector('iframe').remove()">Remove frame</button><button aria-label="Add frame" onclick="const frame=document.createElement('iframe');frame.title='Control frame';frame.src='http://127.0.0.1:${childServer.port}/frame-restored.html';document.body.append(frame)">Add frame</button><iframe title="Control frame" src="http://127.0.0.1:${childServer.port}/frame.html"></iframe>`);
     navigationServer = await serveRoutes({ "/start.html": navigationStartHtml, "/next.html": navigationNextHtml });
+    downloadServer = await serveDownload();
+    failurePort = await closedPort();
     const socket = await waitForSocket(existing, 15_000, output);
     const trace = new MemoryTrace();
     client = await AgentClient.connect(socket, {
@@ -460,6 +532,8 @@ async function run() {
     framePageId = (await client.call("pages.open", { url: dataUrl(frameHtml) })).pageId;
     crossOriginPageId = (await client.call("pages.open", { url: `http://127.0.0.1:${parentServer.port}/index.html` })).pageId;
     navigationPageId = (await client.call("pages.open", { url: `http://127.0.0.1:${navigationServer.port}/start.html` })).pageId;
+    eventPageId = (await client.call("pages.open", { url: dataUrl(eventHtml) })).pageId;
+    downloadPageId = (await client.call("pages.open", { url: `http://127.0.0.1:${downloadServer.port}/index.html` })).pageId;
     await client.call("page.wait", { pageId, condition: { type: "text", value: "Continue" }, timeoutMs: 3_000 });
     const scenarios = [
       ...fixtureScenarios(pageId),
@@ -471,6 +545,7 @@ async function run() {
         next: `http://127.0.0.1:${navigationServer.port}/next.html`,
       }),
       ...tabActivationScenarios(pageId, navigationPageId),
+      ...nativeEventScenarios(eventPageId, downloadPageId, `http://127.0.0.1:${failurePort}/unreachable.html`),
     ];
     const report = await runAgentEvaluation(client, scenarios, {
       trace,
@@ -500,12 +575,15 @@ async function run() {
       if (framePageId) await client.call("pages.close", { pageId: framePageId }).catch(() => {});
       if (crossOriginPageId) await client.call("pages.close", { pageId: crossOriginPageId }).catch(() => {});
       if (navigationPageId) await client.call("pages.close", { pageId: navigationPageId }).catch(() => {});
+      if (eventPageId) await client.call("pages.close", { pageId: eventPageId }).catch(() => {});
+      if (downloadPageId) await client.call("pages.close", { pageId: downloadPageId }).catch(() => {});
       await client.close().catch(() => {});
     }
     stopHost(host);
     if (parentServer) await closeServer(parentServer);
     if (childServer) await closeServer(childServer);
     if (navigationServer) await closeServer(navigationServer);
+    if (downloadServer) await closeServer(downloadServer);
   }
 }
 
@@ -540,6 +618,50 @@ function serveRoutes(routes) {
     server.listen(0, "127.0.0.1", () => {
       server.removeListener("error", reject);
       resolve({ server, port: server.address().port });
+    });
+  });
+}
+
+function serveDownload() {
+  const body = Buffer.from("agent download payload\n", "utf8");
+  const server = http.createServer((request, response) => {
+    const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+    if (pathname === "/index.html") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end('<!doctype html><a href="/agent-control-download.txt">Download file</a>');
+      return;
+    }
+    if (pathname === "/agent-control-download.txt") {
+      response.writeHead(200, {
+        "content-type": "text/plain; charset=utf-8",
+        "content-disposition": 'attachment; filename="agent-control-download.txt"',
+        "content-length": body.length,
+      });
+      response.end(body);
+      return;
+    }
+    response.writeHead(404);
+    response.end("not found");
+  });
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.removeListener("error", reject);
+      resolve({ server, port: server.address().port });
+    });
+  });
+}
+
+function closedPort() {
+  const server = net.createServer();
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const port = server.address().port;
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve(port);
+      });
     });
   });
 }
