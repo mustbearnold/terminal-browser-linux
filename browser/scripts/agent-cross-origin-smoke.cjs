@@ -18,10 +18,15 @@ async function run() {
   let pageId;
   try {
     const socket = await waitForSocket(existing, 15_000, output);
-    client = await AgentClient.connect(socket, { clientId: "cross-origin-smoke" });
+    client = await AgentClient.connect(socket, {
+      clientId: "cross-origin-smoke",
+      capabilities: ["page.act.hover", "unsafe.eval"],
+    });
     const hello = await client.hello();
     assert.equal(hello.capabilities.includes("page.act.hover"), true);
     assert.equal(hello.capabilities.includes("page.act.scroll"), true);
+    assert.deepEqual(hello.accepted, ["page.act.hover"]);
+    assert.deepEqual(hello.unsupported, ["unsafe.eval"]);
     const opened = await client.call("pages.open", { url: `http://127.0.0.1:${parentServer.port}/index.html` });
     pageId = opened.pageId;
     await client.call("page.wait", {

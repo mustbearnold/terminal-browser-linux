@@ -79,12 +79,16 @@ export class AgentRequestRouter {
       case "hello": {
         context.clientId = request.clientId;
         const capabilities = this.runtime.capabilities();
+        const requested = request.capabilities ?? capabilities;
+        const supported = new Set(capabilities);
         return {
           protocol: AGENT_PROTOCOL,
           version: AGENT_PROTOCOL_VERSION,
           clientId: request.clientId,
           capabilities,
-          requested: request.capabilities ?? capabilities,
+          requested,
+          accepted: requested.filter((capability) => supported.has(capability)),
+          unsupported: requested.filter((capability) => !supported.has(capability)),
         };
       }
       case "pages.list":

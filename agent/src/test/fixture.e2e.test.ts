@@ -34,6 +34,19 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(hello.capabilities.includes("page.act.fill"), true);
   assert.equal(hello.capabilities.includes("page.act.select"), false);
 
+  const negotiated = result<{
+    accepted: readonly string[];
+    unsupported: readonly string[];
+  }>(await router.handle(
+    request("hello", {
+      clientId: "fixture-e2e-negotiation",
+      capabilities: ["page.act.click", "page.act.select"],
+    }),
+    context,
+  ));
+  assert.deepEqual(negotiated.accepted, ["page.act.click"]);
+  assert.deepEqual(negotiated.unsupported, ["page.act.select"]);
+
   const unsupported = await router.handle(
     request("page.act", {
       pageId: FIXTURE_PAGE_ID,

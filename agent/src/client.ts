@@ -42,6 +42,8 @@ export interface AgentHelloResult {
   clientId: string;
   capabilities: readonly AgentCapability[];
   requested: readonly AgentCapability[];
+  accepted: readonly AgentCapability[];
+  unsupported: readonly AgentCapability[];
 }
 
 export interface AgentOperationResults {

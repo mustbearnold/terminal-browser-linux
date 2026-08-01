@@ -16,6 +16,8 @@ test("correlates typed calls and delivers observed events", async () => {
       client.frames(FIXTURE_PAGE_ID),
     ]);
     assert.equal(hello.clientId, "client-test");
+    assert.equal(hello.accepted.includes("page.act"), true);
+    assert.deepEqual(hello.unsupported, []);
     assert.equal(pages.pages[0].pageId, FIXTURE_PAGE_ID);
     assert.deepEqual(frames, {
       pageId: FIXTURE_PAGE_ID,
