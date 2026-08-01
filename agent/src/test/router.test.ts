@@ -71,6 +71,7 @@ function page(): PageSession {
       url: identity.url,
       title: identity.title,
       rootFrameId: asFrameId("main"),
+      mode: "full",
       added: [],
       updated: [],
       removed: [],

@@ -162,6 +162,7 @@ test("runs the deterministic agent control contract", async () => {
     ),
   );
   assert.equal(delta.reset, false);
+  assert.equal(delta.mode, "full");
   assert.ok(delta.updated.some((entry) => entry.node.nodeId === "n2"));
   assert.ok(delta.added.some((entry) => entry.node.nodeId === "n4"));
   assert.equal(delta.references.length, 4);

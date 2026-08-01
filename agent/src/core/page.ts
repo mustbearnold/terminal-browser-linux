@@ -2,7 +2,7 @@ import { RevisionLedger } from "./revisions";
 import { throwIfAborted } from "./cancellation";
 import { SnapshotLocatorResolver } from "./locator";
 import { AgentError } from "../protocol/errors";
-import { diffSnapshots } from "./snapshots";
+import { applySnapshotDelta, diffSnapshots } from "./snapshots";
 import type { EventSubscription, EventSubscriptionOptions } from "./events";
 import type { ResolvedTarget, SnapshotView } from "./locator";
 import type {
@@ -32,6 +32,11 @@ export interface PageBackend {
   identity(signal?: AbortSignal): Promise<PageIdentity>;
   frames(signal?: AbortSignal): Promise<PageFrameSnapshot>;
   snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<Omit<PageSnapshot, "snapshotId">>;
+  snapshotDelta?(
+    base: PageSnapshot,
+    options?: SnapshotOptions,
+    signal?: AbortSignal,
+  ): Promise<SnapshotDeltaCapture | undefined>;
   capture?(options?: CaptureOptions, signal?: AbortSignal): Promise<PageCapture>;
   act(
     action: AgentAction,
@@ -46,6 +51,8 @@ export interface PageBackend {
     signal?: AbortSignal,
   ): Promise<EventSubscription>;
 }
+
+export type SnapshotDeltaCapture = Omit<PageSnapshotDelta, "snapshotId" | "base">;
 
 export interface PageSession {
   readonly pageId: PageId;
@@ -127,6 +134,27 @@ export class RevisionedPageSession implements PageSession {
       throw new AgentError("INVALID_REQUEST", "snapshot delta options must match the base snapshot options", {
         details: { snapshotId: base.snapshotId },
       });
+    }
+    if (this.backend.snapshotDelta) {
+      const captured = await this.backend.snapshotDelta(entry.snapshot, entry.options, signal);
+      if (captured) {
+        throwIfAborted(signal);
+        const state = this.ledger.synchronize(captured.pageId, captured.documentId, captured.revision);
+        const snapshotId = asSnapshotId(`${this.pageId}:${++this.snapshotSequence}`);
+        const normalized = {
+          ...captured,
+          pageId: this.pageId,
+          documentId: state.documentId,
+          revision: state.revision,
+          snapshotId,
+          base,
+        } satisfies PageSnapshotDelta;
+        this.rememberSnapshot(
+          applySnapshotDelta(entry.snapshot, normalized, snapshotId),
+          entry.options,
+        );
+        return normalized;
+      }
     }
     const current = await this.snapshot(entry.options, signal);
     return diffSnapshots(entry.snapshot, current);

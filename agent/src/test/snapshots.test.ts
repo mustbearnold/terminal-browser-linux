@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { diffSnapshots } from "../core/snapshots";
+import { applySnapshotDelta, diffSnapshots } from "../core/snapshots";
 import {
   asDocumentId,
   asFrameId,
@@ -28,6 +28,7 @@ test("diffs stable nodes while rebinding revision-scoped references", () => {
 
   const delta = diffSnapshots(base, current);
 
+  assert.equal(delta.mode, "full");
   assert.equal(delta.reset, false);
   assert.deepEqual(delta.added.map((entry) => entry.key), ["n3"]);
   assert.deepEqual(delta.updated.map((entry) => entry.key), ["n2"]);
@@ -37,6 +38,11 @@ test("diffs stable nodes while rebinding revision-scoped references", () => {
     { key: "n2", ref: "r4", parent: "r3" },
     { key: "n3", ref: "r5", parent: "r3" },
   ]);
+
+  const reconstructed = applySnapshotDelta(base, delta, asSnapshotId("snapshot-3"));
+  assert.deepEqual(reconstructed.nodes, current.nodes);
+  assert.equal(reconstructed.revision, current.revision);
+  assert.equal(reconstructed.snapshotId, "snapshot-3");
 });
 
 test("resets the delta across document changes", () => {
@@ -45,6 +51,7 @@ test("resets the delta across document changes", () => {
 
   const delta = diffSnapshots(base, current);
 
+  assert.equal(delta.mode, "full");
   assert.equal(delta.reset, true);
   assert.deepEqual(delta.added.map((entry) => entry.key), ["n1"]);
   assert.deepEqual(delta.updated, []);

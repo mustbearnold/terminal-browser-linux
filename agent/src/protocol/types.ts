@@ -138,6 +138,7 @@ export interface SnapshotReference {
 
 export interface PageSnapshotDelta extends SnapshotToken {
   base: SnapshotToken;
+  mode: "incremental" | "full";
   url: string;
   title: string;
   rootFrameId: FrameId;

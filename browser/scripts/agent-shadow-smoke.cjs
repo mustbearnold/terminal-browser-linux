@@ -52,10 +52,15 @@ async function run() {
           value: "Ada",
         },
       });
+      const valueDelta = await client.snapshotDelta(pageId, initial);
+      assert.equal(valueDelta.mode, "incremental", "input-only mutation did not use the incremental delta path");
+      assert.ok(valueDelta.updated.some((entry) => entry.node.name === "Shadow name"), "incremental delta omitted the input state");
       const typed = await client.call("page.act", {
         pageId,
         action: { type: "type", text: " Lovelace" },
       });
+      const typedDelta = await client.snapshotDelta(pageId, valueDelta);
+      assert.equal(typedDelta.mode, "incremental", "typing did not use the incremental delta path");
       const clicked = await client.call("page.act", {
         pageId,
         action: {
@@ -68,7 +73,7 @@ async function run() {
         pageId,
         options: { interactiveOnly: false },
       });
-      const delta = await client.snapshotDelta(pageId, initial);
+      const delta = await client.snapshotDelta(pageId, typedDelta);
       const dynamicButton = after.nodes.find((node) => node.name === "Dynamic action");
       assert.equal(filled.verified, true);
       assert.equal(typed.verified, true);
@@ -87,6 +92,8 @@ async function run() {
         typedValue: typed.proof?.value,
         dynamicNode: dynamicButton.name,
         captureBytes: captured.data.length,
+        incrementalDeltaMode: typedDelta.mode,
+        fallbackDeltaMode: delta.mode,
         deltaAdded: delta.added.length,
         deltaUpdated: delta.updated.length,
         revisionDelta: after.revision - initial.revision,

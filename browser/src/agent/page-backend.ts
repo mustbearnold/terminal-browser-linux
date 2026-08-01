@@ -7,6 +7,8 @@ import {
   abortableDelay,
   asDocumentId,
   asFrameId,
+  asSnapshotRef,
+  diffSnapshots,
   throwIfAborted,
 } from "terminal-browser-agent";
 import type {
@@ -27,9 +29,11 @@ import type {
   PageId,
   PageIdentity,
   PageSnapshot,
+  SnapshotDeltaCapture,
   ResolvedTarget,
   SnapshotView,
   SnapshotOptions,
+  SnapshotNode,
   SnapshotToken,
   Target,
   WaitCondition,
@@ -48,6 +52,16 @@ type FrameSnapshot = {
   truncated: boolean;
 };
 type PageScriptState = { documentId: string; revision: number };
+type IncrementalSnapshotResult = {
+  ok: boolean;
+  documentId?: string;
+  revision?: number;
+  url?: string;
+  title?: string;
+  rootFrameId?: string;
+  refs?: Array<{ nodeId: string; ref: string }>;
+  changed?: SnapshotNode[];
+};
 type ElementInspection = {
   ok: boolean;
   x?: number;
@@ -88,8 +102,10 @@ export class ElectronPageBackend implements PageBackend {
   private readonly agentKey = AGENT_STATE_KEY;
   private sequence = 0;
   private remoteRevision = 0;
+  private readonly snapshotCache = new Map<string, CapturedSnapshot>();
   private lastSnapshot: CapturedSnapshot | null = null;
   private lastSnapshotOptions: string | null = null;
+  private lastSnapshotInvalidated = false;
   private observationReady: Promise<void> | null = null;
   private mainBrowserFrameId: string | null = null;
 
@@ -213,14 +229,17 @@ export class ElectronPageBackend implements PageBackend {
     const scriptState = await this.readScriptState(signal);
     const revision = this.effectiveRevision(scriptState);
     const optionsKey = snapshotOptionsKey(options);
+    const cachedSnapshot = this.snapshotCache.get(optionsKey);
     if (
-      this.lastSnapshot &&
-      this.lastSnapshotOptions === optionsKey &&
-      this.lastSnapshot.documentId === asDocumentId(scriptState.documentId) &&
-      this.lastSnapshot.revision === revision
+      cachedSnapshot &&
+      !this.lastSnapshotInvalidated &&
+      cachedSnapshot.documentId === asDocumentId(scriptState.documentId) &&
+      cachedSnapshot.revision === revision
     ) {
       throwIfAborted(signal);
-      return this.lastSnapshot;
+      this.lastSnapshot = cachedSnapshot;
+      this.lastSnapshotOptions = optionsKey;
+      return cachedSnapshot;
     }
 
     throwIfAborted(signal);
@@ -260,9 +279,82 @@ export class ElectronPageBackend implements PageBackend {
       nodes: allNodes.slice(0, maxNodes),
       truncated: captures.some(({ value }) => isFrameSnapshot(value) && value.truncated) || allNodes.length > maxNodes,
     } satisfies CapturedSnapshot;
+    this.snapshotCache.set(optionsKey, captured);
+    while (this.snapshotCache.size > 16) {
+      const oldest = this.snapshotCache.keys().next().value;
+      if (oldest === undefined) break;
+      this.snapshotCache.delete(oldest);
+    }
     this.lastSnapshot = captured;
     this.lastSnapshotOptions = optionsKey;
+    this.lastSnapshotInvalidated = false;
     return captured;
+  }
+
+  async snapshotDelta(
+    base: PageSnapshot,
+    options?: SnapshotOptions,
+    signal?: AbortSignal,
+  ): Promise<SnapshotDeltaCapture | undefined> {
+    throwIfAborted(signal);
+    const optionsKey = snapshotOptionsKey(options);
+    const baseSnapshot = this.snapshotCache.get(optionsKey);
+    if (
+      !baseSnapshot ||
+      baseSnapshot.documentId !== base.documentId ||
+      baseSnapshot.revision !== base.revision ||
+      base.truncated ||
+      base.nodes.length === 0 ||
+      base.nodes.some((node) => !node.nodeId) ||
+      this.remoteRevision !== 0
+    ) {
+      return undefined;
+    }
+
+    const frames = await this.controller.agentFrames();
+    throwIfAborted(signal);
+    const mainFrame = frames.find((frame) => frame.parentId === null);
+    if (!mainFrame || frames.length !== 1) return undefined;
+    this.mainBrowserFrameId = mainFrame.id;
+
+    const scriptState = await this.readScriptState(signal);
+    if (
+      asDocumentId(scriptState.documentId) !== base.documentId ||
+      this.effectiveRevision(scriptState) < base.revision
+    ) {
+      return undefined;
+    }
+    if (this.lastSnapshotInvalidated && this.effectiveRevision(scriptState) === base.revision) return undefined;
+
+    const value = await this.controller.runJs(
+      incrementalSnapshotScript(
+        this.agentKey,
+        options,
+        base.revision,
+        base.nodes.map((node) => node.nodeId!),
+        "main",
+      ),
+    );
+    throwIfAborted(signal);
+    if (!isIncrementalSnapshotResult(value)) return undefined;
+    const after = await this.readScriptState(signal);
+    if (
+      value.documentId !== after.documentId ||
+      value.revision !== this.effectiveRevision(after) ||
+      value.documentId !== base.documentId
+    ) {
+      return undefined;
+    }
+
+    const current = rebuildIncrementalSnapshot(base, value, this.pageId);
+    if (!current) return undefined;
+    this.snapshotCache.set(optionsKey, current);
+    this.lastSnapshot = current;
+    this.lastSnapshotOptions = optionsKey;
+    this.lastSnapshotInvalidated = false;
+    const delta = diffSnapshots(base, { ...current, snapshotId: base.snapshotId });
+    const { snapshotId: _snapshotId, base: _base, ...captured } = delta;
+    return { ...captured, mode: "incremental" };
   }
 
   async capture(options?: CaptureOptions, signal?: AbortSignal): Promise<PageCapture> {
@@ -931,8 +1023,7 @@ export class ElectronPageBackend implements PageBackend {
   }
 
   private invalidateSnapshots(): void {
-    this.lastSnapshot = null;
-    this.lastSnapshotOptions = null;
+    this.lastSnapshotInvalidated = true;
   }
 
   private transitionEffects(before: PageIdentity, after: PageIdentity): ActionEffect[] {
@@ -1154,6 +1245,38 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined, frame
     let truncated = false;
     state.snapshotRevision = state.revision;
 
+    ${snapshotNodeHelpersScript()}
+    const visit = (el, parent, parentVisible) => {
+      if (!el) return;
+      if (nodes.length >= maxNodes) { truncated = true; return; }
+      const captured = captureNode(el, parent, parentVisible);
+      let nextParent = parent;
+      if (captured.included && captured.node) {
+        nodes.push(captured.node);
+        nextParent = captured.ref;
+      }
+      for (const child of el.children) visit(child, nextParent, captured.visible);
+      if (el.shadowRoot) {
+        state.observeRoot(el.shadowRoot);
+        for (const child of el.shadowRoot.children) visit(child, nextParent, captured.visible);
+      }
+    };
+    visit(document.body || document.documentElement, null, true);
+    return {
+      pageId: "",
+      documentId: state.documentId,
+      revision: state.revision,
+      url: location.href,
+      title: document.title,
+      rootFrameId: state.frameId,
+      nodes,
+      truncated,
+    };
+  })()`;
+}
+
+function snapshotNodeHelpersScript(): string {
+  return `
     const text = (value) => String(value ?? "").replace(/\\s+/g, " ").trim().slice(0, 240);
     const styleFor = (el) => {
       const view = el.ownerDocument && el.ownerDocument.defaultView;
@@ -1217,27 +1340,30 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined, frame
       }
       return Object.keys(attrs).length ? attrs : undefined;
     };
-    const visit = (el, parent, parentVisible) => {
-      if (!el) return;
-      if (nodes.length >= maxNodes) { truncated = true; return; }
+    const captureNode = (el, parent, parentVisible) => {
       const role = roleFor(el);
       const visible = parentVisible && visibleFor(el);
-      const include = !interactiveOnly || interactiveFor(el, role);
-      let nextParent = parent;
-      if (include) {
-        let ref = state.elementRefs.get(el);
-        if (!ref) {
-          ref = state.frameId + ":r" + (++state.nextRef);
-          state.elementRefs.set(el, ref);
-        }
-        let nodeId = state.elementNodeIds.get(el);
-        if (!nodeId) {
-          nodeId = state.frameId + ":" + state.documentId + ":n" + (++state.nextNodeId);
-          state.elementNodeIds.set(el, nodeId);
-        }
-        state.refs.set(ref, el);
-        const box = boxFor(el);
-        nodes.push({
+      if (interactiveOnly && !interactiveFor(el, role)) return { included: false, ref: parent, node: null, visible };
+      let ref = state.elementRefs.get(el);
+      if (!ref) {
+        ref = state.frameId + ":r" + (++state.nextRef);
+        state.elementRefs.set(el, ref);
+      }
+      let nodeId = state.elementNodeIds.get(el);
+      if (!nodeId) {
+        nodeId = state.frameId + ":" + state.documentId + ":n" + (++state.nextNodeId);
+        state.elementNodeIds.set(el, nodeId);
+      }
+      state.nodeElements.set(
+        nodeId,
+        typeof WeakRef === "function" ? new WeakRef(el) : { deref: () => el },
+      );
+      state.refs.set(ref, el);
+      const box = includeGeometry ? boxFor(el) : null;
+      return {
+        included: true,
+        ref,
+        node: {
           ref,
           nodeId,
           frameId: state.frameId,
@@ -1246,30 +1372,99 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined, frame
           name: nameFor(el),
           ...(includeText ? { text: text(el.innerText || "") } : {}),
           state: stateFor(el),
-          ...(includeGeometry ? { box: { x: box.x, y: box.y, width: box.width, height: box.height } } : {}),
+          ...(box ? { box: { x: box.x, y: box.y, width: box.width, height: box.height } } : {}),
           visible,
           enabled: !el.disabled && el.getAttribute("aria-disabled") !== "true",
           focusable: focusableFor(el),
           attributes: attrsFor(el),
-        });
-        nextParent = ref;
-      }
-      for (const child of el.children) visit(child, nextParent, visible);
-      if (el.shadowRoot) {
-        state.observeRoot(el.shadowRoot);
-        for (const child of el.shadowRoot.children) visit(child, nextParent, visible);
-      }
+        },
+        visible,
+      };
     };
-    visit(document.body || document.documentElement, null, true);
+  `;
+}
+
+function incrementalSnapshotScript(
+  key: string,
+  options: SnapshotOptions | undefined,
+  baseRevision: number,
+  nodeIds: readonly string[],
+  frameId: string,
+): string {
+  return `(() => {
+    ${agentStateSetupScript(key, frameId)}
+    const options = ${JSON.stringify(options ?? {})};
+    const baseRevision = ${JSON.stringify(baseRevision)};
+    const nodeIds = ${JSON.stringify(nodeIds)};
+    const wanted = new Set(nodeIds);
+    const interactiveOnly = options.interactiveOnly ?? true;
+    const includeGeometry = options.includeGeometry !== false;
+    const includeText = options.includeText !== false;
+    if (state.frameId !== ${JSON.stringify(frameId)} || state.invalidationScheduled) return { ok: false, reason: "pending-invalidation" };
+    if (state.revision < baseRevision) return { ok: false, reason: "revision-regressed" };
+    const entries = state.changeLog.filter((entry) => entry.revision > baseRevision);
+    if (state.revision > baseRevision && (
+      entries.length === 0 ||
+      entries[0].revision !== baseRevision + 1 ||
+      entries[entries.length - 1].revision !== state.revision
+    )) return { ok: false, reason: "mutation-history-gap" };
+    const changedNodeIds = new Set();
+    for (const entry of entries) {
+      for (const change of entry.changes || []) {
+        if (!change || !["input", "change", "focusin", "focusout"].includes(change.kind)) return { ok: false, reason: "broad-change" };
+        if (includeGeometry) return { ok: false, reason: "geometry-sensitive" };
+        const element = change.element;
+        if (!element || !element.isConnected) return { ok: false, reason: "detached-target" };
+        if (change.kind === "change" && (element.tagName === "SELECT" || element.tagName === "OPTION")) {
+          return { ok: false, reason: "select-change" };
+        }
+        const nodeId = state.elementNodeIds.get(element);
+        if (!nodeId || !wanted.has(nodeId)) return { ok: false, reason: "target-not-in-base" };
+        changedNodeIds.add(nodeId);
+      }
+    }
+
+    ${snapshotNodeHelpersScript()}
+
+    const refs = [];
+    const refByNodeId = new Map();
+    for (const nodeId of nodeIds) {
+      const holder = state.nodeElements.get(nodeId);
+      const element = holder && typeof holder.deref === "function" ? holder.deref() : null;
+      if (!element || !element.isConnected) return { ok: false, reason: "base-node-unavailable" };
+      const role = roleFor(element);
+      if (interactiveOnly && !interactiveFor(element, role)) return { ok: false, reason: "inclusion-changed" };
+      let ref = state.elementRefs.get(element);
+      if (!ref) {
+        ref = state.frameId + ":r" + (++state.nextRef);
+        state.elementRefs.set(element, ref);
+      }
+      state.refs.set(ref, element);
+      refByNodeId.set(nodeId, ref);
+      refs.push({ nodeId, ref });
+    }
+    const changed = [];
+    for (const nodeId of changedNodeIds) {
+      const holder = state.nodeElements.get(nodeId);
+      const element = holder && typeof holder.deref === "function" ? holder.deref() : null;
+      const ref = refByNodeId.get(nodeId);
+      if (!element || !ref) return { ok: false, reason: "changed-node-unavailable" };
+      const captured = captureNode(element, null, true);
+      if (!captured.included || !captured.node || captured.node.nodeId !== nodeId) {
+        return { ok: false, reason: "changed-node-excluded" };
+      }
+      changed.push({ ...captured.node, ref });
+    }
+    state.snapshotRevision = state.revision;
     return {
-      pageId: "",
+      ok: true,
       documentId: state.documentId,
       revision: state.revision,
       url: location.href,
       title: document.title,
       rootFrameId: state.frameId,
-      nodes,
-      truncated,
+      refs,
+      changed,
     };
   })()`;
 }
@@ -1290,6 +1485,9 @@ function agentStateSetupScript(key: string, frameId: string): string {
         refs: new Map(),
         elementRefs: new WeakMap(),
         elementNodeIds: new WeakMap(),
+        nodeElements: new Map(),
+        changeLog: [],
+        pendingChanges: [],
         invalidationScheduled: false,
         snapshotRevision: -1,
       };
@@ -1303,24 +1501,30 @@ function agentStateSetupScript(key: string, frameId: string): string {
           }));
         } catch {}
       };
-      const invalidate = () => {
+      const invalidate = (kind, element) => {
+        state.pendingChanges.push({ kind, element });
         if (state.invalidationScheduled) return;
         state.invalidationScheduled = true;
         queueMicrotask(() => {
           state.invalidationScheduled = false;
+          const changes = state.pendingChanges;
+          state.pendingChanges = [];
           state.revision += 1;
           state.refs = new Map();
           state.elementRefs = new WeakMap();
+          state.changeLog.push({ revision: state.revision, changes });
+          while (state.changeLog.length > 64) state.changeLog.shift();
           emit();
         });
       };
-      const observer = new MutationObserver(invalidate);
+      const observer = new MutationObserver(() => invalidate("mutation", null));
       const observedRoots = new WeakSet();
       const handledEvents = new WeakSet();
       const invalidateEvent = (event) => {
         if (handledEvents.has(event)) return;
         handledEvents.add(event);
-        invalidate();
+        const target = event.target && event.target.nodeType === 1 ? event.target : null;
+        invalidate(event.type, target);
       };
       const observeRoot = (root) => {
         if (observedRoots.has(root)) return;
@@ -1334,6 +1538,9 @@ function agentStateSetupScript(key: string, frameId: string): string {
       observeRoot(document);
       window[key] = state;
     }
+    if (!state.nodeElements) state.nodeElements = new Map();
+    if (!state.changeLog) state.changeLog = [];
+    if (!state.pendingChanges) state.pendingChanges = [];
   `;
 }
 
@@ -1530,6 +1737,97 @@ function isScriptState(value: unknown): value is PageScriptState {
   if (!value || typeof value !== "object") return false;
   const state = value as Record<string, unknown>;
   return typeof state.documentId === "string" && typeof state.revision === "number";
+}
+
+function isIncrementalSnapshotResult(value: unknown): value is IncrementalSnapshotResult {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Record<string, unknown>;
+  return (
+    result.ok === true &&
+    typeof result.documentId === "string" &&
+    typeof result.revision === "number" &&
+    typeof result.url === "string" &&
+    typeof result.title === "string" &&
+    typeof result.rootFrameId === "string" &&
+    Array.isArray(result.refs) &&
+    result.refs.every((entry) => {
+      if (!entry || typeof entry !== "object") return false;
+      const value = entry as Record<string, unknown>;
+      return typeof value.nodeId === "string" && typeof value.ref === "string";
+    }) &&
+    Array.isArray(result.changed) &&
+    result.changed.every(isSnapshotNode)
+  );
+}
+
+function isSnapshotNode(value: unknown): value is SnapshotNode {
+  if (!value || typeof value !== "object") return false;
+  const node = value as Record<string, unknown>;
+  return (
+    typeof node.ref === "string" &&
+    typeof node.nodeId === "string" &&
+    typeof node.frameId === "string" &&
+    (node.parent === null || typeof node.parent === "string") &&
+    typeof node.role === "string" &&
+    typeof node.name === "string" &&
+    (node.text === undefined || typeof node.text === "string") &&
+    typeof node.visible === "boolean" &&
+    typeof node.enabled === "boolean" &&
+    typeof node.focusable === "boolean"
+  );
+}
+
+function rebuildIncrementalSnapshot(
+  base: PageSnapshot,
+  value: IncrementalSnapshotResult,
+  pageId: PageId,
+): CapturedSnapshot | null {
+  if (!value.refs || !value.changed || value.documentId === undefined || value.revision === undefined) return null;
+  const baseByNodeId = new Map<string, SnapshotNode>();
+  const baseKeyByRef = new Map<string, string>();
+  for (const node of base.nodes) {
+    if (!node.nodeId || baseByNodeId.has(node.nodeId) || baseKeyByRef.has(String(node.ref))) return null;
+    baseByNodeId.set(node.nodeId, node);
+    baseKeyByRef.set(String(node.ref), node.nodeId);
+  }
+  const refByNodeId = new Map<string, string>();
+  for (const entry of value.refs) {
+    if (!baseByNodeId.has(entry.nodeId) || refByNodeId.has(entry.nodeId)) return null;
+    refByNodeId.set(entry.nodeId, entry.ref);
+  }
+  if (refByNodeId.size !== baseByNodeId.size) return null;
+  const changedByNodeId = new Map<string, SnapshotNode>();
+  for (const node of value.changed) {
+    if (!node.nodeId || !baseByNodeId.has(node.nodeId) || changedByNodeId.has(node.nodeId)) return null;
+    changedByNodeId.set(node.nodeId, node);
+  }
+  const nodes = base.nodes.map((baseNode) => {
+    const nodeId = baseNode.nodeId!;
+    const ref = refByNodeId.get(nodeId);
+    if (!ref) return null;
+    const parentKey = baseNode.parent === null ? null : baseKeyByRef.get(String(baseNode.parent));
+    if (parentKey === undefined) return null;
+    const parent = parentKey === null ? null : refByNodeId.get(parentKey);
+    if (parentKey !== null && parent === undefined) return null;
+    const node = changedByNodeId.get(nodeId) ?? baseNode;
+    return {
+      ...node,
+      ref: asSnapshotRef(ref),
+      nodeId,
+      parent: parent === null ? null : asSnapshotRef(parent!),
+    };
+  });
+  if (nodes.some((node) => node === null)) return null;
+  return {
+    pageId,
+    documentId: asDocumentId(value.documentId),
+    revision: value.revision,
+    url: value.url!,
+    title: value.title!,
+    rootFrameId: asFrameId(value.rootFrameId!),
+    nodes: nodes as SnapshotNode[],
+    truncated: false,
+  };
 }
 
 function isFrameSnapshot(value: unknown): value is FrameSnapshot {

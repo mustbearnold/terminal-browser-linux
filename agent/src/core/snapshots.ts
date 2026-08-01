@@ -1,10 +1,12 @@
 import { stableSerialize } from "./idempotency";
+import { AgentError } from "../protocol/errors";
 import type {
   PageSnapshot,
   PageSnapshotDelta,
   SnapshotDeltaNode,
   SnapshotNode,
   SnapshotReference,
+  SnapshotId,
 } from "../protocol/types";
 
 export function diffSnapshots(base: PageSnapshot, current: PageSnapshot): PageSnapshotDelta {
@@ -62,6 +64,36 @@ export function diffSnapshots(base: PageSnapshot, current: PageSnapshot): PageSn
     references,
     truncated: current.truncated,
     reset,
+    mode: "full",
+  };
+}
+
+export function applySnapshotDelta(
+  base: PageSnapshot,
+  delta: PageSnapshotDelta,
+  snapshotId: SnapshotId,
+): PageSnapshot {
+  const baseByKey = indexNodes(base);
+  const changedByKey = new Map(
+    [...delta.added, ...delta.updated].map((entry) => [entry.key, entry.node]),
+  );
+  const nodes = delta.references.map((reference) => {
+    const node = changedByKey.get(reference.key) ?? baseByKey.get(reference.key)?.node;
+    if (!node) {
+      throw new AgentError("INTERNAL_ERROR", `snapshot delta is missing node ${reference.key}`);
+    }
+    return { ...node, ref: reference.ref, parent: reference.parent };
+  });
+  return {
+    pageId: delta.pageId,
+    documentId: delta.documentId,
+    revision: delta.revision,
+    snapshotId,
+    url: delta.url,
+    title: delta.title,
+    rootFrameId: delta.rootFrameId,
+    nodes,
+    truncated: delta.truncated,
   };
 }
 
