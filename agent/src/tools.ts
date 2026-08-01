@@ -340,6 +340,7 @@ function pageQueryOptions(): AgentToolSchema {
     includeHidden: boolean("Include hidden matches in nodes."),
     limit: number("Maximum matches to return."),
     frameId: string("Restrict matching to a frame returned by page.frames."),
+    diagnostics: string("Include bounded search-cost diagnostics.", ["summary"]),
   });
 }
 

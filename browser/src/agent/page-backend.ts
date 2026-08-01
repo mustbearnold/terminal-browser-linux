@@ -34,6 +34,7 @@ import type {
   PageDialogResult,
   PageId,
   PageIdentity,
+  PageQueryDiagnostics,
   PageQueryOptions,
   PageQueryBatchResult,
   PageQuerySpec,
@@ -124,17 +125,28 @@ type LiveLocatorResult = {
   hiddenCandidateCount?: number;
   candidatesTruncated?: boolean;
   hiddenCandidatesTruncated?: boolean;
+  diagnostics?: PageQueryDiagnostics;
 };
 type LiveLocatorRequest = {
   locator: Locator;
   includeHidden: boolean;
   maxCandidates: number;
+  diagnostics: boolean;
   frameId?: string;
+};
+type LiveLocatorRuntimeDiagnostics = {
+  elementsScanned: number;
+  shadowRootsSearched: number;
 };
 type LiveLocatorBatchResult = {
   ok: boolean;
   invalid?: boolean;
   results?: LiveLocatorResult[];
+  diagnostics?: LiveLocatorRuntimeDiagnostics;
+};
+type LiveLocatorEvaluation = {
+  results: LiveLocatorResult[];
+  diagnostics?: PageQueryDiagnostics;
 };
 type LiveTextResult = { ok: boolean; matches?: boolean };
 
@@ -323,20 +335,23 @@ export class ElectronPageBackend implements PageBackend {
     signal?: AbortSignal,
     maxCandidates = LIVE_LOCATOR_MAX_CANDIDATES,
     frameId?: string,
+    diagnostics = false,
   ): Promise<LiveLocatorResult> {
-    const [result] = await this.liveLocatorBatchMatches([{
+    const evaluation = await this.liveLocatorBatchMatches([{
       locator,
       includeHidden: options?.includeHidden === true,
       maxCandidates,
+      diagnostics,
       frameId,
     }], signal);
-    return result ?? emptyLiveLocatorResult();
+    const result = evaluation.results[0] ?? emptyLiveLocatorResult();
+    return evaluation.diagnostics === undefined ? result : { ...result, diagnostics: evaluation.diagnostics };
   }
 
   private async liveLocatorBatchMatches(
     queries: readonly LiveLocatorRequest[],
     signal?: AbortSignal,
-  ): Promise<LiveLocatorResult[]> {
+  ): Promise<LiveLocatorEvaluation> {
     const frames = (await this.controller.agentFrames()).filter((frame) => {
       if (queries.some((query) => query.frameId === undefined)) return true;
       const protocolFrameId = frame.parentId === null ? "main" : frame.id;
@@ -370,8 +385,15 @@ export class ElectronPageBackend implements PageBackend {
         return null;
       }
     }));
+    const diagnosticsRequested = queries.some((query) => query.diagnostics);
+    let elementsScanned = 0;
+    let shadowRootsSearched = 0;
     for (const value of values) {
       if (!value) continue;
+      if (diagnosticsRequested && value.raw.diagnostics) {
+        elementsScanned += value.raw.diagnostics.elementsScanned;
+        shadowRootsSearched += value.raw.diagnostics.shadowRootsSearched;
+      }
       if (value.raw.invalid) {
         for (const { index } of value.entries) aggregate[index] = { ok: false, invalid: true };
         continue;
@@ -396,7 +418,7 @@ export class ElectronPageBackend implements PageBackend {
         }
       }
     }
-    return aggregate.map((result) => ({
+    const results = aggregate.map((result) => ({
       ...result,
       candidatesTruncated: result.candidatesTruncated === true
         || (result.candidateCount ?? 0) > (result.candidates?.length ?? 0),
@@ -404,6 +426,18 @@ export class ElectronPageBackend implements PageBackend {
         || (result.hiddenCandidateCount ?? 0) > (result.hiddenCandidates?.length ?? 0),
       ...(result.invalid === true ? {} : { ok: true }),
     }));
+    return {
+      results,
+      ...(diagnosticsRequested ? {
+        diagnostics: {
+          mode: "live",
+          queriesEvaluated: queries.length,
+          framesSearched: frames.length,
+          shadowRootsSearched,
+          elementsScanned,
+        },
+      } : {}),
+    };
   }
 
   async frames(signal?: AbortSignal): Promise<PageFrameSnapshot> {
@@ -444,6 +478,7 @@ export class ElectronPageBackend implements PageBackend {
       signal,
       options?.limit ?? LIVE_LOCATOR_MAX_CANDIDATES,
       options?.frameId,
+      options?.diagnostics === "summary",
     );
     if (matches.invalid) throw new AgentError("INVALID_REQUEST", "invalid CSS locator");
     throwIfAborted(signal);
@@ -467,6 +502,7 @@ export class ElectronPageBackend implements PageBackend {
       hiddenMatchCount: matches.hiddenCandidateCount ?? 0,
       truncated: matches.candidatesTruncated === true,
       hiddenTruncated: matches.hiddenCandidatesTruncated === true,
+      ...(matches.diagnostics === undefined ? {} : { diagnostics: matches.diagnostics }),
     };
   }
 
@@ -476,12 +512,14 @@ export class ElectronPageBackend implements PageBackend {
   ): Promise<Omit<PageQueryBatchResult, "snapshotId">> {
     throwIfAborted(signal);
     const before = await this.identity(signal);
-    const matches = await this.liveLocatorBatchMatches(queries.map(({ locator, options }) => ({
+    const evaluation = await this.liveLocatorBatchMatches(queries.map(({ locator, options }) => ({
       locator,
       includeHidden: options?.includeHidden === true,
       maxCandidates: options?.limit ?? LIVE_LOCATOR_MAX_CANDIDATES,
+      diagnostics: options?.diagnostics === "summary",
       frameId: options?.frameId,
     })), signal);
+    const matches = evaluation.results;
     if (matches.some((result) => result.invalid)) throw new AgentError("INVALID_REQUEST", "invalid CSS locator");
     throwIfAborted(signal);
     const after = await this.identity(signal);
@@ -506,6 +544,7 @@ export class ElectronPageBackend implements PageBackend {
         truncated: matches[index].candidatesTruncated === true,
         hiddenTruncated: matches[index].hiddenCandidatesTruncated === true,
       })),
+      ...(evaluation.diagnostics === undefined ? {} : { diagnostics: evaluation.diagnostics }),
     };
   }
 
@@ -2601,7 +2640,8 @@ function liveLocatorBatchScript(
 ): string {
   return `(() => {
     ${agentStateSetupScript(key, frameId)}
-    const queries = ${JSON.stringify(queries.map(({ locator, includeHidden, maxCandidates }) => ({ locator, includeHidden, maxCandidates })))};
+    const queries = ${JSON.stringify(queries.map(({ locator, includeHidden, maxCandidates, diagnostics }) => ({ locator, includeHidden, maxCandidates, diagnostics })))};
+    const includeDiagnostics = queries.some((query) => query.diagnostics === true);
     const interactiveOnly = false;
     const includeGeometry = true;
     const includeText = true;
@@ -2758,7 +2798,16 @@ function liveLocatorBatchScript(
         hiddenCandidatesTruncated: hiddenCandidateCount > hiddenCandidates.length,
       };
     });
-    return { ok: true, results };
+    return {
+      ok: true,
+      results,
+      ...(includeDiagnostics ? {
+        diagnostics: {
+          elementsScanned: elements.length,
+          shadowRootsSearched: Math.max(0, roots.length - 1),
+        },
+      } : {}),
+    };
   })()`;
 }
 
@@ -3089,7 +3138,16 @@ function isLiveLocatorBatchResult(value: unknown): value is LiveLocatorBatchResu
   return (
     typeof result.ok === "boolean" &&
     (result.invalid === undefined || typeof result.invalid === "boolean") &&
-    (result.results === undefined || (Array.isArray(result.results) && result.results.every(isLiveLocatorResult)))
+    (result.results === undefined || (Array.isArray(result.results) && result.results.every(isLiveLocatorResult))) &&
+    (result.diagnostics === undefined || isLiveLocatorRuntimeDiagnostics(result.diagnostics))
+  );
+}
+
+function isLiveLocatorRuntimeDiagnostics(value: unknown): value is LiveLocatorRuntimeDiagnostics {
+  if (!value || typeof value !== "object") return false;
+  const diagnostics = value as Record<string, unknown>;
+  return [diagnostics.elementsScanned, diagnostics.shadowRootsSearched].every((entry) =>
+    Number.isSafeInteger(entry) && Number(entry) >= 0,
   );
 }
 

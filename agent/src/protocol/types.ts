@@ -96,6 +96,15 @@ export interface PageQueryOptions {
   includeHidden?: boolean;
   limit?: number;
   frameId?: FrameId;
+  diagnostics?: "summary";
+}
+
+export interface PageQueryDiagnostics {
+  mode: "live" | "snapshot";
+  queriesEvaluated: number;
+  framesSearched: number;
+  shadowRootsSearched: number;
+  elementsScanned: number;
 }
 
 export interface SnapshotWindowOptions {
@@ -152,6 +161,7 @@ export interface PageQueryResult extends SnapshotToken {
   hiddenMatchCount: number;
   truncated: boolean;
   hiddenTruncated: boolean;
+  diagnostics?: PageQueryDiagnostics;
 }
 
 export interface PageQuerySpec {
@@ -174,6 +184,7 @@ export interface PageQueryBatchResult extends SnapshotToken {
   title: string;
   rootFrameId: FrameId;
   queries: readonly PageQueryBatchItem[];
+  diagnostics?: PageQueryDiagnostics;
 }
 
 export interface SnapshotToken extends PageRevision {

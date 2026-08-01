@@ -25,6 +25,7 @@ import type {
   PageReadResult,
   PageQueryOptions,
   PageQueryBatchResult,
+  PageQueryDiagnostics,
   PageQuerySpec,
   PageQueryResult,
   PageSnapshot,
@@ -353,6 +354,7 @@ export class RevisionedPageSession implements PageSession {
       hiddenMatchCount: matches.hiddenCandidateCount,
       truncated: matches.candidatesTruncated,
       hiddenTruncated: matches.hiddenCandidatesTruncated,
+      ...(options.diagnostics === "summary" ? { diagnostics: snapshotQueryDiagnostics(snapshot, 1) } : {}),
     };
   }
 
@@ -361,6 +363,9 @@ export class RevisionedPageSession implements PageSession {
     signal?: AbortSignal,
   ): Promise<Omit<PageQueryBatchResult, "snapshotId">> {
     const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
+    const diagnostics = queries.some(({ options }) => options.diagnostics === "summary")
+      ? snapshotQueryDiagnostics(snapshot, queries.length)
+      : undefined;
     return {
       pageId: snapshot.pageId,
       documentId: snapshot.documentId,
@@ -380,6 +385,7 @@ export class RevisionedPageSession implements PageSession {
           hiddenTruncated: matches.hiddenCandidatesTruncated,
         };
       }),
+      ...(diagnostics === undefined ? {} : { diagnostics }),
     };
   }
 
@@ -796,6 +802,20 @@ function normalizePageQueryOptions(options?: PageQueryOptions): PageQueryOptions
     includeHidden: options?.includeHidden === true,
     limit,
     ...(options?.frameId === undefined ? {} : { frameId: options.frameId }),
+    ...(options?.diagnostics === "summary" ? { diagnostics: "summary" as const } : {}),
+  };
+}
+
+function snapshotQueryDiagnostics(
+  snapshot: Pick<PageSnapshot, "nodes" | "rootFrameId">,
+  queriesEvaluated: number,
+): PageQueryDiagnostics {
+  return {
+    mode: "snapshot",
+    queriesEvaluated,
+    framesSearched: new Set([String(snapshot.rootFrameId), ...snapshot.nodes.map((node) => String(node.frameId))]).size,
+    shadowRootsSearched: 0,
+    elementsScanned: snapshot.nodes.length,
   };
 }
 

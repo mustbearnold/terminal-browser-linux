@@ -47,17 +47,19 @@ test("validates and dispatches structured calls through the typed client", async
       exact: true,
       within: { kind: "role", role: "generic", name: "Fixture content", exact: true },
     },
-    options: { limit: 1 },
+    options: { limit: 1, diagnostics: "summary" },
   });
   assert.equal(query.matchCount, 1);
   assert.equal(query.nodes.length, 1);
+  assert.equal(query.diagnostics?.mode, "snapshot");
+  assert.ok((query.diagnostics?.elementsScanned ?? 0) > 0);
 
   const queryBatch = await tools.callTool("terminal_browser_page_query_batch", {
     pageId: String(FIXTURE_PAGE_ID),
     queries: [
       {
         locator: { kind: "role", role: "textbox", name: "Name", exact: true, state: { value: "" } },
-        options: { frameId: String(query.nodes[0].frameId), limit: 1 },
+        options: { frameId: String(query.nodes[0].frameId), limit: 1, diagnostics: "summary" },
       },
       {
         locator: { kind: "role", role: "button", name: "Continue", exact: true },
@@ -69,6 +71,8 @@ test("validates and dispatches structured calls through the typed client", async
   assert.equal(queryBatch.queries[0].nodes[0].name, "Name");
   assert.equal(queryBatch.queries[1].nodes[0].name, "Continue");
   assert.equal(queryBatch.queries[0].nodes[0].frameId, queryBatch.queries[1].nodes[0].frameId);
+  assert.equal(queryBatch.diagnostics?.mode, "snapshot");
+  assert.equal(queryBatch.diagnostics?.queriesEvaluated, 2);
 
   const read = await tools.callTool("terminal_browser_page_read", {
     pageId: String(FIXTURE_PAGE_ID),

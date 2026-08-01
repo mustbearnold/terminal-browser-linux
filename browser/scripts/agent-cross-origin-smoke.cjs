@@ -61,13 +61,17 @@ async function run() {
       const queryBatch = await client.call("page.query.batch", {
         pageId,
         queries: [
-          { locator: { kind: "role", role: "button" }, options: { frameId: frameButton.frameId, limit: 8 } },
+          { locator: { kind: "role", role: "button" }, options: { frameId: frameButton.frameId, limit: 8, diagnostics: "summary" } },
           { locator: { kind: "role", role: "textbox", name: "Frame name", exact: true }, options: { frameId: frameButton.frameId, limit: 1 } },
           { locator: { kind: "role", role: "checkbox", name: "Frame enabled", exact: true, state: { checked: false } }, options: { frameId: frameButton.frameId, limit: 1 } },
           { locator: { kind: "role", role: "button", name: "Parent action", exact: true }, options: { limit: 1 } },
         ],
       });
       assert.equal(queryBatch.revision, initial.revision);
+      assert.equal(queryBatch.diagnostics?.mode, "live");
+      assert.equal(queryBatch.diagnostics?.queriesEvaluated, 4);
+      assert.equal(queryBatch.diagnostics?.framesSearched, 2);
+      assert.ok((queryBatch.diagnostics?.elementsScanned ?? 0) > 0);
       assert.equal(queryBatch.queries[0].matchCount, 3);
       assert.equal(queryBatch.queries[0].nodes.every((node) => node.frameId === frameButton.frameId), true);
       assert.equal(queryBatch.queries[0].nodes.some((node) => node.name === "Parent action"), false);
@@ -79,6 +83,15 @@ async function run() {
       assert.equal(queryBatch.queries[3].nodes[0]?.name, "Parent action");
       assert.equal(queryBatch.queries[3].nodes[0]?.frameId, "main");
       assert.ok(queryBatch.queries[3].nodes[0]?.parent, "live query omitted the parent control parent");
+      const diagnosticQuery = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "Frame action", exact: true },
+        options: { frameId: frameButton.frameId, limit: 1, diagnostics: "summary" },
+      });
+      assert.equal(diagnosticQuery.diagnostics?.mode, "live");
+      assert.equal(diagnosticQuery.diagnostics?.queriesEvaluated, 1);
+      assert.equal(diagnosticQuery.diagnostics?.framesSearched, 1);
+      assert.ok((diagnosticQuery.diagnostics?.elementsScanned ?? 0) > 0);
       const cssRead = await client.call("page.read", {
         pageId,
         target: { locator: { kind: "css", value: 'button[aria-label="Frame action"]' } },
@@ -321,6 +334,9 @@ async function run() {
           && queryBatch.queries[0].nodes.every((node) => node.frameId === frameButton.frameId),
         liveAncestryVerified: Boolean(queryBatch.queries[0].nodes[0]?.parent)
           && Boolean(queryBatch.queries[3].nodes[0]?.parent),
+        queryDiagnosticsVerified: queryBatch.diagnostics?.mode === "live"
+          && queryBatch.diagnostics.framesSearched === 2
+          && diagnosticQuery.diagnostics?.framesSearched === 1,
         stateLocatorVerified: queryBatch.queries[2].nodes[0]?.state?.checked === false,
         mixedFrameBatchVerified: queryBatch.queries[3].nodes[0]?.frameId === "main",
         idempotentReplayVerified: scrolledRetry.replayed === true,

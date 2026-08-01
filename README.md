@@ -78,6 +78,12 @@ frame discovery, DOM traversal, and captured-node work. Live result nodes retain
 composed DOM parent refs, including shadow-root hosts, for local context without
 requiring a full snapshot.
 
+Pass `options.diagnostics: "summary"` when an agent needs bounded search
+telemetry. The result reports whether matching used the live DOM or snapshot
+fallback, plus frames searched, shadow roots searched, and elements scanned. In
+a query batch those counts describe the shared evaluation and are not additive
+per query.
+
 Use `page.read` when one control is expected. The result contains the node plus
 the document, revision, and read token that prove which page state was observed;
 that token can be passed to the next action to reject a changed page.

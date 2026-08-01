@@ -118,7 +118,7 @@ test("runs the deterministic agent control contract", async () => {
     request("page.query", {
       pageId: FIXTURE_PAGE_ID,
       locator: { kind: "role", role: "textbox", name: "Name", exact: true },
-      options: { limit: 1 },
+      options: { limit: 1, diagnostics: "summary" },
     }),
     context,
   ));
@@ -126,6 +126,9 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(query.nodes.length, 1);
   assert.equal(query.nodes[0].name, "Name");
   assert.equal(query.truncated, false);
+  assert.equal(query.diagnostics?.mode, "snapshot");
+  assert.equal(query.diagnostics?.queriesEvaluated, 1);
+  assert.ok((query.diagnostics?.elementsScanned ?? 0) > 0);
 
   const frameScopedQuery = result<PageQueryResult>(await router.handle(
     request("page.query", {
@@ -137,6 +140,7 @@ test("runs the deterministic agent control contract", async () => {
   ));
   assert.equal(frameScopedQuery.matchCount, 1);
   assert.equal(frameScopedQuery.nodes[0].ref, query.nodes[0].ref);
+  assert.equal(frameScopedQuery.diagnostics, undefined);
 
   const scopedQuery = result<PageQueryResult>(await router.handle(
     request("page.query", {
@@ -175,7 +179,7 @@ test("runs the deterministic agent control contract", async () => {
     request("page.query.batch", {
       pageId: FIXTURE_PAGE_ID,
       queries: [
-        { locator: { kind: "role", role: "textbox", name: "Name", exact: true }, options: { frameId: query.nodes[0].frameId, limit: 1 } },
+        { locator: { kind: "role", role: "textbox", name: "Name", exact: true }, options: { frameId: query.nodes[0].frameId, limit: 1, diagnostics: "summary" } },
         { locator: { kind: "role", role: "button", name: "Continue", exact: true }, options: { frameId: query.nodes[0].frameId, limit: 1 } },
       ],
     }),
@@ -186,6 +190,9 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(queryBatch.queries[1].nodes[0].name, "Continue");
   assert.equal(queryBatch.revision, query.revision);
   assert.notEqual(queryBatch.snapshotId, query.snapshotId);
+  assert.equal(queryBatch.diagnostics?.mode, "snapshot");
+  assert.equal(queryBatch.diagnostics?.queriesEvaluated, 2);
+  assert.ok((queryBatch.diagnostics?.elementsScanned ?? 0) > 0);
 
   const firstWindow = result<PageSnapshotWindow>(await router.handle(
     request("page.snapshot.window", {
