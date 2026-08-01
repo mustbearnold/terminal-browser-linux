@@ -170,7 +170,13 @@ test("validates nested agent request shapes at the wire boundary", () => {
     ...listRequest(),
     op: "page.query",
     pageId: "page-1",
-    locator: { kind: "role", role: "button", name: "Continue", exact: true },
+    locator: {
+      kind: "role",
+      role: "button",
+      name: "Continue",
+      exact: true,
+      within: { kind: "role", role: "region", name: "Primary card", exact: true },
+    },
     options: { includeHidden: true, limit: 16 },
   });
   assert.equal(query.kind, "request");
@@ -283,6 +289,11 @@ test("validates nested agent request shapes at the wire boundary", () => {
   invalid({ op: "page.act.batch", pageId: "page-1", steps: [{ action: { type: "click" } }] });
   invalid({ op: "page.query", pageId: "page-1" });
   invalid({ op: "page.query", pageId: "page-1", locator: { kind: "role", role: "button" }, options: { limit: 257 } });
+  let deepLocator: unknown = { kind: "role", role: "button" };
+  for (let index = 0; index < 8; index += 1) {
+    deepLocator = { kind: "role", role: "region", within: deepLocator };
+  }
+  invalid({ op: "page.query", pageId: "page-1", locator: deepLocator });
   invalid({
     op: "page.act",
     pageId: "page-1",

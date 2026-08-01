@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const { AgentClient } = require("../../agent/dist");
 const { launchHost, listSockets, stopHost, waitForSocket, dataUrl } = require("./agent-smoke-support.cjs");
 
-const html = `<!doctype html><meta charset="utf-8"><title>Shadow control fixture</title><style>body{font:16px sans-serif;margin:24px}x-control{display:block;width:320px}button,input{font:16px sans-serif;margin:8px;padding:8px}</style><x-control></x-control><script>customElements.define('x-control',class extends HTMLElement{constructor(){super();const root=this.attachShadow({mode:'open'});root.innerHTML='<label>Shadow name <input aria-label="Shadow name"></label><button aria-label="Shadow action">Shadow action</button><span id="status">Idle</span>';root.querySelector('button').addEventListener('click',()=>{root.querySelector('#status').textContent='Clicked';const dynamic=document.createElement('button');dynamic.setAttribute('aria-label','Dynamic action');dynamic.textContent='Dynamic action';root.append(dynamic)})}});</script>`;
+const html = `<!doctype html><meta charset="utf-8"><title>Shadow control fixture</title><style>body{font:16px sans-serif;margin:24px}x-control{display:block;width:320px}button,input{font:16px sans-serif;margin:8px;padding:8px}</style><x-control></x-control><script>customElements.define('x-control',class extends HTMLElement{constructor(){super();const root=this.attachShadow({mode:'open'});root.innerHTML='<label>Shadow name <input aria-label="Shadow name"></label><button aria-label="Shadow action">Shadow action</button><span id="status">Idle</span>';const shadowAction=root.querySelector('[aria-label="Shadow action"]');shadowAction.addEventListener('click',()=>{root.querySelector('#status').textContent='Clicked';const dynamic=document.createElement('button');dynamic.setAttribute('aria-label','Dynamic action');dynamic.textContent='Dynamic action';root.append(dynamic);for(const [name,text] of [['Primary card','Primary open'],['Secondary card','Secondary open']]){const region=document.createElement('div');region.setAttribute('role','region');region.setAttribute('aria-label',name);const open=document.createElement('button');open.setAttribute('aria-label','Open');open.textContent=text;open.addEventListener('click',()=>{root.querySelector('#status').textContent='Scoped clicked'});region.append(open);root.append(region)}})}});</script>`;
 
 async function run() {
   const existing = new Set(listSockets());
@@ -13,7 +13,7 @@ async function run() {
   let pageId;
   try {
     const socket = await waitForSocket(existing, 15_000, output);
-    client = await AgentClient.connect(socket, { clientId: "shadow-smoke" });
+    client = await AgentClient.connect(socket, { clientId: `shadow-smoke-${process.pid}` });
     const hello = await client.hello();
     const opened = await client.call("pages.open", { url: dataUrl(html) });
     pageId = opened.pageId;
@@ -69,6 +69,27 @@ async function run() {
         },
         expect: { text: "Clicked", timeoutMs: 3_000 },
       });
+      const scopedOpenLocator = {
+        kind: "role",
+        role: "button",
+        name: "Open",
+        exact: true,
+        within: { kind: "role", role: "region", name: "Primary card", exact: true },
+      };
+      const scopedQuery = await client.call("page.query", { pageId, locator: scopedOpenLocator });
+      assert.equal(scopedQuery.matchCount, 1);
+      assert.equal(scopedQuery.nodes[0].text, "Primary open");
+      const scopedRead = await client.call("page.read", {
+        pageId,
+        target: { locator: scopedOpenLocator },
+      });
+      assert.equal(scopedRead.node.text, "Primary open");
+      const scopedClicked = await client.call("page.act", {
+        pageId,
+        action: { type: "click", target: { locator: scopedOpenLocator } },
+        expect: { text: "Scoped clicked", timeoutMs: 3_000 },
+      });
+      assert.equal(scopedClicked.verified, true);
       const after = await client.call("page.snapshot", {
         pageId,
         options: { interactiveOnly: false },
@@ -84,11 +105,11 @@ async function run() {
       assert.ok(events.some((event) => event.event === "dom.changed"), "shadow mutation emitted no event");
       assert.equal(delta.reset, false);
       assert.ok(delta.added.some((entry) => entry.node.name === "Dynamic action"), "delta omitted the shadow mutation");
-      assert.ok(delta.updated.some((entry) => entry.node.name === "Clicked"), "delta omitted the status update");
+      assert.ok(delta.updated.some((entry) => entry.node.name === "Scoped clicked"), "delta omitted the status update");
 
       console.log(JSON.stringify({
         protocol: `${hello.protocol}/${hello.version}`,
-        shadowNodes: 2,
+        shadowNodes: initial.nodes.length,
         typedValue: typed.proof?.value,
         dynamicNode: dynamicButton.name,
         captureBytes: captured.data.length,

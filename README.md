@@ -73,6 +73,9 @@ the document, revision, and read token that prove which page state was observed;
 that token can be passed to the next action to reject a changed page.
 When a locator is intentionally broad, pass its zero-based `index` and optionally
 the candidate `frameId` from `page.query` to select one match deterministically.
+Locators can also include a recursive `within` locator to scope a match to an
+ancestor, such as a button within a named row or dialog. Scope depth is bounded
+so malformed agent requests cannot turn DOM matching into unbounded work.
 
 In the live Electron runtime, semantic and CSS locators used by `page.read`,
 `page.act`, `page.wait`, and post-action expectations search the current DOM

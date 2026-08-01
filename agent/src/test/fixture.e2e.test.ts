@@ -125,6 +125,22 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(query.nodes[0].name, "Name");
   assert.equal(query.truncated, false);
 
+  const scopedQuery = result<PageQueryResult>(await router.handle(
+    request("page.query", {
+      pageId: FIXTURE_PAGE_ID,
+      locator: {
+        kind: "role",
+        role: "textbox",
+        name: "Name",
+        exact: true,
+        within: { kind: "role", role: "generic", name: "Fixture content", exact: true },
+      },
+    }),
+    context,
+  ));
+  assert.equal(scopedQuery.matchCount, 1);
+  assert.equal(scopedQuery.nodes[0].ref, query.nodes[0].ref);
+
   const firstWindow = result<PageSnapshotWindow>(await router.handle(
     request("page.snapshot.window", {
       pageId: FIXTURE_PAGE_ID,
@@ -215,7 +231,19 @@ test("runs the deterministic agent control contract", async () => {
       request("page.act", {
         pageId: FIXTURE_PAGE_ID,
         token: token(read),
-        action: { type: "fill", target: { ref: read.node.ref }, value: "Ada" },
+        action: {
+          type: "fill",
+          target: {
+            locator: {
+              kind: "role",
+              role: "textbox",
+              name: "Name",
+              exact: true,
+              within: { kind: "role", role: "generic", name: "Fixture content", exact: true },
+            },
+          },
+          value: "Ada",
+        },
       }),
       context,
     ),

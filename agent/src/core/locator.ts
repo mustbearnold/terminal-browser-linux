@@ -40,7 +40,8 @@ export function querySnapshot(
   options: LocatorResolutionOptions & { limit?: number } = {},
 ): SnapshotQueryResult {
   const limit = options.limit ?? 32;
-  const matchesInSnapshot = snapshot.nodes.filter((node) => matches(locator, node));
+  const nodesByRef = new Map(snapshot.nodes.map((node) => [String(node.ref), node]));
+  const matchesInSnapshot = snapshot.nodes.filter((node) => matches(locator, node, nodesByRef));
   const hiddenMatches = matchesInSnapshot.filter((node) => !node.visible);
   const visibleMatches = options.includeHidden === true
     ? matchesInSnapshot
@@ -62,7 +63,8 @@ export function querySnapshot(
 export class SnapshotLocatorResolver implements LocatorResolver {
   resolve(target: Target, snapshot: SnapshotView, options?: LocatorResolutionOptions): ResolvedTarget {
     if ("ref" in target) return this.resolveRef(target.ref, snapshot);
-    const locatorMatches = snapshot.nodes.filter((node) => matches(target.locator, node));
+    const nodesByRef = new Map(snapshot.nodes.map((node) => [String(node.ref), node]));
+    const locatorMatches = snapshot.nodes.filter((node) => matches(target.locator, node, nodesByRef));
     const matchesInSnapshot = target.frameId === undefined
       ? locatorMatches
       : locatorMatches.filter((node) => node.frameId === target.frameId);
@@ -172,7 +174,20 @@ function jsonObject(value: object): JsonValue {
   return result;
 }
 
-function matches(locator: Locator, node: SnapshotNode): boolean {
+function matches(locator: Locator, node: SnapshotNode, nodesByRef: ReadonlyMap<string, SnapshotNode>): boolean {
+  if (!matchesBase(locator, node)) return false;
+  if (locator.within === undefined) return true;
+  let parentRef = node.parent;
+  while (parentRef !== null) {
+    const parent = nodesByRef.get(String(parentRef));
+    if (!parent || parent.frameId !== node.frameId) return false;
+    if (matches(locator.within, parent, nodesByRef)) return true;
+    parentRef = parent.parent;
+  }
+  return false;
+}
+
+function matchesBase(locator: Locator, node: SnapshotNode): boolean {
   switch (locator.kind) {
     case "role":
       return node.role === locator.role && (!locator.name || textMatches(node.name, locator.name, locator.exact));

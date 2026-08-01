@@ -2,6 +2,7 @@ import { AgentError } from "./errors";
 import {
   AGENT_PROTOCOL,
   AGENT_PROTOCOL_VERSION,
+  MAX_LOCATOR_DEPTH,
   MAX_TARGET_INDEX,
   type AgentMessage,
 } from "./types";
@@ -137,7 +138,10 @@ function validateSnapshotWindowCursor(value: unknown, field: string): void {
   }
 }
 
-function validateLocator(value: unknown, field: string): void {
+function validateLocator(value: unknown, field: string, depth = 0): void {
+  if (depth >= MAX_LOCATOR_DEPTH) {
+    throw new AgentError("INVALID_MESSAGE", `${field} exceeds the maximum locator depth of ${MAX_LOCATOR_DEPTH}`);
+  }
   const locator = requireObject(value, field);
   const kind = requireString(locator.kind, `${field}.kind`);
   switch (kind) {
@@ -145,20 +149,21 @@ function validateLocator(value: unknown, field: string): void {
       requireString(locator.role, `${field}.role`);
       optionalString(locator, "name", `${field}.name`);
       optionalBoolean(locator, "exact", `${field}.exact`);
-      return;
+      break;
     case "text":
     case "label":
     case "placeholder":
       requireString(locator.text, `${field}.text`);
       optionalBoolean(locator, "exact", `${field}.exact`);
-      return;
+      break;
     case "testid":
     case "css":
       requireString(locator.value, `${field}.value`);
-      return;
+      break;
     default:
       throw new AgentError("INVALID_MESSAGE", `${field}.kind is unsupported`);
   }
+  if (locator.within !== undefined) validateLocator(locator.within, `${field}.within`, depth + 1);
 }
 
 function validateTarget(value: unknown, field: string): void {

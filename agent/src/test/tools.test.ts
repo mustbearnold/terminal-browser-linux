@@ -22,6 +22,8 @@ test("publishes only the structured tools accepted during negotiation", async ()
     manifest.tools.map((definition) => definition.name),
     ["terminal_browser_page_snapshot", "terminal_browser_page_read"],
   );
+  const readDefinition = manifest.tools.find((definition) => definition.name === "terminal_browser_page_read");
+  assert.ok(readDefinition?.inputSchema.$defs?.locator);
   await tools.close();
 });
 
@@ -38,7 +40,13 @@ test("validates and dispatches structured calls through the typed client", async
 
   const query = await tools.callTool("terminal_browser_page_query", {
     pageId: String(FIXTURE_PAGE_ID),
-    locator: { kind: "role", role: "textbox", name: "Name", exact: true },
+    locator: {
+      kind: "role",
+      role: "textbox",
+      name: "Name",
+      exact: true,
+      within: { kind: "role", role: "generic", name: "Fixture content", exact: true },
+    },
     options: { limit: 1 },
   });
   assert.equal(query.matchCount, 1);

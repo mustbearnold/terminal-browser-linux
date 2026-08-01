@@ -1,6 +1,7 @@
 export const AGENT_PROTOCOL = "terminal-browser.agent" as const;
 export const AGENT_PROTOCOL_VERSION = 1 as const;
 export const MAX_TARGET_INDEX = 255 as const;
+export const MAX_LOCATOR_DEPTH = 8 as const;
 
 type Brand<T, Name extends string> = T & { readonly __brand: Name };
 
@@ -244,12 +245,12 @@ export interface PageDialogResult {
 }
 
 export type Locator =
-  | { kind: "role"; role: string; name?: string; exact?: boolean }
-  | { kind: "text"; text: string; exact?: boolean }
-  | { kind: "label"; text: string; exact?: boolean }
-  | { kind: "placeholder"; text: string; exact?: boolean }
-  | { kind: "testid"; value: string }
-  | { kind: "css"; value: string };
+  | { kind: "role"; role: string; name?: string; exact?: boolean; within?: Locator }
+  | { kind: "text"; text: string; exact?: boolean; within?: Locator }
+  | { kind: "label"; text: string; exact?: boolean; within?: Locator }
+  | { kind: "placeholder"; text: string; exact?: boolean; within?: Locator }
+  | { kind: "testid"; value: string; within?: Locator }
+  | { kind: "css"; value: string; within?: Locator };
 
 export type Target =
   | { ref: SnapshotRef }

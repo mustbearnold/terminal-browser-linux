@@ -2493,22 +2493,52 @@ function liveLocatorScript(
         ? normalizedValue === normalizedExpected
         : normalizedValue.toLocaleLowerCase().includes(normalizedExpected.toLocaleLowerCase());
     };
-    const matchesLocator = (el) => {
-      switch (locator.kind) {
+    let invalid = false;
+    const matchesBase = (el, candidateLocator) => {
+      switch (candidateLocator.kind) {
         case "role":
-          return roleFor(el) === locator.role
-            && (!locator.name || textMatches(nameFor(el), locator.name, locator.exact));
+          return roleFor(el) === candidateLocator.role
+            && (!candidateLocator.name || textMatches(nameFor(el), candidateLocator.name, candidateLocator.exact));
         case "text":
-          return textMatches(rawTextFor(el) || nameFor(el), locator.text, locator.exact);
+          return textMatches(rawTextFor(el) || nameFor(el), candidateLocator.text, candidateLocator.exact);
         case "label":
-          return textMatches(el.getAttribute("label") || nameFor(el), locator.text, locator.exact);
+          return textMatches(el.getAttribute("label") || nameFor(el), candidateLocator.text, candidateLocator.exact);
         case "placeholder":
-          return textMatches(el.getAttribute("placeholder") || "", locator.text, locator.exact);
+          return textMatches(el.getAttribute("placeholder") || "", candidateLocator.text, candidateLocator.exact);
         case "testid":
-          return el.getAttribute("data-testid") === locator.value;
-        default:
-          return false;
+          return el.getAttribute("data-testid") === candidateLocator.value;
+        case "css":
+          try {
+            return el.matches(candidateLocator.value);
+          } catch (error) {
+            if (error instanceof DOMException && error.name === "SyntaxError") invalid = true;
+            return false;
+          }
       }
+    };
+    const matchesScoped = (el, candidateLocator) => {
+      if (!matchesBase(el, candidateLocator)) return false;
+      if (candidateLocator.within === undefined) return true;
+      let current = parentFor(el);
+      while (current) {
+        if (matchesScoped(current, candidateLocator.within)) return true;
+        current = parentFor(current);
+      }
+      return false;
+    };
+    const matchesWithin = (el, scopeLocator) => {
+      let current = parentFor(el);
+      while (current) {
+        if (matchesScoped(current, scopeLocator)) return true;
+        current = parentFor(current);
+      }
+      return false;
+    };
+    const matchesLocator = (el) => {
+      if (locator.kind === "css") {
+        return locator.within === undefined || matchesWithin(el, locator.within);
+      }
+      return matchesScoped(el, locator);
     };
     const roots = [document];
     const visitedRoots = new Set(roots);
@@ -2548,7 +2578,7 @@ function liveLocatorScript(
     let candidateCount = 0;
     let hiddenCandidateCount = 0;
     for (const el of matches) {
-      if (locator.kind !== "css" && !matchesLocator(el)) continue;
+      if (!matchesLocator(el)) continue;
       const captured = captureNode(el, null, true);
       if (!captured.included || !captured.node) continue;
       if (captured.node.visible || includeHidden) {
@@ -2559,6 +2589,7 @@ function liveLocatorScript(
         if (hiddenCandidates.length < maxCandidates) hiddenCandidates.push(captured.node);
       }
     }
+    if (invalid) return { ok: false, invalid: true };
     return {
       ok: true,
       candidates,

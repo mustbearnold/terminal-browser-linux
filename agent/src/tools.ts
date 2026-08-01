@@ -22,6 +22,8 @@ export const AGENT_TOOL_VERSION = 1 as const;
 export type AgentToolSchemaType = "array" | "boolean" | "number" | "object" | "string";
 
 export interface AgentToolSchema {
+  readonly $ref?: string;
+  readonly $defs?: Readonly<Record<string, AgentToolSchema>>;
   readonly type?: AgentToolSchemaType;
   readonly description?: string;
   readonly properties?: Readonly<Record<string, AgentToolSchema>>;
@@ -98,11 +100,11 @@ export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
   tool("terminal_browser_pages_activate", "Make a browser page the active page.", "pages.activate", "pages.activate", pageInput()),
   tool("terminal_browser_pages_close", "Close a browser page.", "pages.close", "pages.close", pageInput()),
   tool("terminal_browser_page_frames", "Read the current frame tree for a page.", "page.frames", "page.frames", pageInput()),
-  tool("terminal_browser_page_query", "Find a bounded set of live semantic DOM matches at one revision.", "page.query", "page.query", object({
+  tool("terminal_browser_page_query", "Find a bounded set of live semantic DOM matches at one revision.", "page.query", "page.query", withLocatorDefinitions(object({
     pageId: string("Page identifier."),
     locator: locatorSchema(),
     options: pageQueryOptions(),
-  }, ["pageId", "locator"])),
+  }, ["pageId", "locator"]))),
   tool("terminal_browser_page_snapshot", "Read a semantic DOM snapshot.", "page.snapshot", "snapshot.read", object({
     pageId: string("Page identifier."),
     options: snapshotOptions(),
@@ -121,35 +123,35 @@ export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
     pageId: string("Page identifier."),
     options: captureOptions(),
   }, ["pageId"])),
-  tool("terminal_browser_page_read", "Read one semantic element and return the revision token that proves what was observed.", "page.read", "page.read", object({
+  tool("terminal_browser_page_read", "Read one semantic element and return the revision token that proves what was observed.", "page.read", "page.read", withLocatorDefinitions(object({
     pageId: string("Page identifier."),
     target: targetSchema(),
     token: snapshotToken(),
-  }, ["pageId", "target"])),
-  tool("terminal_browser_page_act", "Perform a verified browser action against a semantic target.", "page.act", "page.act", object({
+  }, ["pageId", "target"]))),
+  tool("terminal_browser_page_act", "Perform a verified browser action against a semantic target.", "page.act", "page.act", withLocatorDefinitions(object({
     pageId: string("Page identifier."),
     action: actionSchema(),
     token: snapshotToken(),
     expect: expectationSchema(),
     output: snapshotOutputSchema(),
     idempotencyKey: string("Stable key for safe retry and replay."),
-  }, ["pageId", "action"])),
-  tool("terminal_browser_page_act_batch", "Execute sequential verified actions against the live page with one final output.", "page.act.batch", "page.act.batch", object({
+  }, ["pageId", "action"]))),
+  tool("terminal_browser_page_act_batch", "Execute sequential verified actions against the live page with one final output.", "page.act.batch", "page.act.batch", withLocatorDefinitions(object({
     pageId: string("Page identifier."),
     steps: { type: "array", items: actionBatchStepSchema() },
     output: snapshotOutputSchema(),
     idempotencyKey: string("Stable key for safe retry and replay."),
-  }, ["pageId", "steps"])),
+  }, ["pageId", "steps"]))),
   tool("terminal_browser_page_act_status", "Check the durable outcome of an idempotent browser action.", "page.act.status", "page.act.status", object({
     pageId: string("Page identifier."),
     idempotencyKey: string("Stable action key to inspect."),
   }, ["pageId", "idempotencyKey"])),
-  tool("terminal_browser_page_wait", "Wait for a URL, text, DOM state, element state, or quiet page.", "page.wait", "page.wait", object({
+  tool("terminal_browser_page_wait", "Wait for a URL, text, DOM state, element state, or quiet page.", "page.wait", "page.wait", withLocatorDefinitions(object({
     pageId: string("Page identifier."),
     condition: waitConditionSchema(),
     timeoutMs: number("Maximum wait duration in milliseconds."),
     output: snapshotOutputSchema(),
-  }, ["pageId", "condition"])),
+  }, ["pageId", "condition"]))),
   tool("terminal_browser_page_observe", "Subscribe to resumable page lifecycle and DOM events.", "page.observe", "page.observe", object({
     pageId: string("Page identifier."),
     events: { type: "array", items: string("Event type.") },
@@ -364,11 +366,23 @@ function captureOptions(): AgentToolSchema {
 }
 
 function locatorSchema(): AgentToolSchema {
+  return { $ref: "#/$defs/locator" };
+}
+
+function withLocatorDefinitions(schema: AgentToolSchema): AgentToolSchema {
+  return {
+    ...schema,
+    $defs: { locator: locatorDefinition() },
+  };
+}
+
+function locatorDefinition(): AgentToolSchema {
+  const within = { $ref: "#/$defs/locator", description: "Ancestor scope that must contain the match." };
   return {
     oneOf: [
-      object({ kind: string("Locator kind.", ["role"]), role: string("ARIA role."), name: string("Accessible name."), exact: boolean("Require an exact name.") }, ["kind", "role"]),
-      object({ kind: string("Locator kind.", ["text", "label", "placeholder"]), text: string("Text to match."), exact: boolean("Require an exact match.") }, ["kind", "text"]),
-      object({ kind: string("Locator kind.", ["testid", "css"]), value: string("Locator value.") }, ["kind", "value"]),
+      object({ kind: string("Locator kind.", ["role"]), role: string("ARIA role."), name: string("Accessible name."), exact: boolean("Require an exact name."), within }, ["kind", "role"]),
+      object({ kind: string("Locator kind.", ["text", "label", "placeholder"]), text: string("Text to match."), exact: boolean("Require an exact match."), within }, ["kind", "text"]),
+      object({ kind: string("Locator kind.", ["testid", "css"]), value: string("Locator value."), within }, ["kind", "value"]),
     ],
   };
 }

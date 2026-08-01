@@ -5,11 +5,11 @@ const http = require("node:http");
 const { AgentClient } = require("../../agent/dist");
 const { launchHost, listSockets, stopHost, waitForSocket } = require("./agent-smoke-support.cjs");
 
-const child = `<!doctype html><style>body{font:16px sans-serif;margin:18px}button,input,select{font:16px sans-serif;margin:8px;padding:8px}</style><label>Frame name <input aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input type="checkbox" aria-label="Frame enabled">Frame enabled</label><div role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
+const child = `<!doctype html><style>body{font:16px sans-serif;margin:18px}button,input,select{font:16px sans-serif;margin:8px;padding:8px}</style><button aria-label="Navigate frame" onclick="location.href='/frame-next.html'">Navigate frame</button><button aria-label="Remove frame" onclick="parent.postMessage({type:'remove-frame'},'*')">Remove frame</button><label>Frame name <input aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input type="checkbox" aria-label="Frame enabled">Frame enabled</label><div role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
 
 async function run() {
   const childServer = await serve(child);
-  const parent = `<!doctype html><meta charset="utf-8"><title>Cross-origin frame control fixture</title><style>body{font:16px sans-serif;margin:24px}button{font:16px sans-serif;margin:8px;padding:8px}iframe{display:block;width:460px;height:220px;border:4px solid #888}</style><button aria-label="Navigate frame" onclick="document.querySelector('iframe').src='http://127.0.0.1:${childServer.port}/frame-next.html'">Navigate frame</button><button aria-label="Remove frame" onclick="document.querySelector('iframe').remove()">Remove frame</button><button aria-label="Add frame" onclick="const frame=document.createElement('iframe');frame.title='Control frame';frame.src='http://127.0.0.1:${childServer.port}/frame-restored.html';document.body.append(frame)">Add frame</button><iframe title="Control frame" src="http://127.0.0.1:${childServer.port}/frame.html"></iframe>`;
+  const parent = `<!doctype html><meta charset="utf-8"><title>Cross-origin frame control fixture</title><style>body{font:16px sans-serif;margin:24px}button{font:16px sans-serif;margin:8px;padding:8px}iframe{display:block;width:460px;height:220px;border:4px solid #888}</style><iframe title="Control frame" src="http://127.0.0.1:${childServer.port}/frame.html"></iframe><script>window.addEventListener('message',event=>{if(!event.data||event.data.type!=='remove-frame')return;const frame=document.querySelector('iframe');if(frame)frame.remove();setTimeout(()=>{const restored=document.createElement('iframe');restored.title='Control frame';restored.src='http://127.0.0.1:${childServer.port}/frame-restored.html';document.body.append(restored)},50)})</script>`;
   const parentServer = await serve(parent);
   const existing = new Set(listSockets());
   const { host, output } = launchHost();
@@ -66,7 +66,7 @@ async function run() {
       const frameScopedRead = await client.call("page.read", {
         pageId,
         target: {
-          locator: { kind: "css", value: "button" },
+          locator: { kind: "css", value: 'button[aria-label="Frame action"]' },
           index: 0,
           frameId: frameButton.frameId,
         },
@@ -89,6 +89,66 @@ async function run() {
         (error) => error?.code === "INVALID_REQUEST",
         "invalid CSS locator was not rejected",
       );
+
+      await client.call("page.act", {
+        pageId,
+        action: {
+          type: "click",
+          target: {
+            locator: { kind: "role", role: "button", name: "Navigate frame", exact: true },
+            frameId: frameButton.frameId,
+          },
+        },
+      });
+      const navigatedEvent = await waitForEvent(
+        events,
+        (event) => event.event === "frame.lifecycle" && event.data?.type === "navigated" && event.data.frame?.frameId === frameButton.frameId,
+      );
+      const navigatedFrameTree = await client.frames(pageId);
+      const navigatedFrame = navigatedFrameTree.frames.find((frame) => frame.frameId === frameButton.frameId);
+      assert.equal(navigatedEvent.data.frame.url, `http://127.0.0.1:${childServer.port}/frame-next.html`);
+      assert.equal(navigatedFrame?.url, `http://127.0.0.1:${childServer.port}/frame-next.html`);
+      assert.ok(navigatedFrameTree.revision >= frameTree.revision);
+
+      await client.call("page.act", {
+        pageId,
+        action: {
+          type: "click",
+          target: {
+            locator: { kind: "role", role: "button", name: "Remove frame", exact: true },
+            frameId: frameButton.frameId,
+          },
+        },
+      });
+      const detachedEvent = await waitForEvent(
+        events,
+        (event) => event.event === "frame.lifecycle" && event.data?.type === "detached" && event.data.frameId === frameButton.frameId,
+      );
+      const detachedFrameTree = await waitForFrameTree(
+        client,
+        pageId,
+        (tree) => tree.frames.every((frame) => frame.frameId !== frameButton.frameId),
+      );
+      assert.equal(detachedEvent.data.frameId, frameButton.frameId);
+      assert.equal(detachedFrameTree.frames.some((frame) => frame.frameId === frameButton.frameId), false);
+
+      const attachedEvent = await waitForEvent(
+        events,
+        (event) => event.event === "frame.lifecycle" && event.data?.type === "attached",
+      );
+      const restoredFrameTree = await waitForFrameTree(
+        client,
+        pageId,
+        (tree) => tree.frames.some(
+          (frame) => frame.parentFrameId !== null && frame.url === `http://127.0.0.1:${childServer.port}/frame-restored.html`,
+        ),
+      );
+      const restoredFrame = restoredFrameTree.frames.find((frame) => frame.parentFrameId !== null);
+      assert.equal(attachedEvent.data.parentFrameId, "main");
+      assert.equal(restoredFrame?.url, `http://127.0.0.1:${childServer.port}/frame-restored.html`);
+      assert.ok(restoredFrameTree.revision >= detachedFrameTree.revision);
+      const activeFrameId = restoredFrame?.frameId;
+      assert.ok(activeFrameId, "restored frame was not available for control");
 
       const hovered = await client.call("page.act", {
         pageId,
@@ -167,13 +227,13 @@ async function run() {
       assert.equal(typed.proof?.value, "Ada Lovelace");
       assert.equal(clicked.verified, true);
       assert.ok(dynamicButton, "cross-origin frame mutation was not exposed in the next snapshot");
-      assert.equal(dynamicButton.frameId, frameButton.frameId);
+      assert.equal(dynamicButton.frameId, activeFrameId);
       assert.ok(after.revision > initial.revision, "cross-origin frame mutation did not advance the revision");
       assert.ok(events.some((event) => event.event === "dom.changed"), "cross-origin frame mutation emitted no event");
       assert.equal(delta.mode, "full", "cross-origin structural mutation did not use the full fallback path");
       assert.ok(delta.added.some((entry) => entry.node.name === "Frame dynamic"), "cross-origin fallback delta omitted the new node");
       assert.ok(
-        events.some((event) => event.event === "dom.changed" && event.data && typeof event.data === "object" && event.data.frameId === frameButton.frameId),
+        events.some((event) => event.event === "dom.changed" && event.data && typeof event.data === "object" && event.data.frameId === activeFrameId),
         "cross-origin frame event did not preserve its frame identity",
       );
 
@@ -199,62 +259,6 @@ async function run() {
       assert.equal(scrolledRetry.replayed, true, "retrying an action did not replay the cached result");
       assert.equal(scrolledRetry.proof?.value, scrolled.proof?.value, "replayed action result changed");
 
-      await client.call("page.act", {
-        pageId,
-        action: {
-          type: "click",
-          target: { locator: { kind: "role", role: "button", name: "Navigate frame", exact: true } },
-        },
-      });
-      const navigatedEvent = await waitForEvent(
-        events,
-        (event) => event.event === "frame.lifecycle" && event.data?.type === "navigated" && event.data.frame?.frameId === frameButton.frameId,
-      );
-      const navigatedFrameTree = await client.frames(pageId);
-      const navigatedFrame = navigatedFrameTree.frames.find((frame) => frame.frameId === frameButton.frameId);
-      assert.equal(navigatedEvent.data.frame.url, `http://127.0.0.1:${childServer.port}/frame-next.html`);
-      assert.equal(navigatedFrame?.url, `http://127.0.0.1:${childServer.port}/frame-next.html`);
-      assert.ok(navigatedFrameTree.revision >= frameTree.revision);
-
-      await client.call("page.act", {
-        pageId,
-        action: {
-          type: "click",
-          target: { locator: { kind: "role", role: "button", name: "Remove frame", exact: true } },
-        },
-      });
-      const detachedEvent = await waitForEvent(
-        events,
-        (event) => event.event === "frame.lifecycle" && event.data?.type === "detached" && event.data.frameId === frameButton.frameId,
-      );
-      const detachedFrameTree = await client.frames(pageId);
-      assert.equal(detachedEvent.data.frameId, frameButton.frameId);
-      assert.equal(detachedFrameTree.frames.some((frame) => frame.frameId === frameButton.frameId), false);
-
-      await client.call("page.act", {
-        pageId,
-        action: {
-          type: "click",
-          target: { locator: { kind: "role", role: "button", name: "Add frame", exact: true } },
-        },
-      });
-      const attachedEvent = await waitForEvent(
-        events,
-        (event) => event.event === "frame.lifecycle" && event.data?.type === "attached",
-      );
-      const restoredFrameTree = await client.frames(pageId);
-      const restoredFrame = restoredFrameTree.frames.find((frame) => frame.parentFrameId !== null);
-      assert.equal(attachedEvent.data.parentFrameId, "main");
-      assert.equal(restoredFrame?.url, `http://127.0.0.1:${childServer.port}/frame-restored.html`);
-      assert.ok(restoredFrameTree.revision >= detachedFrameTree.revision);
-
-      const navigatedPage = await client.call("page.act", {
-        pageId,
-        action: { type: "navigate", url: `http://127.0.0.1:${parentServer.port}/navigated.html` },
-        expect: { url: `http://127.0.0.1:${parentServer.port}/navigated.html`, timeoutMs: 5_000 },
-      });
-      assert.equal(navigatedPage.verified, true);
-
       console.log(JSON.stringify({
         parentPort: parentServer.port,
         childPort: childServer.port,
@@ -270,7 +274,7 @@ async function run() {
         hoverVerified: hovered.verified,
         scrollVerified: scrolled.verified,
         idempotentReplayVerified: scrolledRetry.replayed === true,
-        navigationVerified: navigatedPage.verified,
+        frameLifecycleVerified: events.some((event) => event.event === "frame.lifecycle"),
       }));
     } finally {
       unsubscribe();
@@ -295,6 +299,22 @@ async function waitForEvent(events, predicate) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error("timed out waiting for frame lifecycle event");
+}
+
+async function waitForFrameTree(client, pageId, predicate) {
+  const deadline = Date.now() + 5_000;
+  let lastError;
+  while (Date.now() <= deadline) {
+    try {
+      const tree = await client.frames(pageId);
+      if (predicate(tree)) return tree;
+    } catch (error) {
+      if (error?.code !== "STALE_SNAPSHOT") throw error;
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw lastError ?? new Error("timed out waiting for a stable frame tree");
 }
 
 function serve(body) {

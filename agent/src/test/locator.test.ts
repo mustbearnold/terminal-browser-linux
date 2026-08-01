@@ -57,6 +57,46 @@ test("resolves an unambiguous semantic locator", () => {
   assert.equal(result.ref, "r1");
 });
 
+test("resolves a semantic locator within its matching ancestor", () => {
+  const base = snapshot();
+  const primary = {
+    ref: asSnapshotRef("region-primary"),
+    frameId: asFrameId("frame-1"),
+    parent: null,
+    role: "region",
+    name: "Primary card",
+    visible: true,
+    enabled: true,
+    focusable: false,
+  };
+  const secondary = { ...primary, ref: asSnapshotRef("region-secondary"), name: "Secondary card" };
+  const primaryButton = {
+    ...base.nodes[0],
+    ref: asSnapshotRef("primary-button"),
+    parent: primary.ref,
+  };
+  const secondaryButton = {
+    ...base.nodes[0],
+    ref: asSnapshotRef("secondary-button"),
+    parent: secondary.ref,
+  };
+  const scoped = {
+    locator: {
+      kind: "role" as const,
+      role: "button",
+      name: "Continue",
+      exact: true,
+      within: { kind: "role" as const, role: "region", name: "Primary card", exact: true },
+    },
+  };
+  const nodes = [primary, secondary, primaryButton, secondaryButton];
+  const resolved = new SnapshotLocatorResolver().resolve(scoped, { nodes });
+  assert.equal(resolved.ref, primaryButton.ref);
+  const queried = querySnapshot(scoped.locator, { nodes });
+  assert.deepEqual(queried.candidates.map((node) => node.ref), [primaryButton.ref]);
+  assert.equal(queried.candidateCount, 1);
+});
+
 test("selects an indexed locator match within a frame", () => {
   const base = snapshot();
   const sameFrame = { ...base.nodes[0], ref: asSnapshotRef("r3") };
