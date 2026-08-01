@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const {
   AgentClient,
+  createAgentEvaluationProvenance,
   fixtureScenarios,
   MemoryTrace,
   runAgentEvaluation,
@@ -418,6 +419,7 @@ async function run() {
     const report = await runAgentEvaluation(client, scenarios, {
       trace,
       includeTrace: process.env.TERMINAL_BROWSER_EVALUATION_TRACE === "1",
+      provenance: createAgentEvaluationProvenance(),
     });
     const artifactPath = process.env.TERMINAL_BROWSER_EVALUATION_ARTIFACT;
     if (artifactPath) fs.writeFileSync(artifactPath, serializeAgentEvaluationReport(report), "utf8");

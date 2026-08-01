@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 
-import { fixtureScenarios, runAgentEvaluation, serializeAgentEvaluationReport } from "./evaluation";
+import { createAgentEvaluationProvenance, fixtureScenarios, runAgentEvaluation, serializeAgentEvaluationReport } from "./evaluation";
 import { createFixtureAgentHarness } from "./evaluation/loopback";
 
 const harness = createFixtureAgentHarness({ clientId: "evaluation" });
@@ -16,6 +16,7 @@ void (async () => {
     const report = await runAgentEvaluation(client, fixtureScenarios(page.pageId), {
       trace: harness.trace,
       includeTrace: process.argv.includes("--trace"),
+      provenance: createAgentEvaluationProvenance(),
     });
     const serialized = serializeAgentEvaluationReport(report);
     if (outputPath) await writeFile(outputPath, serialized, "utf8");

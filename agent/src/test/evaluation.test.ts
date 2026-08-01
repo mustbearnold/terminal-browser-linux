@@ -22,6 +22,7 @@ test("produces a versioned fixture report with trace windows and aggregate metri
       now: () => 1000,
       trace: harness.trace,
       includeTrace: true,
+      provenance: { source: { commit: "test-commit" }, runtime: { node: "test-node" } },
     });
 
     assert.equal(report.contract, AGENT_EVALUATION_PROTOCOL);
@@ -30,6 +31,7 @@ test("produces a versioned fixture report with trace windows and aggregate metri
     assert.equal(report.passed, 5);
     assert.equal(report.failed, 0);
     assert.equal(report.passRate, 1);
+    assert.deepEqual(report.provenance, { source: { commit: "test-commit" }, runtime: { node: "test-node" } });
     assert.ok(report.trace);
     assert.ok(report.trace.entries.length > 0);
     assert.ok(report.metrics.traceRequests > 0);
@@ -65,6 +67,10 @@ test("rejects malformed evaluation reports", async () => {
     assert.throws(
       () => assertAgentEvaluationReport({ ...report, passRate: 2 }),
       /pass rate is out of range/,
+    );
+    assert.throws(
+      () => assertAgentEvaluationReport({ ...report, provenance: { runtime: { node: 1 as unknown as string } } }),
+      /provenance runtime contains an invalid value/,
     );
   } finally {
     await harness.client.close();

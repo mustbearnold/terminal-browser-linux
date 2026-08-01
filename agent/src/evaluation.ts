@@ -47,6 +47,41 @@ export interface AgentEvaluationCase extends AgentEvaluationOutcome {
   trace?: AgentEvaluationTraceWindow;
 }
 
+export interface AgentEvaluationProvenance {
+  source?: {
+    commit?: string;
+    ref?: string;
+    workflow?: string;
+    runId?: string;
+  };
+  runtime?: {
+    node?: string;
+    platform?: string;
+    arch?: string;
+    runner?: string;
+  };
+}
+
+export function createAgentEvaluationProvenance(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): AgentEvaluationProvenance {
+  const source = {
+    ...(env.GITHUB_SHA ? { commit: env.GITHUB_SHA } : {}),
+    ...(env.GITHUB_REF_NAME ? { ref: env.GITHUB_REF_NAME } : {}),
+    ...(env.GITHUB_WORKFLOW ? { workflow: env.GITHUB_WORKFLOW } : {}),
+    ...(env.GITHUB_RUN_ID ? { runId: env.GITHUB_RUN_ID } : {}),
+  };
+  return {
+    ...(Object.keys(source).length === 0 ? {} : { source }),
+    runtime: {
+      node: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      ...(env.RUNNER_OS ? { runner: env.RUNNER_OS } : {}),
+    },
+  };
+}
+
 export interface AgentEvaluationReport {
   contract: typeof AGENT_EVALUATION_PROTOCOL;
   version: typeof AGENT_EVALUATION_VERSION;
@@ -59,6 +94,7 @@ export interface AgentEvaluationReport {
   durationMs: number;
   metrics: Readonly<Record<string, number>>;
   cases: readonly AgentEvaluationCase[];
+  provenance?: AgentEvaluationProvenance;
   trace?: TraceDocument;
 }
 
@@ -66,6 +102,7 @@ export interface AgentEvaluationOptions {
   now?: () => number;
   trace?: AgentEvaluationTraceSource;
   includeTrace?: boolean;
+  provenance?: AgentEvaluationProvenance;
 }
 
 export async function runAgentEvaluation(
@@ -124,6 +161,7 @@ export async function runAgentEvaluation(
     durationMs,
     metrics: aggregateMetrics(cases, durationMs),
     cases,
+    ...(options.provenance === undefined ? {} : { provenance: options.provenance }),
     ...(options.includeTrace && options.trace ? { trace: options.trace.document() } : {}),
   };
   return assertAgentEvaluationReport(report);
@@ -158,6 +196,7 @@ export function assertAgentEvaluationReport(report: AgentEvaluationReport): Agen
   if (report.passed + report.failed !== report.total) throw new Error("agent evaluation pass counts do not add up");
   if (report.passRate < 0 || report.passRate > 1) throw new Error("agent evaluation pass rate is out of range");
   if (!Number.isFinite(report.durationMs) || report.durationMs < 0) throw new Error("agent evaluation duration is invalid");
+  if (report.provenance !== undefined) validateProvenance(report.provenance);
   const ids = new Set<string>();
   for (const entry of report.cases) {
     if (!entry.id || ids.has(entry.id)) throw new Error(`agent evaluation case id is not unique: ${entry.id}`);
@@ -173,6 +212,25 @@ export function assertAgentEvaluationReport(report: AgentEvaluationReport): Agen
     if (!Number.isFinite(value)) throw new Error("agent evaluation aggregate metric is not finite");
   }
   return report;
+}
+
+function validateProvenance(value: unknown): void {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("agent evaluation provenance must be an object");
+  }
+  const provenance = value as Record<string, unknown>;
+  validateProvenanceSection(provenance.source, "source");
+  validateProvenanceSection(provenance.runtime, "runtime");
+}
+
+function validateProvenanceSection(value: unknown, name: string): void {
+  if (value === undefined) return;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`agent evaluation provenance ${name} must be an object`);
+  }
+  if (Object.values(value).some((entry) => typeof entry !== "string" || entry.length === 0)) {
+    throw new Error(`agent evaluation provenance ${name} contains an invalid value`);
+  }
 }
 
 export function fixtureScenarios(pageId: PageId): readonly AgentEvaluationScenario[] {
