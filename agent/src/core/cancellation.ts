@@ -35,11 +35,20 @@ export interface RequestExecution {
   finish(): void;
 }
 
+export interface RequestExecutionOptions {
+  cancelOnClose?: boolean;
+}
+
+interface ActiveRequest {
+  controller: AbortController;
+  cancelOnClose: boolean;
+}
+
 export class RequestCancellationRegistry {
-  private readonly active = new Map<string, AbortController>();
+  private readonly active = new Map<string, ActiveRequest>();
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  begin(requestId: string, deadlineMs?: number): RequestExecution {
+  begin(requestId: string, deadlineMs?: number, options: RequestExecutionOptions = {}): RequestExecution {
     if (this.active.has(requestId)) {
       throw new AgentError("INVALID_REQUEST", `request is already active: ${requestId}`);
     }
@@ -47,7 +56,7 @@ export class RequestCancellationRegistry {
       throw new AgentError("INVALID_REQUEST", "deadlineMs must be a non-negative safe integer within timer limits");
     }
     const controller = new AbortController();
-    this.active.set(requestId, controller);
+    this.active.set(requestId, { controller, cancelOnClose: options.cancelOnClose ?? true });
     if (deadlineMs !== undefined) {
       if (deadlineMs === 0) controller.abort(deadlineError(requestId));
       else {
@@ -64,9 +73,9 @@ export class RequestCancellationRegistry {
   }
 
   cancel(requestId: string): boolean {
-    const controller = this.active.get(requestId);
-    if (!controller) return false;
-    controller.abort(new AgentError("REQUEST_CANCELLED", "request was cancelled", {
+    const entry = this.active.get(requestId);
+    if (!entry) return false;
+    entry.controller.abort(new AgentError("REQUEST_CANCELLED", "request was cancelled", {
       retryable: true,
       details: { requestId },
     }));
@@ -75,16 +84,18 @@ export class RequestCancellationRegistry {
 
   cancelAll(): void {
     const reason = new AgentError("TRANSPORT_CLOSED", "agent transport closed", { retryable: true });
-    for (const controller of this.active.values()) {
-      controller.abort(reason);
+    for (const [requestId, entry] of this.active) {
+      if (!entry.cancelOnClose) continue;
+      entry.controller.abort(reason);
+      this.active.delete(requestId);
+      const timer = this.timers.get(requestId);
+      if (timer) clearTimeout(timer);
+      this.timers.delete(requestId);
     }
-    for (const timer of this.timers.values()) clearTimeout(timer);
-    this.active.clear();
-    this.timers.clear();
   }
 
   private finish(requestId: string, controller: AbortController): void {
-    if (this.active.get(requestId) !== controller) return;
+    if (this.active.get(requestId)?.controller !== controller) return;
     this.active.delete(requestId);
     const timer = this.timers.get(requestId);
     if (timer) clearTimeout(timer);

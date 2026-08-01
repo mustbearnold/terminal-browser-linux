@@ -53,7 +53,9 @@ export class AgentRequestRouter {
     }
     let execution: RequestExecution | undefined;
     try {
-      execution = this.registry(connection).begin(request.requestId, request.deadlineMs);
+      execution = this.registry(connection).begin(request.requestId, request.deadlineMs, {
+        cancelOnClose: request.op !== "page.act" || request.idempotencyKey === undefined,
+      });
       throwIfAborted(execution.signal);
       const result = await this.dispatch(request, connection, execution.signal);
       throwIfAborted(execution.signal);

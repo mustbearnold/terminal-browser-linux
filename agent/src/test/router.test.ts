@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { AgentRequestRouter } from "../core/router";
+import { throwIfAborted } from "../core/cancellation";
 import type { AgentRuntime } from "../core/runtime";
 import type { PageSession } from "../core/page";
 import {
@@ -146,4 +147,48 @@ test("rejects actions that the runtime does not advertise", async () => {
   assert.equal(response.ok, false);
   assert.equal(response.error?.code, "CAPABILITY_UNAVAILABLE");
   assert.deepEqual(response.error?.details, { capability: "page.act.navigate" });
+});
+
+test("continues an idempotent action after its connection closes", async () => {
+  let started!: () => void;
+  const startedPromise = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const delayedPage: PageSession = {
+    ...page(),
+    act: async (_action, _token, _expect, signal) => {
+      started();
+      await gate;
+      throwIfAborted(signal);
+      return { verified: true, effects: [], snapshot: pageSnapshot };
+    },
+  };
+  const delayedRuntime: AgentRuntime = {
+    ...runtime(),
+    getPage: (candidate) => (candidate === pageId ? delayedPage : undefined),
+  };
+  const router = new AgentRequestRouter(delayedRuntime);
+  const firstContext = { clientId: "retry-client", emit: () => {}, addSubscription: () => {} };
+  const secondContext = { clientId: "retry-client", emit: () => {}, addSubscription: () => {} };
+  const request = envelope({
+    op: "page.act",
+    pageId,
+    idempotencyKey: "persisted-action",
+    action: { type: "click", target: { ref: asSnapshotRef("r1") } },
+  });
+
+  const first = router.handle(request, firstContext);
+  await startedPromise;
+  router.close(firstContext);
+  const retry = router.handle({ ...request, requestId: "retry-request" }, secondContext);
+  release();
+
+  const [firstResponse, retryResponse] = await Promise.all([first, retry]);
+  assert.equal(firstResponse.ok, true);
+  assert.equal(retryResponse.ok, true);
+  assert.equal((retryResponse.result as { replayed?: boolean }).replayed, true);
 });
