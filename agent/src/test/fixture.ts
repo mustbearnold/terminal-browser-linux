@@ -1,6 +1,7 @@
 import { AgentEventBus } from "../core/events";
 import type { EventSubscriptionOptions } from "../core/events";
 import { abortableDelay, throwIfAborted } from "../core/cancellation";
+import { matchesSnapshotNodeText, matchesWaitElementState } from "../core/element-state";
 import { SnapshotLocatorResolver } from "../core/locator";
 import { RevisionedPageSession, type PageBackend, type PageSession } from "../core/page";
 import type { AgentRuntime } from "../core/runtime";
@@ -23,11 +24,9 @@ import {
   type PageIdentity,
   type PageId,
   type PageSnapshot,
-  type SnapshotNode,
   type SnapshotOptions,
   type SnapshotToken,
   type WaitCondition,
-  type WaitElementState,
   type WaitResult,
 } from "../protocol/types";
 
@@ -93,18 +92,6 @@ export class FixtureRuntime implements AgentRuntime {
     }
     this.closed = true;
   }
-}
-
-function matchesWaitElementState(node: SnapshotNode, state?: WaitElementState): boolean {
-  if (!state) return true;
-  if (state.visible !== undefined && node.visible !== state.visible) return false;
-  if (state.enabled !== undefined && node.enabled !== state.enabled) return false;
-  if (state.focused !== undefined && (node.state?.focused ?? false) !== state.focused) return false;
-  if (state.value !== undefined && node.state?.value !== state.value) return false;
-  if (state.checked !== undefined && node.state?.checked !== state.checked) return false;
-  if (state.selected !== undefined && node.state?.selected !== state.selected) return false;
-  if (state.text !== undefined && !`${node.name} ${node.text ?? ""}`.toLocaleLowerCase().includes(state.text.toLocaleLowerCase())) return false;
-  return true;
 }
 
 class FixturePageBackend implements PageBackend {
@@ -199,7 +186,7 @@ class FixturePageBackend implements PageBackend {
         name: "Fixture content",
         ...(includeText ? { text: "Fixture content" } : {}),
         ...(includeGeometry ? { box: { x: 12, y: 100, width: 180, height: 24 } } : {}),
-        visible: true,
+        visible: this.ready,
         enabled: true,
         focusable: false,
       },
@@ -460,18 +447,18 @@ class FixturePageBackend implements PageBackend {
         const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
         if (condition.target) {
           try {
-            this.resolver.resolve(condition.target, snapshot);
-            satisfied = true;
+            const target = this.resolver.resolve(condition.target, snapshot, { includeHidden: true });
+            satisfied = matchesSnapshotNodeText(target.node, condition.value);
           } catch {}
         } else {
           satisfied = snapshot.nodes.some((node) =>
-            `${node.name} ${node.text ?? ""}`.toLocaleLowerCase().includes(condition.value.toLocaleLowerCase()),
+            matchesSnapshotNodeText(node, condition.value),
           );
         }
       } else if (condition.type === "element") {
         const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
         try {
-          const target = this.resolver.resolve(condition.target, snapshot);
+          const target = this.resolver.resolve(condition.target, snapshot, { includeHidden: true });
           satisfied = matchesWaitElementState(target.node, condition.state);
         } catch {}
       } else {

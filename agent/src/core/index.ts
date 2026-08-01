@@ -1,5 +1,6 @@
 export * from "./cancellation";
 export * from "./capabilities";
+export * from "./element-state";
 export * from "./events";
 export * from "./idempotency";
 export * from "./journal";

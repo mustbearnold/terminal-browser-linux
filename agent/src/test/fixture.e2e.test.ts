@@ -107,6 +107,33 @@ test("runs the deterministic agent control contract", async () => {
   );
   assert.equal(snapshot.nodes.some((node) => node.role === "generic"), true);
 
+  const hiddenWait = result<{ satisfied: boolean }>(await router.handle(
+    request("page.wait", {
+      pageId: FIXTURE_PAGE_ID,
+      condition: {
+        type: "element",
+        target: { locator: { kind: "role", role: "generic", name: "Fixture content", exact: true } },
+        state: { visible: false },
+      },
+    }),
+    context,
+  ));
+  assert.equal(hiddenWait.satisfied, true);
+
+  const wrongTargetedTextWait = result<{ satisfied: boolean }>(await router.handle(
+    request("page.wait", {
+      pageId: FIXTURE_PAGE_ID,
+      condition: {
+        type: "text",
+        value: "Ready",
+        target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } },
+      },
+      timeoutMs: 10,
+    }),
+    context,
+  ));
+  assert.equal(wrongTargetedTextWait.satisfied, false);
+
   const read = result<SnapshotNode>(
     await router.handle(
       request("page.read", {
@@ -161,6 +188,18 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(pressed.verified, true);
   assert.equal(pressed.proof?.value, "Ada Lovelace");
   assert.equal(pressed.snapshot?.nodes.some((node) => node.name === "Ready"), true);
+  const revealedWait = result<{ satisfied: boolean }>(await router.handle(
+    request("page.wait", {
+      pageId: FIXTURE_PAGE_ID,
+      condition: {
+        type: "element",
+        target: { locator: { kind: "role", role: "generic", name: "Fixture content", exact: true } },
+        state: { visible: true },
+      },
+    }),
+    context,
+  ));
+  assert.equal(revealedWait.satisfied, true);
   assert.deepEqual(events.map((event) => event.event), ["dom.changed", "dom.changed", "dom.changed"]);
 
   const delta = result<PageSnapshotDelta>(
@@ -201,6 +240,19 @@ test("runs the deterministic agent control contract", async () => {
     ),
   );
   assert.equal(waited.satisfied, true);
+
+  const targetedTextWait = result<{ satisfied: boolean }>(await router.handle(
+    request("page.wait", {
+      pageId: FIXTURE_PAGE_ID,
+      condition: {
+        type: "text",
+        value: "Ready",
+        target: { locator: { kind: "role", role: "status", name: "Ready", exact: true } },
+      },
+    }),
+    context,
+  ));
+  assert.equal(targetedTextWait.satisfied, true);
 
   const valueWait = result<{ satisfied: boolean }>(await router.handle(
     request("page.wait", {

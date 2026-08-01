@@ -74,6 +74,22 @@ test("normalizes whitespace and ignores hidden locator candidates", () => {
   assert.equal(result.ref, "r1");
 });
 
+test("resolves hidden locator candidates only when requested", () => {
+  const hidden = {
+    ...snapshot().nodes[0],
+    ref: asSnapshotRef("hidden"),
+    name: "Hidden action",
+    visible: false,
+  };
+  const target = { locator: { kind: "role" as const, role: "button", name: "Hidden action", exact: true } };
+  assert.throws(
+    () => new SnapshotLocatorResolver().resolve(target, { nodes: [hidden] }),
+    (error: unknown) => error instanceof AgentError && error.code === "TARGET_NOT_FOUND",
+  );
+  const result = new SnapshotLocatorResolver().resolve(target, { nodes: [hidden] }, { includeHidden: true });
+  assert.equal(result.ref, "hidden");
+});
+
 test("fails instead of guessing when a locator is ambiguous", () => {
   assert.throws(
     () =>

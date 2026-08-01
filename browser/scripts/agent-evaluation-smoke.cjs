@@ -148,26 +148,53 @@ function semanticScenarios(pageId) {
           },
           timeoutMs: 1_000,
         });
+        const wrongTargetedTextWait = await client.call("page.wait", {
+          pageId,
+          condition: {
+            type: "text",
+            value: "Ready",
+            target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } },
+          },
+          timeoutMs: 100,
+        });
         const snapshot = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
         const fullName = snapshot.nodes.find((node) => node.attributes?.id === "full-name");
         const notifications = snapshot.nodes.find((node) => node.attributes?.id === "notifications");
         const passed = filled.verified && filled.proof?.name === "Full name" && filled.proof.value === "Ada"
           && checked.verified && checked.proof?.value === "true"
           && valueWait.satisfied && checkedWait.satisfied
+          && wrongTargetedTextWait.satisfied === false
           && fullName?.state?.value === "Ada" && fullName.state.invalid === undefined
           && notifications?.state?.checked === true;
-        return { passed, metrics: { verifiedActions: 2, stateUpdates: passed ? 2 : 0, elementWaits: Number(valueWait.satisfied) + Number(checkedWait.satisfied) } };
+        return {
+          passed,
+          metrics: {
+            verifiedActions: 2,
+            stateUpdates: passed ? 2 : 0,
+            elementWaits: Number(valueWait.satisfied) + Number(checkedWait.satisfied),
+            targetedTextWaits: Number(wrongTargetedTextWait.satisfied === false),
+          },
+        };
       },
     },
     {
       id: "semantic-visibility-safety",
       name: "semantic-visibility-safety",
       async run(client) {
+        const hiddenWait = await client.call("page.wait", {
+          pageId,
+          condition: {
+            type: "element",
+            target: { locator: { kind: "role", role: "button", name: "Hidden action", exact: true } },
+            state: { visible: false },
+          },
+          timeoutMs: 1_000,
+        });
         await expectCode(client.call("page.act", { pageId, action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Hidden action", exact: true } } } }), "TARGET_NOT_FOUND");
         await expectCode(client.call("page.act", { pageId, action: { type: "click", target: { locator: { kind: "role", role: "button", name: "ARIA hidden action", exact: true } } } }), "TARGET_NOT_FOUND");
         await expectCode(client.call("page.act", { pageId, action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Inert action", exact: true } } } }), "TARGET_NOT_FOUND");
         await expectCode(client.call("page.act", { pageId, action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Disabled action", exact: true } } } }), "NOT_INTERACTABLE");
-        return { passed: true, metrics: { unsafeTargetsRejected: 4 } };
+        return { passed: hiddenWait.satisfied === true, metrics: { unsafeTargetsRejected: 4, hiddenWaits: Number(hiddenWait.satisfied) } };
       },
     },
   ];

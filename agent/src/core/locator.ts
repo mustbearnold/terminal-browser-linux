@@ -15,14 +15,20 @@ export interface ResolvedTarget {
   node: SnapshotNode;
 }
 
+export interface LocatorResolutionOptions {
+  includeHidden?: boolean;
+}
+
 export interface LocatorResolver {
-  resolve(target: Target, snapshot: SnapshotView): ResolvedTarget;
+  resolve(target: Target, snapshot: SnapshotView, options?: LocatorResolutionOptions): ResolvedTarget;
 }
 
 export class SnapshotLocatorResolver implements LocatorResolver {
-  resolve(target: Target, snapshot: SnapshotView): ResolvedTarget {
+  resolve(target: Target, snapshot: SnapshotView, options?: LocatorResolutionOptions): ResolvedTarget {
     if ("ref" in target) return this.resolveRef(target.ref, snapshot);
-    const candidates = snapshot.nodes.filter((node) => node.visible && matches(target.locator, node));
+    const candidates = snapshot.nodes.filter((node) =>
+      (options?.includeHidden === true || node.visible) && matches(target.locator, node),
+    );
     if (candidates.length === 0) {
       throw new AgentError("TARGET_NOT_FOUND", "locator matched no snapshot nodes", {
         retryable: true,

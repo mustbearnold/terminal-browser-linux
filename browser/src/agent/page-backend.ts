@@ -9,6 +9,8 @@ import {
   asFrameId,
   asSnapshotRef,
   diffSnapshots,
+  matchesSnapshotNodeText,
+  matchesWaitElementState,
   throwIfAborted,
 } from "terminal-browser-agent";
 import type {
@@ -32,6 +34,7 @@ import type {
   PageIdentity,
   PageSnapshot,
   SnapshotDeltaCapture,
+  LocatorResolutionOptions,
   ResolvedTarget,
   SnapshotView,
   SnapshotOptions,
@@ -39,7 +42,6 @@ import type {
   SnapshotToken,
   Target,
   WaitCondition,
-  WaitElementState,
   WaitResult,
 } from "terminal-browser-agent";
 import type {
@@ -160,27 +162,33 @@ export class ElectronPageBackend implements PageBackend {
     };
   }
 
-  async resolve(target: Target, snapshot: SnapshotView, signal?: AbortSignal): Promise<ResolvedTarget> {
+  async resolve(
+    target: Target,
+    snapshot: SnapshotView,
+    signal?: AbortSignal,
+    options?: LocatorResolutionOptions,
+  ): Promise<ResolvedTarget> {
     throwIfAborted(signal);
     if (!("locator" in target) || target.locator.kind !== "css") {
-      return this.resolver.resolve(target, snapshot);
+      return this.resolver.resolve(target, snapshot, options);
     }
 
+    const includeHidden = options?.includeHidden === true;
     let candidateSnapshot = snapshot;
     let refs = await this.cssRefs(target.locator.value, signal);
-    let nodes = nodesForRefs(refs, candidateSnapshot);
-    if (nodes.length !== refs.length) {
+    let nodes = nodesForRefs(refs, candidateSnapshot, includeHidden);
+    if (refs.some((ref) => !candidateSnapshot.nodes.some((node) => String(node.ref) === ref))) {
       candidateSnapshot = await this.snapshot({
         interactiveOnly: false,
         maxNodes: CSS_RESOLUTION_MAX_NODES,
       }, signal);
       refs = await this.cssRefs(target.locator.value, signal);
-      nodes = nodesForRefs(refs, candidateSnapshot);
+      nodes = nodesForRefs(refs, candidateSnapshot, includeHidden);
     }
     if (refs.length === 0) {
       throw new AgentError("TARGET_NOT_FOUND", "CSS locator matched no snapshot nodes", { retryable: true });
     }
-    if (nodes.length !== refs.length) {
+    if (refs.some((ref) => !candidateSnapshot.nodes.some((node) => String(node.ref) === ref))) {
       throw new AgentError("TARGET_NOT_FOUND", "CSS locator matched a node outside the current snapshot", {
         retryable: true,
       });
@@ -991,21 +999,21 @@ export class ElectronPageBackend implements PageBackend {
         const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
         if (condition.target) {
           try {
-            await this.resolve(condition.target, snapshot, signal);
-            satisfied = true;
+            const target = await this.resolve(condition.target, snapshot, signal, { includeHidden: true });
+            satisfied = matchesSnapshotNodeText(target.node, condition.value);
           } catch (error) {
             if (signal?.aborted) throw error;
           }
         } else {
           satisfied = snapshot.nodes.some((node) =>
-            textContains(`${node.name} ${node.text ?? ""}`, condition.value),
+            matchesSnapshotNodeText(node, condition.value),
           );
         }
       }
       if (condition.type === "element") {
         const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
         try {
-          const target = await this.resolve(condition.target, snapshot, signal);
+          const target = await this.resolve(condition.target, snapshot, signal, { includeHidden: true });
           satisfied = matchesWaitElementState(target.node, condition.state);
         } catch (error) {
           if (signal?.aborted) throw error;
@@ -1346,7 +1354,7 @@ export class ElectronPageBackend implements PageBackend {
       const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
       if (
         !snapshot.nodes.some((node) =>
-          textContains(`${node.name} ${node.text ?? ""}`, expect.text!),
+          matchesSnapshotNodeText(node, expect.text!),
         )
       ) {
         return false;
@@ -1418,26 +1426,6 @@ function waitForWake(
   });
 }
 
-function textContains(value: string, expected: string): boolean {
-  return normalizeAgentText(value).toLocaleLowerCase().includes(normalizeAgentText(expected).toLocaleLowerCase());
-}
-
-function matchesWaitElementState(node: SnapshotNode, state?: WaitElementState): boolean {
-  if (!state) return true;
-  if (state.visible !== undefined && node.visible !== state.visible) return false;
-  if (state.enabled !== undefined && node.enabled !== state.enabled) return false;
-  if (state.focused !== undefined && (node.state?.focused ?? false) !== state.focused) return false;
-  if (state.value !== undefined && node.state?.value !== state.value) return false;
-  if (state.checked !== undefined && node.state?.checked !== state.checked) return false;
-  if (state.selected !== undefined && node.state?.selected !== state.selected) return false;
-  if (state.text !== undefined && !textContains(`${node.name} ${node.text ?? ""}`, state.text)) return false;
-  return true;
-}
-
-function normalizeAgentText(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
 function originForUrl(url: string): string {
   try {
     return new URL(url).origin;
@@ -1446,9 +1434,9 @@ function originForUrl(url: string): string {
   }
 }
 
-function nodesForRefs(refs: readonly string[], snapshot: SnapshotView) {
+function nodesForRefs(refs: readonly string[], snapshot: SnapshotView, includeHidden: boolean) {
   const wanted = new Set(refs);
-  return snapshot.nodes.filter((node) => wanted.has(String(node.ref)));
+  return snapshot.nodes.filter((node) => wanted.has(String(node.ref)) && (includeHidden || node.visible));
 }
 
 function snapshotOptionsKey(options?: SnapshotOptions): string {

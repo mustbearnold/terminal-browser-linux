@@ -4,7 +4,7 @@ import { SnapshotLocatorResolver } from "./locator";
 import { AgentError } from "../protocol/errors";
 import { applySnapshotDelta, diffSnapshots } from "./snapshots";
 import type { EventSubscription, EventSubscriptionOptions } from "./events";
-import type { ResolvedTarget, SnapshotView } from "./locator";
+import type { LocatorResolutionOptions, ResolvedTarget, SnapshotView } from "./locator";
 import type {
   ActionExpectation,
   ActionResult,
@@ -30,7 +30,12 @@ import type { PageId } from "../protocol/types";
 
 export interface PageBackend {
   readonly pageId: PageId;
-  resolve?(target: Target, snapshot: SnapshotView, signal?: AbortSignal): Promise<ResolvedTarget>;
+  resolve?(
+    target: Target,
+    snapshot: SnapshotView,
+    signal?: AbortSignal,
+    options?: LocatorResolutionOptions,
+  ): Promise<ResolvedTarget>;
   identity(signal?: AbortSignal): Promise<PageIdentity>;
   frames(signal?: AbortSignal): Promise<PageFrameSnapshot>;
   snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<Omit<PageSnapshot, "snapshotId">>;
@@ -59,7 +64,12 @@ export type SnapshotDeltaCapture = Omit<PageSnapshotDelta, "snapshotId" | "base"
 
 export interface PageSession {
   readonly pageId: PageId;
-  resolve?(target: Target, snapshot: PageSnapshot, signal?: AbortSignal): Promise<ResolvedTarget>;
+  resolve?(
+    target: Target,
+    snapshot: PageSnapshot,
+    signal?: AbortSignal,
+    options?: LocatorResolutionOptions,
+  ): Promise<ResolvedTarget>;
   frames(signal?: AbortSignal): Promise<PageFrameSnapshot>;
   snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<PageSnapshot>;
   snapshotDelta(base: SnapshotToken, options?: SnapshotOptions, signal?: AbortSignal): Promise<PageSnapshotDelta>;
@@ -93,10 +103,15 @@ export class RevisionedPageSession implements PageSession {
     return this.backend.pageId;
   }
 
-  async resolve(target: Target, snapshot: PageSnapshot, signal?: AbortSignal): Promise<ResolvedTarget> {
+  async resolve(
+    target: Target,
+    snapshot: PageSnapshot,
+    signal?: AbortSignal,
+    options?: LocatorResolutionOptions,
+  ): Promise<ResolvedTarget> {
     throwIfAborted(signal);
-    if (this.backend.resolve) return this.backend.resolve(target, snapshot, signal);
-    return this.snapshotLocator.resolve(target, snapshot);
+    if (this.backend.resolve) return this.backend.resolve(target, snapshot, signal, options);
+    return this.snapshotLocator.resolve(target, snapshot, options);
   }
 
   async frames(signal?: AbortSignal): Promise<PageFrameSnapshot> {
