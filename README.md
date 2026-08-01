@@ -52,6 +52,11 @@ Locator failures include bounded candidate summaries, hidden-candidate counts,
 and whether the snapshot was truncated so an agent can recover without blindly
 repeating the same lookup.
 
+In the live Electron runtime, semantic and CSS locators used by `page.read` and
+`page.act` search the current DOM directly across frames and shadow roots. This
+keeps locator search independent of the first snapshot's node cap; ambiguous
+matches fail with bounded diagnostics instead of being guessed.
+
 The default agent runtime keeps action deduplication and event history in
 memory. Set `TERMINAL_BROWSER_AGENT_JOURNAL=/absolute/path/to/journal` to opt
 into durable action outcomes and per-page event history.

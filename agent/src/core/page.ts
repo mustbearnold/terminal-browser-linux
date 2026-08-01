@@ -34,6 +34,11 @@ import type { PageId } from "../protocol/types";
 
 export interface PageBackend {
   readonly pageId: PageId;
+  resolveTarget?(
+    target: Target,
+    signal?: AbortSignal,
+    options?: LocatorResolutionOptions,
+  ): Promise<ResolvedTarget>;
   resolve?(
     target: Target,
     snapshot: SnapshotView,
@@ -73,6 +78,12 @@ export type SnapshotDeltaCapture = Omit<PageSnapshotDelta, "snapshotId" | "base"
 
 export interface PageSession {
   readonly pageId: PageId;
+  resolveTarget?(
+    target: Target,
+    token?: SnapshotToken,
+    signal?: AbortSignal,
+    options?: LocatorResolutionOptions,
+  ): Promise<ResolvedTarget>;
   resolve?(
     target: Target,
     snapshot: PageSnapshot,
@@ -133,6 +144,29 @@ export class RevisionedPageSession implements PageSession {
     throwIfAborted(signal);
     if (this.backend.resolve) return this.backend.resolve(target, snapshot, signal, options);
     return this.snapshotLocator.resolve(target, snapshot, options);
+  }
+
+  async resolveTarget(
+    target: Target,
+    token?: SnapshotToken,
+    signal?: AbortSignal,
+    options?: LocatorResolutionOptions,
+  ): Promise<ResolvedTarget> {
+    throwIfAborted(signal);
+    if (this.backend.resolveTarget) {
+      const before = await this.backend.identity(signal);
+      this.ledger.synchronize(before.pageId, before.documentId, before.revision);
+      if (token) this.ledger.assertFresh(token);
+      const resolved = await this.backend.resolveTarget(target, signal, options);
+      throwIfAborted(signal);
+      const after = await this.backend.identity(signal);
+      this.ledger.synchronize(after.pageId, after.documentId, after.revision);
+      if (token) this.ledger.assertFresh(token);
+      return resolved;
+    }
+    const snapshot = await this.snapshot(undefined, signal);
+    if (token) this.ledger.assertFresh(token);
+    return this.resolve(target, snapshot, signal, options);
   }
 
   async frames(signal?: AbortSignal): Promise<PageFrameSnapshot> {

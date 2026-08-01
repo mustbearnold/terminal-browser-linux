@@ -76,6 +76,23 @@ function largeWindowScenarios(pageId) {
     id: "large-window-ref-reaches-action",
     name: "large-window-ref-reaches-action",
     async run(client) {
+      const tailLocator = { locator: { kind: "role", role: "button", name: "Tail action", exact: true } };
+      const liveRead = await client.call("page.read", { pageId, target: tailLocator });
+      let ambiguity;
+      try {
+        await client.call("page.read", {
+          pageId,
+          target: { locator: { kind: "role", role: "button", name: "Large", exact: false } },
+        });
+      } catch (error) {
+        ambiguity = error;
+      }
+      const locatedClick = await client.call("page.act", {
+        pageId,
+        action: { type: "click", target: tailLocator },
+        expect: { text: "Tail clicked" },
+        output: { snapshot: "none" },
+      });
       let current = await client.call("page.snapshot.window", {
         pageId,
         options: { limit: 256 },
@@ -100,9 +117,22 @@ function largeWindowScenarios(pageId) {
         expect: { text: "Tail clicked" },
         output: { snapshot: "none" },
       });
+      const ambiguityDetails = ambiguity?.details;
       return {
-        passed: clicked.verified,
-        metrics: { largeWindowPages: windows, largeWindowNodes: current.totalNodes, largeTargetOffset: current.offset },
+        passed: liveRead.attributes?.id === "tail"
+          && ambiguity?.code === "AMBIGUOUS_TARGET"
+          && ambiguityDetails?.candidateCount === 1099
+          && ambiguityDetails?.candidatesTruncated === true
+          && locatedClick.verified
+          && clicked.verified,
+        metrics: {
+          largeWindowPages: windows,
+          largeWindowNodes: current.totalNodes,
+          largeTargetOffset: current.offset,
+          liveLocatorRead: liveRead.attributes?.id === "tail" ? 1 : 0,
+          liveLocatorAction: locatedClick.verified ? 1 : 0,
+          ambiguousLiveCandidates: ambiguityDetails?.candidateCount ?? 0,
+        },
       };
     },
   }];

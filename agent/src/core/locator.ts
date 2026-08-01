@@ -72,18 +72,22 @@ export function targetResolutionDetails(
   options: {
     hiddenCandidates?: readonly SnapshotNode[];
     snapshotTruncated?: boolean;
+    candidateCount?: number;
+    hiddenCandidateCount?: number;
+    candidatesTruncated?: boolean;
+    hiddenCandidatesTruncated?: boolean;
   } = {},
 ): JsonValue {
   const hiddenCandidates = options.hiddenCandidates ?? [];
   return {
-    candidateCount: candidates.length,
+    candidateCount: options.candidateCount ?? candidates.length,
     candidateRefs: candidates.slice(0, MAX_DIAGNOSTIC_CANDIDATES).map((node) => String(node.ref)),
     candidates: candidates.slice(0, MAX_DIAGNOSTIC_CANDIDATES).map(candidateDetails),
-    hiddenCandidateCount: hiddenCandidates.length,
+    hiddenCandidateCount: options.hiddenCandidateCount ?? hiddenCandidates.length,
     hiddenCandidates: hiddenCandidates.slice(0, MAX_DIAGNOSTIC_CANDIDATES).map(candidateDetails),
     snapshotTruncated: options.snapshotTruncated === true,
-    ...(candidates.length > MAX_DIAGNOSTIC_CANDIDATES ? { candidatesTruncated: true } : {}),
-    ...(hiddenCandidates.length > MAX_DIAGNOSTIC_CANDIDATES ? { hiddenCandidatesTruncated: true } : {}),
+    ...(options.candidatesTruncated || candidates.length > MAX_DIAGNOSTIC_CANDIDATES ? { candidatesTruncated: true } : {}),
+    ...(options.hiddenCandidatesTruncated || hiddenCandidates.length > MAX_DIAGNOSTIC_CANDIDATES ? { hiddenCandidatesTruncated: true } : {}),
   };
 }
 

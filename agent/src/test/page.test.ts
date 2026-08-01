@@ -81,9 +81,39 @@ class OutputBackend implements PageBackend {
   }
 }
 
+class LiveOutputBackend extends OutputBackend {
+  resolveTargetCalls = 0;
+
+  async resolveTarget() {
+    this.resolveTargetCalls += 1;
+    const node = {
+      ref: asSnapshotRef("r-live"),
+      frameId: asFrameId("main"),
+      parent: null,
+      role: "button",
+      name: "Continue",
+      visible: true,
+      enabled: true,
+      focusable: true,
+    };
+    return { ref: node.ref, node };
+  }
+}
+
 function session(backend: OutputBackend) {
   return new RevisionedPageSession(backend, new RevisionLedger());
 }
+
+test("resolves a live target without building a snapshot", async () => {
+  const backend = new LiveOutputBackend();
+  const result = await session(backend).resolveTarget!({
+    locator: { kind: "role", role: "button", name: "Continue", exact: true },
+  });
+
+  assert.equal(result.ref, "r-live");
+  assert.equal(backend.resolveTargetCalls, 1);
+  assert.equal(backend.snapshotCalls, 0);
+});
 
 test("returns a full action snapshot by default", async () => {
   const backend = new OutputBackend();

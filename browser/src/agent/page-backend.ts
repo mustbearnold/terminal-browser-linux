@@ -37,6 +37,7 @@ import type {
   PageSnapshotWindow,
   SnapshotDeltaCapture,
   LocatorResolutionOptions,
+  Locator,
   ResolvedTarget,
   SnapshotView,
   SnapshotOptions,
@@ -107,13 +108,22 @@ type ActiveElementInfo = {
   name?: string;
   value?: string;
 };
-type CssQueryResult = { ok: boolean; invalid?: boolean; refs?: string[] };
 type LiveRefResult = { ok: boolean; node?: SnapshotNode };
+type LiveLocatorResult = {
+  ok: boolean;
+  invalid?: boolean;
+  candidates?: SnapshotNode[];
+  hiddenCandidates?: SnapshotNode[];
+  candidateCount?: number;
+  hiddenCandidateCount?: number;
+  candidatesTruncated?: boolean;
+  hiddenCandidatesTruncated?: boolean;
+};
 
 const AGENT_STATE_KEY = "__terminalBrowserAgent";
 const AGENT_EVENT_CHANNEL = "terminal-browser.agent";
 const MAIN_FRAME_ID = asFrameId("main");
-const CSS_RESOLUTION_MAX_NODES = 5_000;
+const LIVE_LOCATOR_MAX_CANDIDATES = 32;
 const WAIT_FALLBACK_MS = 250;
 const WAIT_WAKE_EVENTS = new Set<AgentEvent["event"]>([
   "navigation",
@@ -174,71 +184,24 @@ export class ElectronPageBackend implements PageBackend {
     options?: LocatorResolutionOptions,
   ): Promise<ResolvedTarget> {
     throwIfAborted(signal);
-    if ("ref" in target && !snapshot.nodes.some((node) => node.ref === target.ref)) {
+    if ("ref" in target) {
+      if (snapshot.nodes.some((node) => node.ref === target.ref)) {
+        return this.resolver.resolve(target, snapshot, options);
+      }
       const live = await this.liveRefNode(String(target.ref), signal);
       if (live) return live;
-    }
-    if (!("locator" in target) || target.locator.kind !== "css") {
       return this.resolver.resolve(target, snapshot, options);
     }
-
-    const includeHidden = options?.includeHidden === true;
-    let candidateSnapshot = snapshot;
-    let refs = await this.cssRefs(target.locator.value, signal);
-    let nodes = nodesForRefs(refs, candidateSnapshot, includeHidden);
-    if (refs.some((ref) => !candidateSnapshot.nodes.some((node) => String(node.ref) === ref))) {
-      candidateSnapshot = await this.snapshot({
-        interactiveOnly: false,
-        maxNodes: CSS_RESOLUTION_MAX_NODES,
-      }, signal);
-      refs = await this.cssRefs(target.locator.value, signal);
-      nodes = nodesForRefs(refs, candidateSnapshot, includeHidden);
-    }
-    if (refs.length === 0) {
-      throw new AgentError("TARGET_NOT_FOUND", "CSS locator matched no snapshot nodes", {
-        retryable: true,
-        details: targetResolutionDetails([], { snapshotTruncated: candidateSnapshot.truncated }),
-      });
-    }
-    if (refs.some((ref) => !candidateSnapshot.nodes.some((node) => String(node.ref) === ref))) {
-      throw new AgentError("TARGET_NOT_FOUND", "CSS locator matched a node outside the current snapshot", {
-        retryable: true,
-        details: targetResolutionDetails(nodes, { snapshotTruncated: candidateSnapshot.truncated }),
-      });
-    }
-    if (nodes.length > 1) {
-      throw new AgentError("AMBIGUOUS_TARGET", "CSS locator matched multiple snapshot nodes", {
-        retryable: true,
-        details: targetResolutionDetails(nodes, { snapshotTruncated: candidateSnapshot.truncated }),
-      });
-    }
-    return { ref: nodes[0].ref, node: nodes[0] };
+    return this.liveLocatorTarget(target.locator, options, signal);
   }
 
-  private async cssRefs(selector: string, signal?: AbortSignal): Promise<string[]> {
-    const frames = await this.controller.agentFrames();
-    const main = frames.find((frame) => frame.parentId === null);
-    if (!main) return [];
-    this.mainBrowserFrameId = main.id;
-    const refs = new Set<string>();
-    for (const frame of frames) {
-      throwIfAborted(signal);
-      const source = cssQueryScript(this.agentKey, selector);
-      try {
-        const raw = frame.parentId === null
-          ? await this.controller.runJs(source)
-          : await this.controller.runJsInFrame(frame.id, source);
-        throwIfAborted(signal);
-        if (!isCssQueryResult(raw)) continue;
-        if (raw.invalid) throw new AgentError("INVALID_REQUEST", "invalid CSS locator");
-        if (!raw.ok) continue;
-        for (const ref of raw.refs ?? []) refs.add(ref);
-      } catch (error) {
-        if (signal?.aborted) throw error;
-        if (error instanceof AgentError && error.code === "INVALID_REQUEST") throw error;
-      }
-    }
-    return [...refs];
+  async resolveTarget(
+    target: Target,
+    signal?: AbortSignal,
+    options?: LocatorResolutionOptions,
+  ): Promise<ResolvedTarget> {
+    throwIfAborted(signal);
+    return this.resolveLiveTarget(target, options, signal);
   }
 
   private async liveRefNode(ref: string, signal?: AbortSignal): Promise<ResolvedTarget | null> {
@@ -260,6 +223,121 @@ export class ElectronPageBackend implements PageBackend {
     }));
     const node = values.find((value): value is SnapshotNode => value !== null);
     return node ? { ref: asSnapshotRef(ref), node } : null;
+  }
+
+  private async resolveLiveTarget(
+    target: Target,
+    options?: LocatorResolutionOptions,
+    signal?: AbortSignal,
+  ): Promise<ResolvedTarget> {
+    if ("ref" in target) {
+      const live = await this.liveRefNode(String(target.ref), signal);
+      if (live) return live;
+      throw new AgentError("TARGET_NOT_FOUND", `snapshot reference is not present: ${target.ref}`, {
+        retryable: true,
+      });
+    }
+    return this.liveLocatorTarget(target.locator, options, signal);
+  }
+
+  private async liveLocatorTarget(
+    locator: Locator,
+    options?: LocatorResolutionOptions,
+    signal?: AbortSignal,
+  ): Promise<ResolvedTarget> {
+    const matches = await this.liveLocatorMatches(locator, options, signal);
+    if (matches.invalid) throw new AgentError("INVALID_REQUEST", "invalid CSS locator");
+    const candidates = matches.candidates ?? [];
+    const candidateCount = matches.candidateCount ?? candidates.length;
+    const hiddenCandidates = matches.hiddenCandidates ?? [];
+    const hiddenCandidateCount = matches.hiddenCandidateCount ?? hiddenCandidates.length;
+    const details = targetResolutionDetails(candidates, {
+      hiddenCandidates,
+      candidateCount,
+      hiddenCandidateCount,
+      candidatesTruncated: matches.candidatesTruncated,
+      hiddenCandidatesTruncated: matches.hiddenCandidatesTruncated,
+      snapshotTruncated: false,
+    });
+    if (candidateCount === 0) {
+      throw new AgentError("TARGET_NOT_FOUND", "locator matched no live elements", {
+        retryable: true,
+        details,
+      });
+    }
+    if (candidateCount > 1) {
+      throw new AgentError("AMBIGUOUS_TARGET", "locator matched multiple live elements", {
+        retryable: true,
+        details,
+      });
+    }
+    const node = candidates[0];
+    if (!node) {
+      throw new AgentError("INTERNAL_ERROR", "live locator result omitted its only candidate");
+    }
+    return { ref: node.ref, node };
+  }
+
+  private async liveLocatorMatches(
+    locator: Locator,
+    options?: LocatorResolutionOptions,
+    signal?: AbortSignal,
+  ): Promise<LiveLocatorResult> {
+    const frames = await this.controller.agentFrames();
+    const includeHidden = options?.includeHidden === true;
+    const values = await Promise.all(frames.map(async (frame) => {
+      throwIfAborted(signal);
+      const frameId = frame.parentId === null ? "main" : frame.id;
+      const source = liveLocatorScript(
+        this.agentKey,
+        locator,
+        frameId,
+        includeHidden,
+        LIVE_LOCATOR_MAX_CANDIDATES,
+      );
+      try {
+        const raw = frame.parentId === null
+          ? await this.controller.runJs(source)
+          : await this.controller.runJsInFrame(frame.id, source);
+        throwIfAborted(signal);
+        if (!isLiveLocatorResult(raw)) return null;
+        if (raw.invalid) return raw;
+        return raw.ok ? raw : null;
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        if (error instanceof AgentError && error.code === "INVALID_REQUEST") throw error;
+        return null;
+      }
+    }));
+    const candidates: SnapshotNode[] = [];
+    const hiddenCandidates: SnapshotNode[] = [];
+    let candidateCount = 0;
+    let hiddenCandidateCount = 0;
+    let candidatesTruncated = false;
+    let hiddenCandidatesTruncated = false;
+    for (const value of values) {
+      if (!value) continue;
+      if (value.invalid) return value;
+      candidateCount += value.candidateCount ?? value.candidates?.length ?? 0;
+      hiddenCandidateCount += value.hiddenCandidateCount ?? value.hiddenCandidates?.length ?? 0;
+      candidatesTruncated ||= value.candidatesTruncated === true;
+      hiddenCandidatesTruncated ||= value.hiddenCandidatesTruncated === true;
+      for (const node of value.candidates ?? []) {
+        if (candidates.length < LIVE_LOCATOR_MAX_CANDIDATES) candidates.push(node);
+      }
+      for (const node of value.hiddenCandidates ?? []) {
+        if (hiddenCandidates.length < LIVE_LOCATOR_MAX_CANDIDATES) hiddenCandidates.push(node);
+      }
+    }
+    return {
+      ok: true,
+      candidates,
+      hiddenCandidates,
+      candidateCount,
+      hiddenCandidateCount,
+      candidatesTruncated: candidatesTruncated || candidateCount > candidates.length,
+      hiddenCandidatesTruncated: hiddenCandidatesTruncated || hiddenCandidateCount > hiddenCandidates.length,
+    };
   }
 
   async frames(signal?: AbortSignal): Promise<PageFrameSnapshot> {
@@ -1375,6 +1453,12 @@ export class ElectronPageBackend implements PageBackend {
     signal?: AbortSignal,
   ): Promise<ResolvedTarget> {
     this.assertToken(token, before.documentId, before.revision);
+    if ("locator" in target) {
+      const live = await this.liveLocatorTarget(target.locator, undefined, signal);
+      const current = await this.identity(signal);
+      this.assertToken(token, current.documentId, current.revision);
+      return live;
+    }
     if ("ref" in target) {
       const live = await this.liveRefNode(String(target.ref), signal);
       if (live) {
@@ -1635,11 +1719,6 @@ function originForUrl(url: string): string {
   }
 }
 
-function nodesForRefs(refs: readonly string[], snapshot: SnapshotView, includeHidden: boolean) {
-  const wanted = new Set(refs);
-  return snapshot.nodes.filter((node) => wanted.has(String(node.ref)) && (includeHidden || node.visible));
-}
-
 function snapshotOptionsKey(options?: SnapshotOptions): string {
   return JSON.stringify({
     interactiveOnly: options?.interactiveOnly ?? true,
@@ -1647,43 +1726,6 @@ function snapshotOptionsKey(options?: SnapshotOptions): string {
     includeText: options?.includeText !== false,
     maxNodes: options?.maxNodes ?? 1000,
   });
-}
-
-function cssQueryScript(key: string, selector: string): string {
-  return `(() => {
-    let roots;
-    try {
-      roots = [document];
-      const visited = new Set(roots);
-      for (let index = 0; index < roots.length; index += 1) {
-        const elements = roots[index].querySelectorAll("*");
-        for (const element of elements) {
-          if (element.shadowRoot && !visited.has(element.shadowRoot)) {
-            visited.add(element.shadowRoot);
-            roots.push(element.shadowRoot);
-          }
-        }
-      }
-      const matches = [];
-      for (const root of roots) matches.push(...root.querySelectorAll(${JSON.stringify(selector)}));
-      const state = window[${JSON.stringify(key)}];
-      if (!state) return { ok: true, refs: [] };
-      const refs = [];
-      for (const element of matches) {
-        let ref = state.elementRefs.get(element);
-        if (!ref) {
-          ref = state.frameId + ":r" + (++state.nextRef);
-          state.elementRefs.set(element, ref);
-          state.refs.set(ref, element);
-        }
-        refs.push(ref);
-      }
-      return { ok: true, refs: [...new Set(refs)] };
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "SyntaxError") return { ok: false, invalid: true };
-      return { ok: false };
-    }
-  })()`;
 }
 
 function scriptStateScript(key: string): string {
@@ -2287,6 +2329,108 @@ function refNodeScript(key: string, ref: string): string {
   })()`;
 }
 
+function liveLocatorScript(
+  key: string,
+  locator: Locator,
+  frameId: string,
+  includeHidden: boolean,
+  maxCandidates: number,
+): string {
+  return `(() => {
+    ${agentStateSetupScript(key, frameId)}
+    const locator = ${JSON.stringify(locator)};
+    const includeHidden = ${JSON.stringify(includeHidden)};
+    const maxCandidates = ${JSON.stringify(maxCandidates)};
+    const interactiveOnly = false;
+    const includeGeometry = true;
+    const includeText = true;
+    ${snapshotNodeHelpersScript()}
+    const normalize = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
+    const textMatches = (value, expected, exact) => {
+      const normalizedValue = normalize(value);
+      const normalizedExpected = normalize(expected);
+      return exact
+        ? normalizedValue === normalizedExpected
+        : normalizedValue.toLocaleLowerCase().includes(normalizedExpected.toLocaleLowerCase());
+    };
+    const matchesLocator = (el) => {
+      switch (locator.kind) {
+        case "role":
+          return roleFor(el) === locator.role
+            && (!locator.name || textMatches(nameFor(el), locator.name, locator.exact));
+        case "text":
+          return textMatches(rawTextFor(el) || nameFor(el), locator.text, locator.exact);
+        case "label":
+          return textMatches(el.getAttribute("label") || nameFor(el), locator.text, locator.exact);
+        case "placeholder":
+          return textMatches(el.getAttribute("placeholder") || "", locator.text, locator.exact);
+        case "testid":
+          return el.getAttribute("data-testid") === locator.value;
+        default:
+          return false;
+      }
+    };
+    const roots = [document];
+    const visitedRoots = new Set(roots);
+    const elements = [];
+    const visitedElements = new Set();
+    for (let rootIndex = 0; rootIndex < roots.length; rootIndex += 1) {
+      for (const element of roots[rootIndex].querySelectorAll("*")) {
+        if (!visitedElements.has(element)) {
+          visitedElements.add(element);
+          elements.push(element);
+          if (element.shadowRoot && !visitedRoots.has(element.shadowRoot)) {
+            visitedRoots.add(element.shadowRoot);
+            roots.push(element.shadowRoot);
+          }
+        }
+      }
+    }
+    let matches = elements;
+    if (locator.kind === "css") {
+      matches = [];
+      const seen = new Set();
+      try {
+        for (const root of roots) {
+          for (const element of root.querySelectorAll(locator.value)) {
+            if (seen.has(element)) continue;
+            seen.add(element);
+            matches.push(element);
+          }
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "SyntaxError") return { ok: false, invalid: true };
+        return { ok: false };
+      }
+    }
+    const candidates = [];
+    const hiddenCandidates = [];
+    let candidateCount = 0;
+    let hiddenCandidateCount = 0;
+    for (const el of matches) {
+      if (locator.kind !== "css" && !matchesLocator(el)) continue;
+      const captured = captureNode(el, null, true);
+      if (!captured.included || !captured.node) continue;
+      if (captured.node.visible || includeHidden) {
+        candidateCount += 1;
+        if (candidates.length < maxCandidates) candidates.push(captured.node);
+      } else {
+        hiddenCandidateCount += 1;
+        if (hiddenCandidates.length < maxCandidates) hiddenCandidates.push(captured.node);
+      }
+    }
+    return {
+      ok: true,
+      candidates,
+      hiddenCandidates,
+      candidateCount,
+      hiddenCandidateCount,
+      candidatesTruncated: candidateCount > candidates.length,
+      hiddenCandidatesTruncated: hiddenCandidateCount > hiddenCandidates.length,
+    };
+  })()`;
+}
+
 function fillScript(key: string, ref: string, value: string): string {
   return `(() => {
     const state = window[${JSON.stringify(key)}];
@@ -2534,16 +2678,6 @@ function isWindowFrameSnapshot(value: unknown): value is WindowFrameSnapshot {
   return Number.isSafeInteger(snapshot.totalNodes) && Number(snapshot.totalNodes) >= 0;
 }
 
-function isCssQueryResult(value: unknown): value is CssQueryResult {
-  if (!value || typeof value !== "object") return false;
-  const result = value as Record<string, unknown>;
-  return (
-    typeof result.ok === "boolean" &&
-    (result.invalid === undefined || typeof result.invalid === "boolean") &&
-    (result.refs === undefined || (Array.isArray(result.refs) && result.refs.every((ref) => typeof ref === "string")))
-  );
-}
-
 function isInspection(value: unknown): value is ElementInspection {
   return !!value && typeof value === "object" && typeof (value as Record<string, unknown>).ok === "boolean";
 }
@@ -2552,6 +2686,25 @@ function isLiveRefResult(value: unknown): value is LiveRefResult {
   if (!value || typeof value !== "object") return false;
   const result = value as Record<string, unknown>;
   return result.ok === false || (result.ok === true && !!result.node && typeof result.node === "object");
+}
+
+function isLiveLocatorResult(value: unknown): value is LiveLocatorResult {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Record<string, unknown>;
+  const validNodes = (entry: unknown): entry is SnapshotNode[] =>
+    Array.isArray(entry) && entry.every(isSnapshotNode);
+  const validCount = (entry: unknown): boolean =>
+    entry === undefined || (Number.isSafeInteger(entry) && Number(entry) >= 0);
+  return (
+    typeof result.ok === "boolean" &&
+    (result.invalid === undefined || typeof result.invalid === "boolean") &&
+    (result.candidates === undefined || validNodes(result.candidates)) &&
+    (result.hiddenCandidates === undefined || validNodes(result.hiddenCandidates)) &&
+    validCount(result.candidateCount) &&
+    validCount(result.hiddenCandidateCount) &&
+    (result.candidatesTruncated === undefined || typeof result.candidatesTruncated === "boolean") &&
+    (result.hiddenCandidatesTruncated === undefined || typeof result.hiddenCandidatesTruncated === "boolean")
+  );
 }
 
 function isClickResult(value: unknown): value is ClickResult {

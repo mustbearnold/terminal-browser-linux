@@ -144,6 +144,10 @@ export class AgentRequestRouter {
       }
       case "page.read": {
         const page = this.page(request.pageId);
+        if (page.resolveTarget) {
+          const resolved = await page.resolveTarget(request.target, request.token, signal);
+          return resolved.node;
+        }
         const snapshot = await page.snapshot(undefined, signal);
         if (request.token) page.assertFresh(request.token);
         const resolved = page.resolve
