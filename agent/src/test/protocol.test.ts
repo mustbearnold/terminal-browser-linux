@@ -221,6 +221,7 @@ test("validates nested agent request shapes at the wire boundary", () => {
         text: "Continue",
       },
     },
+    output: { snapshot: "none" },
   });
   assert.equal(elementWait.kind, "request");
 
@@ -252,6 +253,13 @@ test("validates nested agent request shapes at the wire boundary", () => {
     op: "page.act",
     pageId: "page-1",
     action: { type: "click", target: { ref: "r1" } },
+    output: { snapshot: "none", base: { pageId: "page-1", documentId: "document-1", revision: 0, snapshotId: "snapshot-1" } },
+  });
+  invalid({ op: "page.wait", pageId: "page-1", condition: { type: "time", ms: 0 }, output: { snapshot: "delta" } });
+  invalid({
+    op: "page.wait",
+    pageId: "page-1",
+    condition: { type: "time", ms: 0 },
     output: { snapshot: "none", base: { pageId: "page-1", documentId: "document-1", revision: 0, snapshotId: "snapshot-1" } },
   });
   invalid({ op: "page.dialog", pageId: "page-1", dialogId: "dialog-1", action: { type: "accept", promptText: 1 } });

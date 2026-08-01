@@ -82,11 +82,13 @@ function largeWindowScenarios(pageId) {
         pageId,
         condition: { type: "text", value: "Tail action" },
         timeoutMs: 1_000,
+        output: { snapshot: "none" },
       });
       const liveTargetedTextWait = await client.call("page.wait", {
         pageId,
         condition: { type: "text", value: "Tail action", target: tailLocator },
         timeoutMs: 1_000,
+        output: { snapshot: "none" },
       });
       const liveElementWait = await client.call("page.wait", {
         pageId,
@@ -96,6 +98,7 @@ function largeWindowScenarios(pageId) {
           state: { attached: true, visible: true, text: "Tail action" },
         },
         timeoutMs: 1_000,
+        output: { snapshot: "none" },
       });
       const liveElementExpectation = await client.call("page.act", {
         pageId,
@@ -152,6 +155,9 @@ function largeWindowScenarios(pageId) {
           && liveGlobalTextWait.satisfied
           && liveTargetedTextWait.satisfied
           && liveElementWait.satisfied
+          && liveGlobalTextWait.snapshot === undefined
+          && liveTargetedTextWait.snapshot === undefined
+          && liveElementWait.snapshot === undefined
           && liveElementExpectation.verified
           && ambiguity?.code === "AMBIGUOUS_TARGET"
           && ambiguityDetails?.candidateCount === 1099
@@ -166,6 +172,7 @@ function largeWindowScenarios(pageId) {
           liveGlobalTextWait: liveGlobalTextWait.satisfied ? 1 : 0,
           liveTargetedTextWait: liveTargetedTextWait.satisfied ? 1 : 0,
           liveElementWait: liveElementWait.satisfied ? 1 : 0,
+          waitSnapshotsOmitted: [liveGlobalTextWait, liveTargetedTextWait, liveElementWait].every((wait) => wait.snapshot === undefined) ? 1 : 0,
           liveElementExpectation: liveElementExpectation.verified ? 1 : 0,
           liveLocatorAction: locatedClick.verified ? 1 : 0,
           ambiguousLiveCandidates: ambiguityDetails?.candidateCount ?? 0,

@@ -21,12 +21,14 @@ import type {
   PageSnapshot,
   PageSnapshotWindow,
   PageSnapshotDelta,
+  PageOutputOptions,
   SnapshotOptions,
   SnapshotToken,
   SnapshotWindowCursor,
   SnapshotWindowOptions,
   Target,
   WaitCondition,
+  WaitOutputOptions,
   WaitResult,
 } from "../protocol/types";
 import { asSnapshotId } from "../protocol/types";
@@ -110,7 +112,12 @@ export interface PageSession {
     signal?: AbortSignal,
     output?: ActionOutputOptions,
   ): Promise<ActionResult>;
-  wait(condition: WaitCondition, timeoutMs?: number, signal?: AbortSignal): Promise<WaitResult>;
+  wait(
+    condition: WaitCondition,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+    output?: WaitOutputOptions,
+  ): Promise<WaitResult>;
   dialog?(dialogId: string, action: DialogAction, signal?: AbortSignal): Promise<PageDialogResult>;
   subscribe(
     listener: (event: AgentEvent) => void,
@@ -388,9 +395,14 @@ export class RevisionedPageSession implements PageSession {
     }, signal);
   }
 
-  async wait(condition: WaitCondition, timeoutMs?: number, signal?: AbortSignal): Promise<WaitResult> {
+  async wait(
+    condition: WaitCondition,
+    timeoutMs?: number,
+    signal?: AbortSignal,
+    output?: WaitOutputOptions,
+  ): Promise<WaitResult> {
     const result = await this.backend.wait(condition, timeoutMs, signal);
-    return result.satisfied ? { ...result, snapshot: await this.snapshot(undefined, signal) } : result;
+    return result.satisfied ? { ...result, ...(await this.snapshotOutput(output, signal)) } : result;
   }
 
   async dialog(dialogId: string, action: DialogAction, signal?: AbortSignal): Promise<PageDialogResult> {
@@ -453,6 +465,13 @@ export class RevisionedPageSession implements PageSession {
     output: ActionOutputOptions | undefined,
     signal?: AbortSignal,
   ): Promise<Pick<ActionResult, "snapshot" | "snapshotDelta">> {
+    return this.snapshotOutput(output, signal);
+  }
+
+  private async snapshotOutput(
+    output: PageOutputOptions | undefined,
+    signal?: AbortSignal,
+  ): Promise<{ snapshot?: PageSnapshot; snapshotDelta?: PageSnapshotDelta }> {
     const mode = output?.snapshot ?? "full";
     if (mode === "none") return {};
     if (mode === "delta") {

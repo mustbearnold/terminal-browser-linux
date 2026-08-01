@@ -298,6 +298,19 @@ test("runs the deterministic agent control contract", async () => {
   );
   assert.equal(waited.satisfied, true);
 
+  const compactWait = result<{ satisfied: boolean; snapshot?: PageSnapshot }>(
+    await router.handle(
+      request("page.wait", {
+        pageId: FIXTURE_PAGE_ID,
+        condition: { type: "text", value: "Ready" },
+        output: { snapshot: "none" },
+      }),
+      context,
+    ),
+  );
+  assert.equal(compactWait.satisfied, true);
+  assert.equal(compactWait.snapshot, undefined);
+
   const targetedTextWait = result<{ satisfied: boolean }>(await router.handle(
     request("page.wait", {
       pageId: FIXTURE_PAGE_ID,

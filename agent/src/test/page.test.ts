@@ -158,3 +158,34 @@ test("can return a delta from an agent-owned base snapshot", async () => {
   assert.equal(result.snapshotDelta?.revision, 1);
   assert.equal(result.snapshotDelta?.updated.length, 1);
 });
+
+test("can omit a satisfied wait snapshot", async () => {
+  const backend = new OutputBackend();
+  const result = await session(backend).wait(
+    { type: "time", ms: 0 },
+    undefined,
+    undefined,
+    { snapshot: "none" },
+  );
+
+  assert.equal(result.satisfied, true);
+  assert.equal(result.snapshot, undefined);
+  assert.equal(result.snapshotDelta, undefined);
+  assert.equal(backend.snapshotCalls, 0);
+});
+
+test("can return a delta from a satisfied wait", async () => {
+  const backend = new OutputBackend();
+  const page = session(backend);
+  const base = await page.snapshot();
+  const result = await page.wait(
+    { type: "time", ms: 0 },
+    undefined,
+    undefined,
+    { snapshot: "delta", base },
+  );
+
+  assert.equal(result.snapshot, undefined);
+  assert.ok(result.snapshotDelta);
+  assert.equal(result.snapshotDelta?.base.snapshotId, base.snapshotId);
+});

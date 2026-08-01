@@ -186,7 +186,7 @@ export class AgentRequestRouter {
         };
       }
       case "page.wait":
-        return await this.page(request.pageId).wait(request.condition, request.timeoutMs, signal);
+        return await this.page(request.pageId).wait(request.condition, request.timeoutMs, signal, request.output);
       case "page.dialog": {
         const page = this.page(request.pageId);
         if (!page.dialog) {

@@ -42,6 +42,14 @@ test("validates and dispatches structured calls through the typed client", async
   });
   assert.equal(node.name, "Name");
 
+  const compactWait = await tools.callTool("terminal_browser_page_wait", {
+    pageId: String(FIXTURE_PAGE_ID),
+    condition: { type: "text", value: "Fixture" },
+    output: { snapshot: "none" },
+  });
+  assert.equal(compactWait.satisfied, true);
+  assert.equal(compactWait.snapshot, undefined);
+
   const missingAction = await tools.callTool("terminal_browser_page_act_status", {
     pageId: String(FIXTURE_PAGE_ID),
     idempotencyKey: "not-started",

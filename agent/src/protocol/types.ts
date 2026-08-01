@@ -257,10 +257,14 @@ export interface ActionExpectation {
 
 export type ActionSnapshotMode = "full" | "delta" | "none";
 
-export interface ActionOutputOptions {
+export interface PageOutputOptions {
   snapshot?: ActionSnapshotMode;
   base?: SnapshotToken;
 }
+
+export interface ActionOutputOptions extends PageOutputOptions {}
+
+export interface WaitOutputOptions extends PageOutputOptions {}
 
 export interface ActionEffect {
   type: "navigation" | "dom.changed" | "focus.changed" | "value.changed" | "scroll.changed";
@@ -322,6 +326,7 @@ export interface WaitResult {
   satisfied: boolean;
   elapsedMs: number;
   snapshot?: PageSnapshot;
+  snapshotDelta?: PageSnapshotDelta;
 }
 
 export interface AgentRequestEnvelope {
@@ -378,6 +383,7 @@ export type AgentRequest =
       pageId: PageId;
       condition: WaitCondition;
       timeoutMs?: number;
+      output?: WaitOutputOptions;
     })
   | (AgentRequestEnvelope & {
       op: "page.observe";

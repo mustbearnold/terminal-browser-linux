@@ -40,6 +40,10 @@ Actions return a full post-action snapshot by default. Set `output.snapshot` to
 Use `expect.element` for target-specific post-action verification; its optional
 state uses the same semantic fields as `page.wait`.
 
+Successful waits return a full snapshot by default as well. Set
+`output.snapshot` to `none` for a compact satisfaction result, or to `delta`
+with an `output.base` snapshot token when the changed page state is needed.
+
 For large pages, use `page.snapshot.window` with a bounded `limit`. The first
 window reports `totalNodes` and a revision-bound `nextCursor`; send that cursor
 alone to continue without transferring one oversized snapshot. A cursor becomes

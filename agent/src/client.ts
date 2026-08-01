@@ -27,6 +27,8 @@ import {
   type SnapshotToken,
   type SnapshotWindowCursor,
   type SnapshotWindowOptions,
+  type WaitCondition,
+  type WaitOutputOptions,
   type WaitResult,
 } from "./protocol/types";
 import { MAX_REQUEST_DEADLINE_MS, throwIfAborted } from "./core/cancellation";
@@ -203,6 +205,21 @@ export class AgentClient {
       pageId,
       ...(windowOptions === undefined ? {} : { options: windowOptions }),
       ...(cursor === undefined ? {} : { cursor }),
+    }, options);
+  }
+
+  wait(
+    pageId: PageId,
+    condition: WaitCondition,
+    timeoutMs?: number,
+    output?: WaitOutputOptions,
+    options?: AgentCallOptions,
+  ): Promise<WaitResult> {
+    return this.call("page.wait", {
+      pageId,
+      condition,
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      ...(output === undefined ? {} : { output }),
     }, options);
   }
 

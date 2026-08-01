@@ -124,7 +124,7 @@ export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
     action: actionSchema(),
     token: snapshotToken(),
     expect: expectationSchema(),
-    output: actionOutputSchema(),
+    output: snapshotOutputSchema(),
     idempotencyKey: string("Stable key for safe retry and replay."),
   }, ["pageId", "action"])),
   tool("terminal_browser_page_act_status", "Check the durable outcome of an idempotent browser action.", "page.act.status", "page.act.status", object({
@@ -135,6 +135,7 @@ export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
     pageId: string("Page identifier."),
     condition: waitConditionSchema(),
     timeoutMs: number("Maximum wait duration in milliseconds."),
+    output: snapshotOutputSchema(),
   }, ["pageId", "condition"])),
   tool("terminal_browser_page_observe", "Subscribe to resumable page lifecycle and DOM events.", "page.observe", "page.observe", object({
     pageId: string("Page identifier."),
@@ -391,9 +392,9 @@ function expectationSchema(): AgentToolSchema {
   });
 }
 
-function actionOutputSchema(): AgentToolSchema {
+function snapshotOutputSchema(): AgentToolSchema {
   return object({
-    snapshot: string("Post-action snapshot mode.", ["full", "delta", "none"]),
+    snapshot: string("Result snapshot mode.", ["full", "delta", "none"]),
     base: snapshotToken(),
   });
 }
