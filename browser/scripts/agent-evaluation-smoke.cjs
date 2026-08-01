@@ -78,6 +78,31 @@ function largeWindowScenarios(pageId) {
     async run(client) {
       const tailLocator = { locator: { kind: "role", role: "button", name: "Tail action", exact: true } };
       const liveRead = await client.call("page.read", { pageId, target: tailLocator });
+      const liveGlobalTextWait = await client.call("page.wait", {
+        pageId,
+        condition: { type: "text", value: "Tail action" },
+        timeoutMs: 1_000,
+      });
+      const liveTargetedTextWait = await client.call("page.wait", {
+        pageId,
+        condition: { type: "text", value: "Tail action", target: tailLocator },
+        timeoutMs: 1_000,
+      });
+      const liveElementWait = await client.call("page.wait", {
+        pageId,
+        condition: {
+          type: "element",
+          target: tailLocator,
+          state: { attached: true, visible: true, text: "Tail action" },
+        },
+        timeoutMs: 1_000,
+      });
+      const liveElementExpectation = await client.call("page.act", {
+        pageId,
+        action: { type: "hover", target: tailLocator },
+        expect: { element: { target: tailLocator, state: { attached: true, visible: true } }, timeoutMs: 1_000 },
+        output: { snapshot: "none" },
+      });
       let ambiguity;
       try {
         await client.call("page.read", {
@@ -90,7 +115,11 @@ function largeWindowScenarios(pageId) {
       const locatedClick = await client.call("page.act", {
         pageId,
         action: { type: "click", target: tailLocator },
-        expect: { text: "Tail clicked" },
+        expect: {
+          text: "Tail action",
+          element: { target: tailLocator, state: { attached: true, visible: true } },
+          timeoutMs: 1_000,
+        },
         output: { snapshot: "none" },
       });
       let current = await client.call("page.snapshot.window", {
@@ -120,6 +149,10 @@ function largeWindowScenarios(pageId) {
       const ambiguityDetails = ambiguity?.details;
       return {
         passed: liveRead.attributes?.id === "tail"
+          && liveGlobalTextWait.satisfied
+          && liveTargetedTextWait.satisfied
+          && liveElementWait.satisfied
+          && liveElementExpectation.verified
           && ambiguity?.code === "AMBIGUOUS_TARGET"
           && ambiguityDetails?.candidateCount === 1099
           && ambiguityDetails?.candidatesTruncated === true
@@ -130,6 +163,10 @@ function largeWindowScenarios(pageId) {
           largeWindowNodes: current.totalNodes,
           largeTargetOffset: current.offset,
           liveLocatorRead: liveRead.attributes?.id === "tail" ? 1 : 0,
+          liveGlobalTextWait: liveGlobalTextWait.satisfied ? 1 : 0,
+          liveTargetedTextWait: liveTargetedTextWait.satisfied ? 1 : 0,
+          liveElementWait: liveElementWait.satisfied ? 1 : 0,
+          liveElementExpectation: liveElementExpectation.verified ? 1 : 0,
           liveLocatorAction: locatedClick.verified ? 1 : 0,
           ambiguousLiveCandidates: ambiguityDetails?.candidateCount ?? 0,
         },

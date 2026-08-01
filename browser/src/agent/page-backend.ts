@@ -119,6 +119,7 @@ type LiveLocatorResult = {
   candidatesTruncated?: boolean;
   hiddenCandidatesTruncated?: boolean;
 };
+type LiveTextResult = { ok: boolean; matches?: boolean };
 
 const AGENT_STATE_KEY = "__terminalBrowserAgent";
 const AGENT_EVENT_CHANNEL = "terminal-browser.agent";
@@ -1211,29 +1212,26 @@ export class ElectronPageBackend implements PageBackend {
       let satisfied = false;
       if (condition.type === "url") satisfied = identity.url.includes(condition.value);
       if (condition.type === "text") {
-        const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
         if (condition.target) {
           try {
-            const target = await this.resolve(condition.target, snapshot, signal, { includeHidden: true });
+            const target = await this.resolveTarget(condition.target, signal, { includeHidden: true });
             satisfied = matchesSnapshotNodeText(target.node, condition.value);
           } catch (error) {
             if (signal?.aborted) throw error;
+            if (!(error instanceof AgentError) || error.code !== "TARGET_NOT_FOUND") throw error;
           }
         } else {
-          satisfied = snapshot.nodes.some((node) =>
-            matchesSnapshotNodeText(node, condition.value),
-          );
+          satisfied = await this.liveTextMatches(condition.value, signal);
         }
       }
       if (condition.type === "element") {
-        const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
         try {
-          const target = await this.resolve(condition.target, snapshot, signal, { includeHidden: true });
+          const target = await this.resolveTarget(condition.target, signal, { includeHidden: true });
           satisfied = matchesWaitElementState(target.node, condition.state);
         } catch (error) {
           if (signal?.aborted) throw error;
           if (!(error instanceof AgentError) || error.code !== "TARGET_NOT_FOUND") throw error;
-          if (condition.state?.attached === false && !snapshot.truncated) satisfied = true;
+          if (condition.state?.attached === false) satisfied = true;
         }
       }
       if (condition.type === "stable") {
@@ -1622,30 +1620,41 @@ export class ElectronPageBackend implements PageBackend {
     if (expect.url !== undefined && !identity.url.includes(expect.url)) return false;
     if (expect.title !== undefined && !identity.title.includes(expect.title)) return false;
     if (expect.text !== undefined) {
-      const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
-      if (
-        !snapshot.nodes.some((node) =>
-          matchesSnapshotNodeText(node, expect.text!),
-        )
-      ) {
-        return false;
-      }
+      if (!(await this.liveTextMatches(expect.text, signal))) return false;
     }
     if (expect.element !== undefined) {
-      const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
       try {
-        const target = await this.resolve(expect.element.target, snapshot, signal, { includeHidden: true });
+        const target = await this.resolveTarget(expect.element.target, signal, { includeHidden: true });
         if (!matchesWaitElementState(target.node, expect.element.state)) return false;
       } catch (error) {
         if (
           !(error instanceof AgentError) ||
           error.code !== "TARGET_NOT_FOUND" ||
-          expect.element.state?.attached !== false ||
-          snapshot.truncated
+          expect.element.state?.attached !== false
         ) return false;
       }
     }
     return true;
+  }
+
+  private async liveTextMatches(expected: string, signal?: AbortSignal): Promise<boolean> {
+    const frames = await this.controller.agentFrames();
+    const values = await Promise.all(frames.map(async (frame) => {
+      throwIfAborted(signal);
+      const frameId = frame.parentId === null ? "main" : frame.id;
+      const source = liveTextScript(this.agentKey, expected, frameId);
+      try {
+        const raw = frame.parentId === null
+          ? await this.controller.runJs(source)
+          : await this.controller.runJsInFrame(frame.id, source);
+        throwIfAborted(signal);
+        return isLiveTextResult(raw) && raw.matches;
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        return false;
+      }
+    }));
+    return values.some(Boolean);
   }
 
   private emit(event: AgentEvent["event"], data: AgentEvent["data"]): void {
@@ -2431,6 +2440,32 @@ function liveLocatorScript(
   })()`;
 }
 
+function liveTextScript(key: string, expected: string, frameId: string): string {
+  return `(() => {
+    ${agentStateSetupScript(key, frameId)}
+    const expected = ${JSON.stringify(expected)};
+    ${semanticHelpersScript()}
+    const normalize = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
+    const wanted = normalize(expected).toLocaleLowerCase();
+    const matches = (el) => normalize(String(nameFor(el) ?? "") + " " + String(rawTextFor(el) ?? "")).toLocaleLowerCase().includes(wanted);
+    const roots = [document];
+    const visitedRoots = new Set(roots);
+    const visitedElements = new Set();
+    for (let rootIndex = 0; rootIndex < roots.length; rootIndex += 1) {
+      for (const element of roots[rootIndex].querySelectorAll("*")) {
+        if (visitedElements.has(element)) continue;
+        visitedElements.add(element);
+        if (matches(element)) return { ok: true, matches: true };
+        if (element.shadowRoot && !visitedRoots.has(element.shadowRoot)) {
+          visitedRoots.add(element.shadowRoot);
+          roots.push(element.shadowRoot);
+        }
+      }
+    }
+    return { ok: true, matches: false };
+  })()`;
+}
+
 function fillScript(key: string, ref: string, value: string): string {
   return `(() => {
     const state = window[${JSON.stringify(key)}];
@@ -2707,6 +2742,12 @@ function isLiveLocatorResult(value: unknown): value is LiveLocatorResult {
   );
 }
 
+function isLiveTextResult(value: unknown): value is LiveTextResult {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Record<string, unknown>;
+  return result.ok === true && typeof result.matches === "boolean";
+}
+
 function isClickResult(value: unknown): value is ClickResult {
   return !!value && typeof value === "object" && typeof (value as Record<string, unknown>).ok === "boolean";
 }
@@ -2739,7 +2780,12 @@ function isActiveElementInfo(value: unknown): value is ActiveElementInfo {
 }
 
 function hasExpectation(expect: ActionExpectation | undefined): boolean {
-  return !!expect && (expect.url !== undefined || expect.title !== undefined || expect.text !== undefined);
+  return !!expect && (
+    expect.url !== undefined ||
+    expect.title !== undefined ||
+    expect.text !== undefined ||
+    expect.element !== undefined
+  );
 }
 
 function unsupportedAction(action: never): never {
