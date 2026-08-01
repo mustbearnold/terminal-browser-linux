@@ -27,6 +27,19 @@ import type {
 import { scaleZoom, stepZoom } from "./zoom";
 import type { ZoomDirection } from "./zoom";
 
+export interface BrowserAgentFrame {
+  id: string;
+  parentId: string | null;
+  url: string;
+  origin: string;
+}
+
+export interface BrowserAgentFrameNavigation {
+  frameId: string;
+  url: string;
+  detached: boolean;
+}
+
 export class BrowserController {
   readonly surface: Surface;
   private readonly popupSurface: Surface;
@@ -47,6 +60,7 @@ export class BrowserController {
   private readonly favicons = new FaviconCache();
   private faviconSeq = 0;
   private cdpAttached = false;
+  private readonly frameContexts = new Map<string, number>();
   private cachedTargetId: string | null = null;
   private emitHandlers = new Map<string, (data: unknown) => void>();
   private device: DeviceSpec | null = null;
@@ -68,6 +82,7 @@ export class BrowserController {
   onDevtoolsAction: ((action: DevtoolsAction) => void) | null = null;
   onContextMenu: ((params: Electron.ContextMenuParams) => void) | null = null;
   onLifecycleEvent: ((event: BrowserLifecycleEvent) => void) | null = null;
+  onFrameNavigation: ((event: BrowserAgentFrameNavigation) => void) | null = null;
 
   constructor(
     surface: Surface,
@@ -304,6 +319,17 @@ export class BrowserController {
     this.window.webContents.debugger.attach("1.3");
     this.cdpAttached = true;
     this.window.webContents.debugger.on("message", (_event, method, params) => {
+      if (method === "Page.frameNavigated") {
+        this.frameContexts.clear();
+        const frame = (params as { frame?: { id?: string; parentId?: string; url?: string } }).frame;
+        if (frame?.id && frame.parentId) {
+          this.onFrameNavigation?.({ frameId: frame.id, url: frame.url ?? "", detached: false });
+        }
+      } else if (method === "Page.frameDetached") {
+        this.frameContexts.clear();
+        const frameId = (params as { frameId?: string }).frameId;
+        if (frameId) this.onFrameNavigation?.({ frameId, url: "", detached: true });
+      }
       if (method !== "Runtime.bindingCalled") return;
       const call = params as { name: string; payload: string };
       if (call.name !== "__pixelEmit") return;
@@ -346,6 +372,57 @@ export class BrowserController {
 
   runJs(source: string): Promise<unknown> {
     return this.window.webContents.executeJavaScript(source, true);
+  }
+
+  async agentFrames(): Promise<readonly BrowserAgentFrame[]> {
+    await this.attachCdp();
+    const result = (await this.cdp("Page.getFrameTree")) as { frameTree?: CdpFrameTree };
+    const frames: BrowserAgentFrame[] = [];
+    const visit = (tree: CdpFrameTree, parentId: string | null) => {
+      frames.push({
+        id: tree.frame.id,
+        parentId,
+        url: tree.frame.url,
+        origin: tree.frame.securityOrigin,
+      });
+      for (const child of tree.childFrames ?? []) visit(child, tree.frame.id);
+    };
+    if (result.frameTree) visit(result.frameTree, null);
+    return frames;
+  }
+
+  async runJsInFrame(frameId: string, source: string): Promise<unknown> {
+    await this.attachCdp();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        let contextId = this.frameContexts.get(frameId);
+        if (contextId === undefined) {
+          const world = (await this.cdp("Page.createIsolatedWorld", {
+            frameId,
+            worldName: "terminal-browser-agent",
+            grantUniveralAccess: true,
+          })) as { executionContextId?: number };
+          if (typeof world.executionContextId !== "number") throw new Error(`no execution context for frame ${frameId}`);
+          contextId = world.executionContextId;
+          this.frameContexts.set(frameId, contextId);
+        }
+        const result = (await this.cdp("Runtime.evaluate", {
+          expression: source,
+          contextId,
+          awaitPromise: true,
+          returnByValue: true,
+          userGesture: true,
+        })) as { result?: { value?: unknown }; exceptionDetails?: { text?: string; exception?: { description?: string } } };
+        if (!result.exceptionDetails) return result.result?.value;
+        const detail = result.exceptionDetails.exception?.description ?? result.exceptionDetails.text ?? "frame evaluation failed";
+        if (!/context|frame/i.test(detail) || attempt === 1) throw new Error(detail);
+        this.frameContexts.delete(frameId);
+      } catch (error) {
+        if (attempt === 1 || !/context|frame/i.test(error instanceof Error ? error.message : String(error))) throw error;
+        this.frameContexts.delete(frameId);
+      }
+    }
+    throw new Error(`frame evaluation failed for ${frameId}`);
   }
 
   find(text: string) {
@@ -478,6 +555,7 @@ export class BrowserController {
     screen.off("display-removed", this.onDisplayChange);
     screen.off("display-metrics-changed", this.onDisplayChange);
     this.onLifecycleEvent = null;
+    this.onFrameNavigation = null;
     this.emitHandlers.clear();
     this.surface.close();
     this.window.destroy();
@@ -578,6 +656,15 @@ export class BrowserController {
       height: clamp(requested("height"), Math.round(content.height * 0.68), Math.round(content.height * 0.8)),
     };
   }
+}
+
+interface CdpFrameTree {
+  frame: {
+    id: string;
+    url: string;
+    securityOrigin: string;
+  };
+  childFrames?: CdpFrameTree[];
 }
 
 function browserRenderScale(layout: BrowserSurfaceLayout) {

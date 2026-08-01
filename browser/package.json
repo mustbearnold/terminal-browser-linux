@@ -4,6 +4,7 @@
   "private": true,
   "main": "dist/main.js",
   "scripts": {
+    "agent:cross-origin-smoke": "node scripts/agent-cross-origin-smoke.cjs",
     "agent:frame-smoke": "node scripts/agent-frame-smoke.cjs",
     "agent:shadow-smoke": "node scripts/agent-shadow-smoke.cjs",
     "bench:bun-webview": "bun scripts/bun-webview-bench.ts",

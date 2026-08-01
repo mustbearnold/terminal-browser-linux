@@ -24,10 +24,18 @@ import type {
   WaitCondition,
   WaitResult,
 } from "terminal-browser-agent";
-import type { BrowserController } from "../page/controller";
+import type { BrowserAgentFrame, BrowserController } from "../page/controller";
 import type { BrowserLifecycleEvent, BrowserState } from "../page/types";
 
 type CapturedSnapshot = Omit<PageSnapshot, "snapshotId">;
+type FrameSnapshot = {
+  documentId: string;
+  revision: number;
+  url: string;
+  title: string;
+  nodes: CapturedSnapshot["nodes"];
+  truncated: boolean;
+};
 type PageScriptState = { documentId: string; revision: number };
 type ElementInspection = {
   ok: boolean;
@@ -42,8 +50,10 @@ type ElementInspection = {
   name?: string;
   value?: string;
 };
+type ClickResult = { ok: boolean };
 type ActiveElementInfo = {
   ok: boolean;
+  frameId?: string;
   editable?: boolean;
   role?: string;
   name?: string;
@@ -59,6 +69,7 @@ export class ElectronPageBackend implements PageBackend {
   private readonly listeners = new Set<(event: AgentEvent) => void>();
   private readonly agentKey = AGENT_STATE_KEY;
   private sequence = 0;
+  private remoteRevision = 0;
   private lastSnapshot: CapturedSnapshot | null = null;
   private lastSnapshotOptions: string | null = null;
   private observationReady: Promise<void> | null = null;
@@ -71,6 +82,7 @@ export class ElectronPageBackend implements PageBackend {
   ) {
     this.controller.onEmit(AGENT_EVENT_CHANNEL, (data) => this.handlePageEvent(data));
     this.controller.onLifecycleEvent = (event) => this.handleLifecycleEvent(event);
+    this.controller.onFrameNavigation = (event) => this.handleFrameNavigation(event.frameId, event.url, event.detached);
   }
 
   async identity(signal?: AbortSignal): Promise<PageIdentity> {
@@ -81,7 +93,7 @@ export class ElectronPageBackend implements PageBackend {
     return {
       pageId: this.pageId,
       documentId: asDocumentId(scriptState.documentId),
-      revision: scriptState.revision,
+      revision: this.effectiveRevision(scriptState),
       url: page.url,
       title: page.title,
       active: this.active(),
@@ -92,26 +104,54 @@ export class ElectronPageBackend implements PageBackend {
   async snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<CapturedSnapshot> {
     throwIfAborted(signal);
     const scriptState = await this.readScriptState(signal);
+    const revision = this.effectiveRevision(scriptState);
     const optionsKey = snapshotOptionsKey(options);
     if (
       this.lastSnapshot &&
       this.lastSnapshotOptions === optionsKey &&
       this.lastSnapshot.documentId === asDocumentId(scriptState.documentId) &&
-      this.lastSnapshot.revision === scriptState.revision
+      this.lastSnapshot.revision === revision
     ) {
       throwIfAborted(signal);
       return this.lastSnapshot;
     }
 
     throwIfAborted(signal);
-    const value = await this.controller.runJs(snapshotScript(this.agentKey, options));
+    const frames = await this.controller.agentFrames();
     throwIfAborted(signal);
-    if (!isSnapshot(value)) throw new AgentError("INTERNAL_ERROR", "page snapshot returned an invalid shape");
+    const mainFrame = frames.find((frame) => frame.parentId === null);
+    if (!mainFrame) throw new AgentError("INTERNAL_ERROR", "browser frame tree has no main frame");
+    const offsets = await this.frameOffsets(frames, signal);
+    const captures = await Promise.all(
+      frames.map((frame) => this.captureFrame(frame, options, signal)),
+    );
+    throwIfAborted(signal);
+    const mainCapture = captures.find((capture) => capture.frame.id === mainFrame.id);
+    if (!mainCapture || !isFrameSnapshot(mainCapture.value)) {
+      throw new AgentError("INTERNAL_ERROR", "main frame snapshot returned an invalid shape");
+    }
+    const allNodes = captures.flatMap(({ frame, value }) => {
+      if (!isFrameSnapshot(value)) return [];
+      const offset = offsets.get(frame.id) ?? { x: 0, y: 0 };
+      return value.nodes.map((node) => ({
+        ...node,
+        ...(node.box
+          ? { box: { ...node.box, x: node.box.x + offset.x, y: node.box.y + offset.y } }
+          : {}),
+      }));
+    });
+    const maxNodes = Number.isFinite(options?.maxNodes) ? Math.max(1, options!.maxNodes!) : 1000;
+    const currentState = await this.readScriptState(signal);
     const captured = {
-      ...(value as CapturedSnapshot),
       pageId: this.pageId,
-      rootFrameId: asFrameId(String((value as Record<string, unknown>).rootFrameId ?? "main")),
-    };
+      documentId: asDocumentId(currentState.documentId),
+      revision: this.effectiveRevision(currentState),
+      url: mainCapture.value.url,
+      title: mainCapture.value.title,
+      rootFrameId: MAIN_FRAME_ID,
+      nodes: allNodes.slice(0, maxNodes),
+      truncated: captures.some(({ value }) => isFrameSnapshot(value) && value.truncated) || allNodes.length > maxNodes,
+    } satisfies CapturedSnapshot;
     this.lastSnapshot = captured;
     this.lastSnapshotOptions = optionsKey;
     return captured;
@@ -148,7 +188,8 @@ export class ElectronPageBackend implements PageBackend {
     const snapshot = await this.snapshot(undefined, signal);
     this.assertToken(token, snapshot.documentId, snapshot.revision);
     const target = this.resolver.resolve(action.target, snapshot);
-    const inspection = await this.inspect(target.ref, signal);
+    const frameId = String(target.node.frameId);
+    const inspection = await this.inspect(target.ref, frameId, signal);
     if (!inspection.ok || !inspection.visible || !inspection.enabled || inspection.occluded) {
       throw new AgentError("NOT_INTERACTABLE", "target is not safely clickable", {
         retryable: true,
@@ -159,21 +200,31 @@ export class ElectronPageBackend implements PageBackend {
     const button = action.button ?? "left";
     const clickCount = action.clickCount ?? 1;
     throwIfAborted(signal);
-    await this.controller.cdp("Input.dispatchMouseEvent", {
-      type: "mousePressed",
-      x: inspection.x,
-      y: inspection.y,
-      button,
-      clickCount,
-    });
-    throwIfAborted(signal);
-    await this.controller.cdp("Input.dispatchMouseEvent", {
-      type: "mouseReleased",
-      x: inspection.x,
-      y: inspection.y,
-      button,
-      clickCount,
-    });
+    if (frameId === "main") {
+      await this.controller.cdp("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x: inspection.x,
+        y: inspection.y,
+        button,
+        clickCount,
+      });
+      throwIfAborted(signal);
+      await this.controller.cdp("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x: inspection.x,
+        y: inspection.y,
+        button,
+        clickCount,
+      });
+    } else {
+      const value = await this.controller.runJsInFrame(
+        frameId,
+        clickScript(this.agentKey, target.ref, frameId, button, clickCount),
+      );
+      if (!isClickResult(value) || !value.ok) {
+        throw new AgentError("ACTION_UNVERIFIED", "frame click did not activate the target", { retryable: true });
+      }
+    }
     this.invalidateSnapshots();
     const outcome = await this.waitForOutcome(before, expect, signal);
 
@@ -202,14 +253,18 @@ export class ElectronPageBackend implements PageBackend {
     const snapshot = await this.snapshot(undefined, signal);
     this.assertToken(token, snapshot.documentId, snapshot.revision);
     const target = this.resolver.resolve(action.target, snapshot);
-    const inspection = await this.inspect(target.ref, signal);
+    const frameId = String(target.node.frameId);
+    const inspection = await this.inspect(target.ref, frameId, signal);
     if (!inspection.ok || !inspection.visible || !inspection.enabled || !inspection.editable) {
       throw new AgentError("NOT_INTERACTABLE", "target is not an editable control", { retryable: true });
     }
 
     this.controller.focusContent();
     throwIfAborted(signal);
-    const value = await this.controller.runJs(fillScript(this.agentKey, target.ref, action.value));
+    const source = fillScript(this.agentKey, target.ref, action.value);
+    const value = frameId === "main"
+      ? await this.controller.runJs(source)
+      : await this.controller.runJsInFrame(frameId, source);
     throwIfAborted(signal);
     if (!isActiveElementInfo(value) || !value.ok || !value.editable || value.value !== action.value) {
       throw new AgentError("ACTION_UNVERIFIED", "control value did not match the requested fill", {
@@ -385,6 +440,79 @@ export class ElectronPageBackend implements PageBackend {
     } catch {}
   }
 
+  private async captureFrame(
+    frame: BrowserAgentFrame,
+    options: SnapshotOptions | undefined,
+    signal?: AbortSignal,
+  ): Promise<{ frame: BrowserAgentFrame; value: unknown }> {
+    throwIfAborted(signal);
+    const frameId = frame.parentId === null ? "main" : frame.id;
+    try {
+      const source = snapshotScript(this.agentKey, options, frameId);
+      const value = frame.parentId === null
+        ? await this.controller.runJs(source)
+        : await this.controller.runJsInFrame(frame.id, source);
+      return { frame, value };
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      const currentFrames = await this.controller.agentFrames().catch(() => []);
+      if (!currentFrames.some((candidate) => candidate.id === frame.id)) return { frame, value: null };
+      const message = error instanceof Error ? error.message : String(error);
+      throw new AgentError("INTERNAL_ERROR", `frame ${frame.id} snapshot failed: ${message}`, { retryable: true });
+    }
+  }
+
+  private async frameOffsets(
+    frames: readonly BrowserAgentFrame[],
+    signal?: AbortSignal,
+  ): Promise<Map<string, { x: number; y: number }>> {
+    throwIfAborted(signal);
+    await this.controller.attachCdp();
+    await this.controller.cdp("DOM.enable");
+    const byId = new Map(frames.map((frame) => [frame.id, frame]));
+    const offsets = new Map<string, { x: number; y: number }>();
+    const resolving = new Set<string>();
+    const resolve = async (frameId: string): Promise<{ x: number; y: number }> => {
+      const cached = offsets.get(frameId);
+      if (cached) return cached;
+      const frame = byId.get(frameId);
+      if (!frame || resolving.has(frameId)) throw new AgentError("INTERNAL_ERROR", `invalid frame tree at ${frameId}`);
+      resolving.add(frameId);
+      try {
+        if (frame.parentId === null) {
+          const root = { x: 0, y: 0 };
+          offsets.set(frameId, root);
+          return root;
+        }
+        const parent = await resolve(frame.parentId);
+        const owner = await this.controller.cdp("DOM.getFrameOwner", { frameId });
+        const backendNodeId = owner.backendNodeId;
+        if (typeof backendNodeId !== "number") {
+          throw new AgentError("INTERNAL_ERROR", `frame owner is unavailable for ${frameId}`);
+        }
+        const model = (await this.controller.cdp("DOM.getBoxModel", { backendNodeId })) as {
+          model?: { content?: unknown };
+        };
+        const content = model.model?.content;
+        if (!Array.isArray(content) || content.length < 8 || !content.every((value) => typeof value === "number")) {
+          throw new AgentError("INTERNAL_ERROR", `frame owner geometry is unavailable for ${frameId}`);
+        }
+        const localX = Math.min(content[0], content[2], content[4], content[6]);
+        const localY = Math.min(content[1], content[3], content[5], content[7]);
+        const offset = { x: parent.x + localX, y: parent.y + localY };
+        offsets.set(frameId, offset);
+        return offset;
+      } finally {
+        resolving.delete(frameId);
+      }
+    };
+    for (const frame of frames) {
+      throwIfAborted(signal);
+      await resolve(frame.id);
+    }
+    return offsets;
+  }
+
   private async readScriptState(signal?: AbortSignal): Promise<PageScriptState> {
     throwIfAborted(signal);
     const value = await this.controller.runJs(scriptStateScript(this.agentKey));
@@ -393,20 +521,45 @@ export class ElectronPageBackend implements PageBackend {
     return value;
   }
 
-  private async inspect(ref: string, signal?: AbortSignal): Promise<ElementInspection> {
+  private effectiveRevision(state: PageScriptState): number {
+    return state.revision + this.remoteRevision;
+  }
+
+  private async inspect(ref: string, frameId: string, signal?: AbortSignal): Promise<ElementInspection> {
     throwIfAborted(signal);
-    const value = await this.controller.runJs(inspectScript(this.agentKey, ref));
+    const source = inspectScript(this.agentKey, ref, frameId);
+    const value = frameId === "main"
+      ? await this.controller.runJs(source)
+      : await this.controller.runJsInFrame(frameId, source);
     throwIfAborted(signal);
     if (!isInspection(value)) throw new AgentError("INTERNAL_ERROR", "target inspection returned an invalid shape");
-    return value;
+    const offsets = frameId === "main" ? null : await this.frameOffsets(await this.controller.agentFrames(), signal);
+    const offset = offsets?.get(frameId) ?? { x: 0, y: 0 };
+    return {
+      ...value,
+      ...(value.x === undefined ? {} : { x: value.x + offset.x }),
+      ...(value.y === undefined ? {} : { y: value.y + offset.y }),
+    };
   }
 
   private async activeElement(signal?: AbortSignal): Promise<ActiveElementInfo> {
     throwIfAborted(signal);
-    const value = await this.controller.runJs(activeElementScript());
-    throwIfAborted(signal);
-    if (!isActiveElementInfo(value)) throw new AgentError("INTERNAL_ERROR", "active element returned an invalid shape");
-    return value;
+    const frames = await this.controller.agentFrames();
+    let fallback: ActiveElementInfo | null = null;
+    for (const frame of frames) {
+      throwIfAborted(signal);
+      const frameId = frame.parentId === null ? "main" : frame.id;
+      const source = activeElementScript();
+      const value = frameId === "main"
+        ? await this.controller.runJs(source)
+        : await this.controller.runJsInFrame(frame.id, source);
+      if (!isActiveElementInfo(value)) throw new AgentError("INTERNAL_ERROR", "active element returned an invalid shape");
+      if (value.ok) {
+        fallback = { ...value, frameId };
+        if (value.editable) return { ...value, frameId };
+      }
+    }
+    return fallback ?? { ok: false };
   }
 
   private assertToken(token: SnapshotToken | undefined, documentId: string, revision: number): void {
@@ -435,17 +588,28 @@ export class ElectronPageBackend implements PageBackend {
     if (!value || typeof value !== "object") return;
     const event = value as { event?: unknown; data?: AgentEvent["data"] };
     if (event.event !== "dom.changed") return;
+    const data = event.data && typeof event.data === "object"
+      ? event.data as Record<string, unknown>
+      : null;
+    if (data?.frameId && data.frameId !== "main") this.remoteRevision += 1;
     this.invalidateSnapshots();
     this.emit("dom.changed", event.data);
   }
 
   private handleLifecycleEvent(event: BrowserLifecycleEvent): void {
     if (event.type === "navigation") {
+      this.remoteRevision = 0;
       this.invalidateSnapshots();
       this.emit("navigation", { url: event.url, inPage: event.inPage });
       return;
     }
     this.emit("load", { loading: event.loading, url: event.url });
+  }
+
+  private handleFrameNavigation(frameId: string, url: string, detached: boolean): void {
+    this.remoteRevision += 1;
+    this.invalidateSnapshots();
+    this.emit("navigation", { url, inPage: false, frameId, detached });
   }
 
   private async waitForOutcome(
@@ -525,14 +689,14 @@ function snapshotOptionsKey(options?: SnapshotOptions): string {
 
 function scriptStateScript(key: string): string {
   return `(() => {
-    ${agentStateSetupScript(key)}
+    ${agentStateSetupScript(key, "main")}
     return { documentId: state.documentId, revision: state.revision };
   })()`;
 }
 
-function snapshotScript(key: string, options: SnapshotOptions | undefined): string {
+function snapshotScript(key: string, options: SnapshotOptions | undefined, frameId: string): string {
   return `(() => {
-    ${agentStateSetupScript(key)}
+    ${agentStateSetupScript(key, frameId)}
     const options = ${JSON.stringify(options ?? {})};
     const maxNodes = Number.isFinite(options.maxNodes) ? Math.max(1, options.maxNodes) : 1000;
     const interactiveOnly = options.interactiveOnly ?? true;
@@ -543,21 +707,13 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined): stri
     state.snapshotRevision = state.revision;
 
     const text = (value) => String(value ?? "").replace(/\\s+/g, " ").trim().slice(0, 240);
-    const frameIdFor = (frame, parentFrameId) => {
-      let frameId = state.frameRefs.get(frame);
-      if (!frameId) {
-        frameId = parentFrameId + "/frame-" + (++state.nextFrame);
-        state.frameRefs.set(frame, frameId);
-      }
-      return frameId;
-    };
     const styleFor = (el) => {
       const view = el.ownerDocument && el.ownerDocument.defaultView;
       return view ? view.getComputedStyle(el) : getComputedStyle(el);
     };
-    const boxFor = (el, offset) => {
+    const boxFor = (el) => {
       const rect = el.getBoundingClientRect();
-      return { x: rect.x + offset.x, y: rect.y + offset.y, width: rect.width, height: rect.height, rect };
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, rect };
     };
     const roleFor = (el) => {
       const explicit = el.getAttribute("role");
@@ -613,7 +769,7 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined): stri
       }
       return Object.keys(attrs).length ? attrs : undefined;
     };
-    const visit = (el, parent, frameId, offset, parentVisible) => {
+    const visit = (el, parent, parentVisible) => {
       if (nodes.length >= maxNodes) { truncated = true; return; }
       const role = roleFor(el);
       const visible = parentVisible && visibleFor(el);
@@ -622,14 +778,14 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined): stri
       if (include) {
         let ref = state.elementRefs.get(el);
         if (!ref) {
-          ref = "r" + (++state.nextRef);
+          ref = state.frameId + ":r" + (++state.nextRef);
           state.elementRefs.set(el, ref);
         }
         state.refs.set(ref, el);
-        const box = boxFor(el, offset);
+        const box = boxFor(el);
         nodes.push({
           ref,
-          frameId,
+          frameId: state.frameId,
           parent,
           role,
           name: nameFor(el),
@@ -643,55 +799,40 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined): stri
         });
         nextParent = ref;
       }
-      for (const child of el.children) visit(child, nextParent, frameId, offset, visible);
+      for (const child of el.children) visit(child, nextParent, visible);
       if (el.shadowRoot) {
         state.observeRoot(el.shadowRoot);
-        for (const child of el.shadowRoot.children) visit(child, nextParent, frameId, offset, visible);
-      }
-      if (el.tagName === "IFRAME" && el.contentDocument) {
-        state.observeFrame(el);
-        state.observeRoot(el.contentDocument);
-        const childFrameId = frameIdFor(el, frameId);
-        const childBody = el.contentDocument.body || el.contentDocument.documentElement;
-        if (childBody) {
-          const frameBox = boxFor(el, offset);
-          const childOffset = {
-            x: frameBox.x + (el.clientLeft || 0),
-            y: frameBox.y + (el.clientTop || 0),
-          };
-          visit(childBody, nextParent, childFrameId, childOffset, visible);
-        }
+        for (const child of el.shadowRoot.children) visit(child, nextParent, visible);
       }
     };
-    visit(document.body || document.documentElement, null, "main", { x: 0, y: 0 }, true);
+    visit(document.body || document.documentElement, null, true);
     return {
       pageId: "",
       documentId: state.documentId,
       revision: state.revision,
       url: location.href,
       title: document.title,
-      rootFrameId: "main",
+      rootFrameId: state.frameId,
       nodes,
       truncated,
     };
   })()`;
 }
 
-function agentStateSetupScript(key: string): string {
+function agentStateSetupScript(key: string, frameId: string): string {
   return `
     const key = ${JSON.stringify(key)};
+    const frameId = ${JSON.stringify(frameId)};
     const documentId = String(performance.timeOrigin);
     let state = window[key];
-    if (!state || state.documentId !== documentId) {
+    if (!state || state.documentId !== documentId || state.frameId !== frameId) {
       state = {
         documentId,
+        frameId,
         revision: 0,
         nextRef: 0,
         refs: new Map(),
         elementRefs: new WeakMap(),
-        frameRefs: new WeakMap(),
-        nextFrame: 0,
-        observedFrames: new WeakSet(),
         invalidationScheduled: false,
         snapshotRevision: -1,
       };
@@ -701,7 +842,7 @@ function agentStateSetupScript(key: string): string {
         try {
           binding(JSON.stringify({
             channel: ${JSON.stringify(AGENT_EVENT_CHANNEL)},
-            data: { event: "dom.changed", data: { revision: state.revision } },
+            data: { event: "dom.changed", data: { frameId: state.frameId, revision: state.revision } },
           }));
         } catch {}
       };
@@ -732,39 +873,23 @@ function agentStateSetupScript(key: string): string {
           root.addEventListener(event, invalidateEvent, true);
         }
       };
-      const observeFrame = (frame) => {
-        if (state.observedFrames.has(frame)) return;
-        state.observedFrames.add(frame);
-        frame.addEventListener("load", invalidateEvent, true);
-      };
       state.observeRoot = observeRoot;
-      state.observeFrame = observeFrame;
       observeRoot(document);
       window[key] = state;
     }
   `;
 }
 
-function inspectScript(key: string, ref: string): string {
+function inspectScript(key: string, ref: string, frameId: string): string {
   return `(() => {
     const state = window[${JSON.stringify(key)}];
+    if (!state || state.frameId !== ${JSON.stringify(frameId)}) return { ok: false };
     const el = state && state.refs && state.refs.get(${JSON.stringify(ref)});
     if (!el || !el.isConnected) return { ok: false };
     el.scrollIntoView({ block: "center", inline: "center" });
     const rect = el.getBoundingClientRect();
-    let x = rect.left + rect.width / 2;
-    let y = rect.top + rect.height / 2;
-    let ownerDocument = el.ownerDocument;
-    try {
-      let frame = ownerDocument.defaultView && ownerDocument.defaultView.frameElement;
-      while (frame) {
-        const frameRect = frame.getBoundingClientRect();
-        x += frameRect.left + (frame.clientLeft || 0);
-        y += frameRect.top + (frame.clientTop || 0);
-        ownerDocument = frame.ownerDocument;
-        frame = ownerDocument.defaultView && ownerDocument.defaultView.frameElement;
-      }
-    } catch {}
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
     const root = el.getRootNode();
     const activeFor = () => {
       let active = root && root.activeElement ? root.activeElement : el.ownerDocument.activeElement;
@@ -790,27 +915,11 @@ function inspectScript(key: string, ref: string): string {
     };
     const view = el.ownerDocument.defaultView || window;
     const style = view.getComputedStyle(el);
-    let visibleInFrames = true;
-    try {
-      let frame = el.ownerDocument.defaultView && el.ownerDocument.defaultView.frameElement;
-      while (frame) {
-        const frameView = frame.ownerDocument.defaultView || window;
-        const frameStyle = frameView.getComputedStyle(frame);
-        const frameRect = frame.getBoundingClientRect();
-        if (frameStyle.display === "none" || frameStyle.visibility === "hidden" || frameStyle.opacity === "0" || frameRect.width <= 0 || frameRect.height <= 0) {
-          visibleInFrames = false;
-          break;
-        }
-        frame = frame.ownerDocument.defaultView && frame.ownerDocument.defaultView.frameElement;
-      }
-    } catch {
-      visibleInFrames = false;
-    }
     return {
       ok: true,
       x,
       y,
-      visible: visibleInFrames && style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0" && rect.width > 0 && rect.height > 0,
+      visible: style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0" && rect.width > 0 && rect.height > 0,
       enabled: !el.disabled && el.getAttribute("aria-disabled") !== "true",
       occluded: !!hit && !composedHit(el, hit),
       editable:
@@ -868,24 +977,22 @@ function fillScript(key: string, ref: string, value: string): string {
   })()`;
 }
 
+function clickScript(key: string, ref: string, frameId: string, button: string, clickCount: number): string {
+  return `(() => {
+    const state = window[${JSON.stringify(key)}];
+    if (!state || state.frameId !== ${JSON.stringify(frameId)}) return { ok: false };
+    const el = state.refs && state.refs.get(${JSON.stringify(ref)});
+    if (!el || !el.isConnected) return { ok: false };
+    if (${JSON.stringify(button)} !== "left") return { ok: false };
+    for (let count = 0; count < ${clickCount}; count += 1) el.click();
+    return { ok: true };
+  })()`;
+}
+
 function activeElementScript(): string {
   return `(() => {
-    const deepActive = (root) => {
-      let el = root.activeElement;
-      while (el) {
-        if (el.shadowRoot && el.shadowRoot.activeElement) {
-          el = el.shadowRoot.activeElement;
-          continue;
-        }
-        if (el.tagName === "IFRAME" && el.contentDocument) {
-          const child = deepActive(el.contentDocument);
-          if (child && child !== el.contentDocument.body && child !== el.contentDocument.documentElement) return child;
-        }
-        return el;
-      }
-      return null;
-    };
-    const el = deepActive(document);
+    let el = document.activeElement;
+    while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
     if (!el || el === document.body || el === document.documentElement) return { ok: false };
     const editable = el.isContentEditable || el.tagName === "TEXTAREA" ||
       (el.tagName === "INPUT" && !["checkbox", "radio", "file", "button", "submit", "reset", "image"].includes(el.type));
@@ -905,7 +1012,7 @@ function isScriptState(value: unknown): value is PageScriptState {
   return typeof state.documentId === "string" && typeof state.revision === "number";
 }
 
-function isSnapshot(value: unknown): value is CapturedSnapshot {
+function isFrameSnapshot(value: unknown): value is FrameSnapshot {
   if (!value || typeof value !== "object") return false;
   const snapshot = value as Record<string, unknown>;
   return (
@@ -913,11 +1020,16 @@ function isSnapshot(value: unknown): value is CapturedSnapshot {
     typeof snapshot.revision === "number" &&
     typeof snapshot.url === "string" &&
     typeof snapshot.title === "string" &&
-    Array.isArray(snapshot.nodes)
+    Array.isArray(snapshot.nodes) &&
+    typeof snapshot.truncated === "boolean"
   );
 }
 
 function isInspection(value: unknown): value is ElementInspection {
+  return !!value && typeof value === "object" && typeof (value as Record<string, unknown>).ok === "boolean";
+}
+
+function isClickResult(value: unknown): value is ClickResult {
   return !!value && typeof value === "object" && typeof (value as Record<string, unknown>).ok === "boolean";
 }
 

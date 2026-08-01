@@ -25,3 +25,15 @@ jobs:
       - run: pnpm --filter pixel-terminals build
       - run: pnpm --filter terminal-browser typecheck
       - run: pnpm --filter terminal-browser build
+
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: xvfb-run -a pnpm agent:live-smoke
