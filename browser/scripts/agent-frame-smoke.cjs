@@ -38,6 +38,10 @@ async function run() {
       assert.notEqual(frameButton.frameId, "main");
       assert.equal(frameButton.frameId, frameTextbox.frameId);
       assert.ok(frameButton.box && frameButton.box.x > 0 && frameButton.box.y > 0);
+      const deltaBase = await client.call("page.snapshot", {
+        pageId,
+        options: { interactiveOnly: false, includeGeometry: false },
+      });
 
       const filled = await client.call("page.act", {
         pageId,
@@ -47,10 +51,15 @@ async function run() {
           value: "Ada",
         },
       });
+      const valueDelta = await client.snapshotDelta(pageId, deltaBase);
+      assert.equal(valueDelta.mode, "incremental", "same-origin frame input did not use the incremental delta path");
+      assert.ok(valueDelta.updated.some((entry) => entry.node.name === "Frame name"), "frame incremental delta omitted the input state");
       const typed = await client.call("page.act", {
         pageId,
         action: { type: "type", text: " Lovelace" },
       });
+      const typedDelta = await client.snapshotDelta(pageId, valueDelta);
+      assert.equal(typedDelta.mode, "incremental", "same-origin frame typing did not use the incremental delta path");
       const clicked = await client.call("page.act", {
         pageId,
         action: {
@@ -63,6 +72,7 @@ async function run() {
         pageId,
         options: { interactiveOnly: false, includeGeometry: true },
       });
+      const delta = await client.snapshotDelta(pageId, typedDelta);
       const dynamicButton = after.nodes.find((node) => node.name === "Frame dynamic");
       assert.equal(filled.verified, true);
       assert.equal(typed.proof?.value, "Ada Lovelace");
@@ -71,12 +81,17 @@ async function run() {
       assert.equal(dynamicButton.frameId, frameButton.frameId);
       assert.ok(after.revision > initial.revision, "frame mutation did not advance the revision");
       assert.ok(events.some((event) => event.event === "dom.changed"), "frame mutation emitted no event");
+      assert.equal(delta.mode, "full", "structural frame mutation did not use the full fallback path");
+      assert.ok(delta.added.some((entry) => entry.node.name === "Frame dynamic"), "frame fallback delta omitted the new node");
+      assert.ok(delta.updated.some((entry) => entry.node.name === "Clicked"), "frame fallback delta omitted the status update");
 
       console.log(JSON.stringify({
         frameId: frameButton.frameId,
         box: frameButton.box,
         typedValue: typed.proof?.value,
         dynamicNode: dynamicButton.name,
+        incrementalDeltaMode: typedDelta.mode,
+        fallbackDeltaMode: delta.mode,
         revisionDelta: after.revision - initial.revision,
         domEvents: events.filter((event) => event.event === "dom.changed").length,
       }));

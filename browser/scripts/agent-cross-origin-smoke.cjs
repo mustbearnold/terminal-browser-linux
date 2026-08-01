@@ -105,6 +105,10 @@ async function run() {
           checked: true,
         },
       });
+      const deltaBase = await client.call("page.snapshot", {
+        pageId,
+        options: { interactiveOnly: false, includeGeometry: false },
+      });
 
       const filled = await client.call("page.act", {
         pageId,
@@ -114,10 +118,14 @@ async function run() {
           value: "Ada",
         },
       });
+      const valueDelta = await client.snapshotDelta(pageId, deltaBase);
+      assert.equal(valueDelta.mode, "incremental", "cross-origin frame input did not use the incremental delta path");
       const typed = await client.call("page.act", {
         pageId,
         action: { type: "type", text: " Lovelace" },
       });
+      const typedDelta = await client.snapshotDelta(pageId, valueDelta);
+      assert.equal(typedDelta.mode, "incremental", "cross-origin frame typing did not use the incremental delta path");
       const clicked = await client.call("page.act", {
         pageId,
         action: {
@@ -130,6 +138,7 @@ async function run() {
         pageId,
         options: { interactiveOnly: false, includeGeometry: true },
       });
+      const delta = await client.snapshotDelta(pageId, typedDelta);
       const dynamicButton = after.nodes.find((node) => node.name === "Frame dynamic");
       assert.equal(filled.verified, true);
       assert.equal(hovered.verified, true);
@@ -145,6 +154,8 @@ async function run() {
       assert.equal(dynamicButton.frameId, frameButton.frameId);
       assert.ok(after.revision > initial.revision, "cross-origin frame mutation did not advance the revision");
       assert.ok(events.some((event) => event.event === "dom.changed"), "cross-origin frame mutation emitted no event");
+      assert.equal(delta.mode, "full", "cross-origin structural mutation did not use the full fallback path");
+      assert.ok(delta.added.some((entry) => entry.node.name === "Frame dynamic"), "cross-origin fallback delta omitted the new node");
       assert.ok(
         events.some((event) => event.event === "dom.changed" && event.data && typeof event.data === "object" && event.data.frameId === frameButton.frameId),
         "cross-origin frame event did not preserve its frame identity",
@@ -235,6 +246,8 @@ async function run() {
         box: frameButton.box,
         typedValue: typed.proof?.value,
         dynamicNode: dynamicButton.name,
+        incrementalDeltaMode: typedDelta.mode,
+        fallbackDeltaMode: delta.mode,
         revisionDelta: after.revision - initial.revision,
         domEvents: events.filter((event) => event.event === "dom.changed").length,
         frameLifecycleEvents: events.filter((event) => event.event === "frame.lifecycle").length,

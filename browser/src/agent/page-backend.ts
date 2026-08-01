@@ -52,6 +52,7 @@ type FrameSnapshot = {
   truncated: boolean;
 };
 type PageScriptState = { documentId: string; revision: number };
+type FrameSnapshotState = { documentId: string; revision: number };
 type IncrementalSnapshotResult = {
   ok: boolean;
   documentId?: string;
@@ -103,6 +104,7 @@ export class ElectronPageBackend implements PageBackend {
   private sequence = 0;
   private remoteRevision = 0;
   private readonly snapshotCache = new Map<string, CapturedSnapshot>();
+  private readonly snapshotFrameStates = new Map<string, Map<string, FrameSnapshotState>>();
   private lastSnapshot: CapturedSnapshot | null = null;
   private lastSnapshotOptions: string | null = null;
   private lastSnapshotInvalidated = false;
@@ -279,11 +281,18 @@ export class ElectronPageBackend implements PageBackend {
       nodes: allNodes.slice(0, maxNodes),
       truncated: captures.some(({ value }) => isFrameSnapshot(value) && value.truncated) || allNodes.length > maxNodes,
     } satisfies CapturedSnapshot;
+    const frameStates = new Map<string, FrameSnapshotState>();
+    for (const { frame, value } of captures) {
+      if (!isFrameSnapshot(value)) continue;
+      frameStates.set(frameKey(frame), { documentId: value.documentId, revision: value.revision });
+    }
     this.snapshotCache.set(optionsKey, captured);
+    this.snapshotFrameStates.set(optionsKey, frameStates);
     while (this.snapshotCache.size > 16) {
       const oldest = this.snapshotCache.keys().next().value;
       if (oldest === undefined) break;
       this.snapshotCache.delete(oldest);
+      this.snapshotFrameStates.delete(oldest);
     }
     this.lastSnapshot = captured;
     this.lastSnapshotOptions = optionsKey;
@@ -299,14 +308,15 @@ export class ElectronPageBackend implements PageBackend {
     throwIfAborted(signal);
     const optionsKey = snapshotOptionsKey(options);
     const baseSnapshot = this.snapshotCache.get(optionsKey);
+    const frameStates = this.snapshotFrameStates.get(optionsKey);
     if (
       !baseSnapshot ||
+      !frameStates ||
       baseSnapshot.documentId !== base.documentId ||
       baseSnapshot.revision !== base.revision ||
       base.truncated ||
       base.nodes.length === 0 ||
-      base.nodes.some((node) => !node.nodeId) ||
-      this.remoteRevision !== 0
+      base.nodes.some((node) => !node.nodeId)
     ) {
       return undefined;
     }
@@ -314,41 +324,81 @@ export class ElectronPageBackend implements PageBackend {
     const frames = await this.controller.agentFrames();
     throwIfAborted(signal);
     const mainFrame = frames.find((frame) => frame.parentId === null);
-    if (!mainFrame || frames.length !== 1) return undefined;
+    if (!mainFrame || frameStates.size !== frames.length) return undefined;
+    const currentFrameKeys = new Set(frames.map(frameKey));
+    if ([...frameStates.keys()].some((key) => !currentFrameKeys.has(key))) return undefined;
     this.mainBrowserFrameId = mainFrame.id;
 
+    const remoteRevisionAtStart = this.remoteRevision;
     const scriptState = await this.readScriptState(signal);
+    const currentRevision = this.effectiveRevision(scriptState);
     if (
       asDocumentId(scriptState.documentId) !== base.documentId ||
-      this.effectiveRevision(scriptState) < base.revision
+      currentRevision < base.revision
     ) {
       return undefined;
     }
-    if (this.lastSnapshotInvalidated && this.effectiveRevision(scriptState) === base.revision) return undefined;
+    if (options?.includeGeometry !== false && (this.lastSnapshotInvalidated || currentRevision !== base.revision)) {
+      return undefined;
+    }
 
-    const value = await this.controller.runJs(
-      incrementalSnapshotScript(
+    const values = await Promise.all(frames.map(async (frame) => {
+      throwIfAborted(signal);
+      const key = frameKey(frame);
+      const cached = frameStates.get(key);
+      if (!cached) return null;
+      const frameNodes = base.nodes.filter((node) => String(node.frameId) === key);
+      const source = incrementalSnapshotScript(
         this.agentKey,
         options,
-        base.revision,
-        base.nodes.map((node) => node.nodeId!),
-        "main",
-      ),
-    );
+        cached.revision,
+        frameNodes.map((node) => node.nodeId!),
+        key,
+      );
+      const raw = frame.parentId === null
+        ? await this.controller.runJs(source)
+        : await this.controller.runJsInFrame(frame.id, source);
+      throwIfAborted(signal);
+      if (!isIncrementalSnapshotResult(raw) || raw.documentId !== cached.documentId || raw.revision! < cached.revision) {
+        return null;
+      }
+      const nodes = rebuildIncrementalNodes(frameNodes, raw);
+      if (!nodes) return null;
+      return { frame, key, value: raw, nodes };
+    }));
     throwIfAborted(signal);
-    if (!isIncrementalSnapshotResult(value)) return undefined;
-    const after = await this.readScriptState(signal);
-    if (
-      value.documentId !== after.documentId ||
-      value.revision !== this.effectiveRevision(after) ||
-      value.documentId !== base.documentId
-    ) {
-      return undefined;
-    }
+    if (values.some((entry) => entry === null) || this.remoteRevision !== remoteRevisionAtStart) return undefined;
 
-    const current = rebuildIncrementalSnapshot(base, value, this.pageId);
-    if (!current) return undefined;
+    const after = await this.readScriptState(signal);
+    const resolvedValues = values as Array<{
+      frame: BrowserAgentFrame;
+      key: string;
+      value: IncrementalSnapshotResult;
+      nodes: readonly SnapshotNode[];
+    }>;
+    const mainValue = resolvedValues.find((entry) => entry.key === "main");
+    if (
+      !mainValue ||
+      mainValue.value.documentId !== after.documentId ||
+      mainValue.value.revision !== after.revision ||
+      mainValue.value.documentId !== base.documentId
+    ) return undefined;
+
+    const current = {
+      pageId: this.pageId,
+      documentId: asDocumentId(after.documentId),
+      revision: this.effectiveRevision(after),
+      url: mainValue.value.url!,
+      title: mainValue.value.title!,
+      rootFrameId: MAIN_FRAME_ID,
+      nodes: resolvedValues.flatMap((entry) => entry.nodes),
+      truncated: false,
+    } satisfies CapturedSnapshot;
+    const nextFrameStates = new Map<string, FrameSnapshotState>(
+      resolvedValues.map((entry) => [entry.key, { documentId: entry.value.documentId!, revision: entry.value.revision! }]),
+    );
     this.snapshotCache.set(optionsKey, current);
+    this.snapshotFrameStates.set(optionsKey, nextFrameStates);
     this.lastSnapshot = current;
     this.lastSnapshotOptions = optionsKey;
     this.lastSnapshotInvalidated = false;
@@ -1777,15 +1827,18 @@ function isSnapshotNode(value: unknown): value is SnapshotNode {
   );
 }
 
-function rebuildIncrementalSnapshot(
-  base: PageSnapshot,
+function frameKey(frame: BrowserAgentFrame): string {
+  return frame.parentId === null ? "main" : frame.id;
+}
+
+function rebuildIncrementalNodes(
+  baseNodes: readonly SnapshotNode[],
   value: IncrementalSnapshotResult,
-  pageId: PageId,
-): CapturedSnapshot | null {
+): SnapshotNode[] | null {
   if (!value.refs || !value.changed || value.documentId === undefined || value.revision === undefined) return null;
   const baseByNodeId = new Map<string, SnapshotNode>();
   const baseKeyByRef = new Map<string, string>();
-  for (const node of base.nodes) {
+  for (const node of baseNodes) {
     if (!node.nodeId || baseByNodeId.has(node.nodeId) || baseKeyByRef.has(String(node.ref))) return null;
     baseByNodeId.set(node.nodeId, node);
     baseKeyByRef.set(String(node.ref), node.nodeId);
@@ -1801,7 +1854,7 @@ function rebuildIncrementalSnapshot(
     if (!node.nodeId || !baseByNodeId.has(node.nodeId) || changedByNodeId.has(node.nodeId)) return null;
     changedByNodeId.set(node.nodeId, node);
   }
-  const nodes = base.nodes.map((baseNode) => {
+  const nodes = baseNodes.map((baseNode) => {
     const nodeId = baseNode.nodeId!;
     const ref = refByNodeId.get(nodeId);
     if (!ref) return null;
@@ -1818,16 +1871,7 @@ function rebuildIncrementalSnapshot(
     };
   });
   if (nodes.some((node) => node === null)) return null;
-  return {
-    pageId,
-    documentId: asDocumentId(value.documentId),
-    revision: value.revision,
-    url: value.url!,
-    title: value.title!,
-    rootFrameId: asFrameId(value.rootFrameId!),
-    nodes: nodes as SnapshotNode[],
-    truncated: false,
-  };
+  return nodes as SnapshotNode[];
 }
 
 function isFrameSnapshot(value: unknown): value is FrameSnapshot {
