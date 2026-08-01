@@ -6,6 +6,19 @@ import { LineJsonDecoder, encodeAgentMessage } from "./line-json";
 import type { AgentMessage } from "../protocol/types";
 import type { AgentTransport, AgentTransportServer } from "./types";
 
+export async function connectUnixSocket(socketPath: string): Promise<UnixSocketTransport> {
+  const socket = net.createConnection(socketPath);
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => reject(error);
+    socket.once("connect", () => {
+      socket.removeListener("error", onError);
+      resolve();
+    });
+    socket.once("error", onError);
+  });
+  return new UnixSocketTransport(socket);
+}
+
 export class UnixSocketTransport implements AgentTransport {
   private readonly decoder = new LineJsonDecoder();
   private readonly messageListeners = new Set<(message: AgentMessage) => void>();

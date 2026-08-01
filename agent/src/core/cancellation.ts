@@ -1,6 +1,6 @@
 import { AgentError } from "../protocol/errors";
 
-const MAX_TIMER_MS = 2_147_483_647;
+export const MAX_REQUEST_DEADLINE_MS = 2_147_483_647;
 
 export function throwIfAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return;
@@ -43,7 +43,7 @@ export class RequestCancellationRegistry {
     if (this.active.has(requestId)) {
       throw new AgentError("INVALID_REQUEST", `request is already active: ${requestId}`);
     }
-    if (deadlineMs !== undefined && (!Number.isSafeInteger(deadlineMs) || deadlineMs < 0 || deadlineMs > MAX_TIMER_MS)) {
+    if (deadlineMs !== undefined && (!Number.isSafeInteger(deadlineMs) || deadlineMs < 0 || deadlineMs > MAX_REQUEST_DEADLINE_MS)) {
       throw new AgentError("INVALID_REQUEST", "deadlineMs must be a non-negative safe integer within timer limits");
     }
     const controller = new AbortController();
