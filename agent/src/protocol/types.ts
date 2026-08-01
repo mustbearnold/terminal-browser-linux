@@ -173,6 +173,7 @@ export interface ActionProof {
 
 export interface ActionResult {
   verified: boolean;
+  replayed?: boolean;
   effects: readonly ActionEffect[];
   proof?: ActionProof;
   snapshot?: PageSnapshot;
@@ -217,6 +218,7 @@ export type AgentRequest =
       action: AgentAction;
       token?: SnapshotToken;
       expect?: ActionExpectation;
+      idempotencyKey?: string;
     })
   | (AgentRequestEnvelope & {
       op: "page.wait";

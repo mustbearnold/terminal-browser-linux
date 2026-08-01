@@ -210,6 +210,59 @@ test("replays missed fixture events from an observation cursor", async () => {
   assert.deepEqual(events.map((event) => event.sequence), [1]);
 });
 
+test("replays a completed action across connections with an idempotency key", async () => {
+  const runtime = new FixtureRuntime();
+  const router = new AgentRequestRouter(runtime);
+  const firstContext: AgentConnectionContext = {
+    clientId: "retry-client",
+    emit: () => {},
+    addSubscription: () => {},
+  };
+  const secondContext: AgentConnectionContext = {
+    clientId: "retry-client",
+    emit: () => {},
+    addSubscription: () => {},
+  };
+  const action = {
+    type: "click" as const,
+    target: { locator: { kind: "role" as const, role: "button", name: "Continue", exact: true } },
+  };
+
+  const first = result<{ snapshot?: PageSnapshot; replayed?: boolean }>(await router.handle(
+    request("page.act", { pageId: FIXTURE_PAGE_ID, action, idempotencyKey: "continue-1" }),
+    firstContext,
+  ));
+  const retry = result<{ snapshot?: PageSnapshot; replayed?: boolean }>(await router.handle(
+    request("page.act", { pageId: FIXTURE_PAGE_ID, action, idempotencyKey: "continue-1" }),
+    secondContext,
+  ));
+  assert.equal(first.replayed, undefined);
+  assert.equal(retry.replayed, true);
+  assert.equal(retry.snapshot?.revision, first.snapshot?.revision);
+
+  const conflict = await router.handle(
+    request("page.act", {
+      pageId: FIXTURE_PAGE_ID,
+      action: { type: "press", key: "Enter" },
+      idempotencyKey: "continue-1",
+    }),
+    secondContext,
+  );
+  assert.equal(conflict.ok, false);
+  assert.equal(conflict.error?.code, "IDEMPOTENCY_CONFLICT");
+
+  const invalid = await router.handle(
+    request("page.act", {
+      pageId: FIXTURE_PAGE_ID,
+      action,
+      idempotencyKey: "",
+    }),
+    secondContext,
+  );
+  assert.equal(invalid.ok, false);
+  assert.equal(invalid.error?.code, "INVALID_REQUEST");
+});
+
 test("serializes concurrent page actions before checking snapshot freshness", async () => {
   const runtime = new FixtureRuntime();
   const router = new AgentRequestRouter(runtime);

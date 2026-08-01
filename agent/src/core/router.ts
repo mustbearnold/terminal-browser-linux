@@ -1,5 +1,6 @@
 import { AgentError } from "../protocol/errors";
 import type {
+  ActionResult,
   AgentEvent,
   AgentMessage,
   AgentRequest,
@@ -13,6 +14,7 @@ import {
 } from "../protocol/types";
 import type { AgentRuntime } from "./runtime";
 import { actionCapability } from "./capabilities";
+import { IdempotencyCache, stableSerialize } from "./idempotency";
 import { SnapshotLocatorResolver } from "./locator";
 import { RequestCancellationRegistry, throwIfAborted, type RequestExecution } from "./cancellation";
 import { MemoryTrace, TraceRecorder, type TraceDirection } from "./trace";
@@ -26,6 +28,7 @@ export interface AgentConnectionContext {
 export class AgentRequestRouter {
   private readonly locator = new SnapshotLocatorResolver();
   private readonly requests = new WeakMap<AgentConnectionContext, RequestCancellationRegistry>();
+  private readonly idempotentActions = new IdempotencyCache<ActionResult>();
   private readonly defaultContext = idleContext();
   readonly trace: TraceRecorder;
 
@@ -109,10 +112,18 @@ export class AgentRequestRouter {
         return this.locator.resolve(request.target, snapshot).node;
       }
       case "page.act": {
-        const capabilities = new Set(this.runtime.capabilities());
-        requireCapability(capabilities, "page.act");
-        requireCapability(capabilities, actionCapability(request.action));
-        return await this.page(request.pageId).act(request.action, request.token, request.expect, signal);
+        if (request.idempotencyKey !== undefined) requireIdempotencyKey(request.idempotencyKey);
+        const execute = () => this.executeAction(request, signal);
+        if (request.idempotencyKey === undefined) return await execute();
+        const key = `${context.clientId}\u0000${String(request.pageId)}\u0000${request.idempotencyKey}`;
+        const fingerprint = stableSerialize({
+          pageId: request.pageId,
+          action: request.action,
+          token: request.token,
+          expect: request.expect,
+        });
+        const outcome = await this.idempotentActions.execute(key, fingerprint, execute);
+        return outcome.replayed ? { ...outcome.result, replayed: true } : outcome.result;
       }
       case "page.wait":
         return await this.page(request.pageId).wait(request.condition, request.timeoutMs, signal);
@@ -148,6 +159,16 @@ export class AgentRequestRouter {
     const page = this.runtime.getPage(pageId);
     if (!page) throw new AgentError("PAGE_NOT_FOUND", `unknown page: ${pageId}`);
     return page;
+  }
+
+  private async executeAction(
+    request: Extract<AgentRequest, { op: "page.act" }>,
+    signal: AbortSignal,
+  ): Promise<ActionResult> {
+    const capabilities = new Set(this.runtime.capabilities());
+    requireCapability(capabilities, "page.act");
+    requireCapability(capabilities, actionCapability(request.action));
+    return this.page(request.pageId).act(request.action, request.token, request.expect, signal);
   }
 
   private registry(context: AgentConnectionContext): RequestCancellationRegistry {
@@ -187,6 +208,12 @@ function requireCapability(capabilities: ReadonlySet<AgentCapability>, capabilit
   throw new AgentError("CAPABILITY_UNAVAILABLE", `runtime does not advertise ${capability}`, {
     details: { capability },
   });
+}
+
+function requireIdempotencyKey(key: string): void {
+  if (key.length === 0 || key.length > 256) {
+    throw new AgentError("INVALID_REQUEST", "idempotencyKey must be between 1 and 256 characters");
+  }
 }
 
 function idleContext(): AgentConnectionContext {

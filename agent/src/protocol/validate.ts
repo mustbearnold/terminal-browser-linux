@@ -67,7 +67,13 @@ function validateRequest(message: Record<string, unknown>): void {
 
   if (op === "page.snapshot" && message.options !== undefined) requireObject(message.options, "options");
   if (op === "page.read") requireObject(message.target, "target");
-  if (op === "page.act") requireObject(message.action, "action");
+  if (op === "page.act") {
+    requireObject(message.action, "action");
+    if (message.idempotencyKey !== undefined) {
+      const key = requireString(message.idempotencyKey, "idempotencyKey");
+      if (key.length > 256) throw new AgentError("INVALID_MESSAGE", "idempotencyKey must be at most 256 characters");
+    }
+  }
   if (op === "page.wait") requireObject(message.condition, "condition");
   if (op === "page.observe") {
     requireStringArray(message.events, "events");

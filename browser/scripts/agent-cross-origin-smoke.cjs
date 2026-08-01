@@ -65,6 +65,7 @@ async function run() {
       });
       const scrolled = await client.call("page.act", {
         pageId,
+        idempotencyKey: "cross-origin-scroll-1",
         action: {
           type: "scroll",
           target: { locator: { kind: "role", role: "region", name: "Frame scroll area", exact: true } },
@@ -135,13 +136,26 @@ async function run() {
       );
 
       const recoveryEvents = [];
-      recoveryClient = await AgentClient.connect(socket, { clientId: "cross-origin-recovery" });
+      recoveryClient = await AgentClient.connect(socket, { clientId: "cross-origin-smoke" });
+      await recoveryClient.hello();
       recoveryClient.onEvent((event) => recoveryEvents.push(event));
       const recovered = await recoveryClient.observe(pageId, ["dom.changed", "frame.lifecycle"], {
         afterSequence: events[0].sequence,
       });
       assert.ok(recovered.replayed > 0, "event cursor replayed no retained events");
       assert.ok(recoveryEvents.some((event) => event.sequence > events[0].sequence), "recovery client received no replayed event");
+      const scrolledRetry = await recoveryClient.call("page.act", {
+        pageId,
+        idempotencyKey: "cross-origin-scroll-1",
+        action: {
+          type: "scroll",
+          target: { locator: { kind: "role", role: "region", name: "Frame scroll area", exact: true } },
+          direction: "down",
+          amount: 60,
+        },
+      });
+      assert.equal(scrolledRetry.replayed, true, "retrying an action did not replay the cached result");
+      assert.equal(scrolledRetry.proof?.value, scrolled.proof?.value, "replayed action result changed");
 
       await client.call("page.act", {
         pageId,
@@ -211,6 +225,7 @@ async function run() {
         frameLifecycleEvents: events.filter((event) => event.event === "frame.lifecycle").length,
         hoverVerified: hovered.verified,
         scrollVerified: scrolled.verified,
+        idempotentReplayVerified: scrolledRetry.replayed === true,
         navigationVerified: navigatedPage.verified,
       }));
     } finally {
