@@ -25,12 +25,14 @@ async function run() {
       condition: { type: "text", value: "Frame action" },
       timeoutMs: 5_000,
     });
-    const frames = await client.frames(pageId);
-    const rootFrame = frames.find((frame) => frame.parentFrameId === null);
-    const childFrame = frames.find((frame) => frame.parentFrameId !== null);
+    const frameTree = await client.frames(pageId);
+    const rootFrame = frameTree.frames.find((frame) => frame.parentFrameId === null);
+    const childFrame = frameTree.frames.find((frame) => frame.parentFrameId !== null);
     assert.equal(rootFrame?.frameId, "main");
     assert.ok(childFrame, "cross-origin child frame was not enumerated");
     assert.equal(childFrame.url, `http://127.0.0.1:${childServer.port}/frame.html`);
+    assert.equal(frameTree.pageId, pageId);
+    assert.equal(frameTree.documentId.length > 0, true);
 
     const events = [];
     const unsubscribe = client.onEvent((event) => events.push(event));
@@ -96,10 +98,11 @@ async function run() {
         events,
         (event) => event.event === "frame.lifecycle" && event.data?.type === "navigated" && event.data.frame?.frameId === frameButton.frameId,
       );
-      const navigatedFrames = await client.frames(pageId);
-      const navigatedFrame = navigatedFrames.find((frame) => frame.frameId === frameButton.frameId);
+      const navigatedFrameTree = await client.frames(pageId);
+      const navigatedFrame = navigatedFrameTree.frames.find((frame) => frame.frameId === frameButton.frameId);
       assert.equal(navigatedEvent.data.frame.url, `http://127.0.0.1:${childServer.port}/frame-next.html`);
       assert.equal(navigatedFrame?.url, `http://127.0.0.1:${childServer.port}/frame-next.html`);
+      assert.ok(navigatedFrameTree.revision >= frameTree.revision);
 
       await client.call("page.act", {
         pageId,
@@ -112,9 +115,9 @@ async function run() {
         events,
         (event) => event.event === "frame.lifecycle" && event.data?.type === "detached" && event.data.frameId === frameButton.frameId,
       );
-      const detachedFrames = await client.frames(pageId);
+      const detachedFrameTree = await client.frames(pageId);
       assert.equal(detachedEvent.data.frameId, frameButton.frameId);
-      assert.equal(detachedFrames.some((frame) => frame.frameId === frameButton.frameId), false);
+      assert.equal(detachedFrameTree.frames.some((frame) => frame.frameId === frameButton.frameId), false);
 
       await client.call("page.act", {
         pageId,
@@ -127,10 +130,11 @@ async function run() {
         events,
         (event) => event.event === "frame.lifecycle" && event.data?.type === "attached",
       );
-      const restoredFrames = await client.frames(pageId);
-      const restoredFrame = restoredFrames.find((frame) => frame.parentFrameId !== null);
+      const restoredFrameTree = await client.frames(pageId);
+      const restoredFrame = restoredFrameTree.frames.find((frame) => frame.parentFrameId !== null);
       assert.equal(attachedEvent.data.parentFrameId, "main");
       assert.equal(restoredFrame?.url, `http://127.0.0.1:${childServer.port}/frame-restored.html`);
+      assert.ok(restoredFrameTree.revision >= detachedFrameTree.revision);
 
       console.log(JSON.stringify({
         parentPort: parentServer.port,

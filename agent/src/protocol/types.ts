@@ -53,6 +53,13 @@ export type FrameLifecycleEventData =
   | { type: "navigated"; frame: PageFrame }
   | { type: "detached"; frameId: FrameId };
 
+export interface PageFrameSnapshot {
+  pageId: PageId;
+  documentId: DocumentId;
+  revision: number;
+  frames: readonly PageFrame[];
+}
+
 export interface SnapshotOptions {
   interactiveOnly?: boolean;
   includeGeometry?: boolean;

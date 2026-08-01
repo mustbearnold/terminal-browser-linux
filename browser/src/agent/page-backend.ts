@@ -17,6 +17,7 @@ import type {
   AgentEvent,
   PageBackend,
   PageFrame,
+  PageFrameSnapshot,
   PageId,
   PageIdentity,
   PageSnapshot,
@@ -103,19 +104,29 @@ export class ElectronPageBackend implements PageBackend {
     };
   }
 
-  async frames(signal?: AbortSignal): Promise<readonly PageFrame[]> {
+  async frames(signal?: AbortSignal): Promise<PageFrameSnapshot> {
     throwIfAborted(signal);
+    const before = await this.identity(signal);
     const browserFrames = await this.controller.agentFrames();
     throwIfAborted(signal);
+    const after = await this.identity(signal);
+    if (before.documentId !== after.documentId || before.revision !== after.revision) {
+      throw new AgentError("STALE_SNAPSHOT", "frame tree changed while it was being read", { retryable: true });
+    }
     const mainFrame = browserFrames.find((frame) => frame.parentId === null);
     if (!mainFrame) throw new AgentError("INTERNAL_ERROR", "browser frame tree has no main frame");
     this.mainBrowserFrameId = mainFrame.id;
-    return browserFrames.map((frame) => ({
-      frameId: this.protocolFrameId(frame.id, frame.parentId),
-      parentFrameId: frame.parentId === null ? null : this.protocolFrameId(frame.parentId),
-      url: frame.url,
-      origin: frame.origin,
-    }));
+    return {
+      pageId: this.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
+      frames: browserFrames.map((frame) => ({
+        frameId: this.protocolFrameId(frame.id, frame.parentId),
+        parentFrameId: frame.parentId === null ? null : this.protocolFrameId(frame.parentId),
+        url: frame.url,
+        origin: frame.origin,
+      })),
+    };
   }
 
   async snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<CapturedSnapshot> {

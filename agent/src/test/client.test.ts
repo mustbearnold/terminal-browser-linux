@@ -17,12 +17,17 @@ test("correlates typed calls and delivers observed events", async () => {
     ]);
     assert.equal(hello.clientId, "client-test");
     assert.equal(pages.pages[0].pageId, FIXTURE_PAGE_ID);
-    assert.deepEqual(frames, [{
-      frameId: "main",
-      parentFrameId: null,
-      url: "fixture://agent-control",
-      origin: "fixture://agent-control",
-    }]);
+    assert.deepEqual(frames, {
+      pageId: FIXTURE_PAGE_ID,
+      documentId: "fixture-document-1",
+      revision: 0,
+      frames: [{
+        frameId: "main",
+        parentFrameId: null,
+        url: "fixture://agent-control",
+        origin: "fixture://agent-control",
+      }],
+    });
 
     await client.observe(FIXTURE_PAGE_ID, ["dom.changed"]);
     const action = await client.call("page.act", {

@@ -7,7 +7,7 @@ import type {
   AgentEvent,
   DocumentId,
   PageIdentity,
-  PageFrame,
+  PageFrameSnapshot,
   PageSnapshot,
   SnapshotOptions,
   SnapshotToken,
@@ -20,7 +20,7 @@ import type { PageId } from "../protocol/types";
 export interface PageBackend {
   readonly pageId: PageId;
   identity(signal?: AbortSignal): Promise<PageIdentity>;
-  frames(signal?: AbortSignal): Promise<readonly PageFrame[]>;
+  frames(signal?: AbortSignal): Promise<PageFrameSnapshot>;
   snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<Omit<PageSnapshot, "snapshotId">>;
   act(
     action: AgentAction,
@@ -34,7 +34,7 @@ export interface PageBackend {
 
 export interface PageSession {
   readonly pageId: PageId;
-  frames(signal?: AbortSignal): Promise<readonly PageFrame[]>;
+  frames(signal?: AbortSignal): Promise<PageFrameSnapshot>;
   snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<PageSnapshot>;
   assertFresh(token: SnapshotToken): void;
   currentRevision(): { documentId: DocumentId; revision: number };
@@ -58,7 +58,7 @@ export class RevisionedPageSession implements PageSession {
     return this.backend.pageId;
   }
 
-  async frames(signal?: AbortSignal): Promise<readonly PageFrame[]> {
+  async frames(signal?: AbortSignal): Promise<PageFrameSnapshot> {
     throwIfAborted(signal);
     const frames = await this.backend.frames(signal);
     throwIfAborted(signal);

@@ -18,6 +18,7 @@ import {
   type AgentCapability,
   type AgentEvent,
   type PageFrame,
+  type PageFrameSnapshot,
   type PageIdentity,
   type PageId,
   type PageSnapshot,
@@ -101,14 +102,20 @@ class FixturePageBackend implements PageBackend {
     };
   }
 
-  async frames(signal?: AbortSignal): Promise<readonly PageFrame[]> {
+  async frames(signal?: AbortSignal): Promise<PageFrameSnapshot> {
     throwIfAborted(signal);
-    return [{
-      frameId: FRAME_ID,
-      parentFrameId: null,
-      url: FIXTURE_URL,
-      origin: FIXTURE_URL,
-    }];
+    const identity = await this.identity(signal);
+    return {
+      pageId: this.pageId,
+      documentId: identity.documentId,
+      revision: identity.revision,
+      frames: [{
+        frameId: FRAME_ID,
+        parentFrameId: null,
+        url: FIXTURE_URL,
+        origin: FIXTURE_URL,
+      }],
+    };
   }
 
   async snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<Omit<PageSnapshot, "snapshotId">> {

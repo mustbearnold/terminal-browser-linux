@@ -93,7 +93,7 @@ export class AgentRequestRouter {
         await this.runtime.closePage(request.pageId);
         return { pageId: request.pageId };
       case "page.frames":
-        return { pageId: request.pageId, frames: await this.page(request.pageId).frames(signal) };
+        return await this.page(request.pageId).frames(signal);
       case "page.snapshot":
         return await this.page(request.pageId).snapshot(request.options, signal);
       case "page.read": {

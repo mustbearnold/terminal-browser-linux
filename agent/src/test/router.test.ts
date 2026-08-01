@@ -49,7 +49,12 @@ const pageSnapshot: PageSnapshot = {
 function page(): PageSession {
   return {
     pageId,
-    frames: async () => [{ frameId: asFrameId("main"), parentFrameId: null, url: identity.url, origin: "https://example.com" }],
+    frames: async () => ({
+      pageId,
+      documentId: identity.documentId,
+      revision: identity.revision,
+      frames: [{ frameId: asFrameId("main"), parentFrameId: null, url: identity.url, origin: "https://example.com" }],
+    }),
     snapshot: async () => pageSnapshot,
     assertFresh: () => {},
     currentRevision: () => ({ documentId: identity.documentId, revision: identity.revision }),
@@ -96,9 +101,14 @@ test("routes the first agent vertical slice", async () => {
 
   assert.equal(hello.ok, true);
   assert.deepEqual((pages.result as { pages: PageIdentity[] }).pages, [identity]);
-  assert.deepEqual((frames.result as { frames: unknown[] }).frames, [
-    { frameId: asFrameId("main"), parentFrameId: null, url: identity.url, origin: "https://example.com" },
-  ]);
+  assert.deepEqual(frames.result, {
+    pageId,
+    documentId: identity.documentId,
+    revision: identity.revision,
+    frames: [
+      { frameId: asFrameId("main"), parentFrameId: null, url: identity.url, origin: "https://example.com" },
+    ],
+  });
   assert.equal((snapshot.result as PageSnapshot).snapshotId, pageSnapshot.snapshotId);
   assert.equal((action.result as { verified: boolean }).verified, true);
   assert.equal((wait.result as { satisfied: boolean }).satisfied, true);

@@ -34,15 +34,25 @@ test("runs the deterministic agent control contract", async () => {
   const pages = result<{ pages: PageIdentity[] }>(await router.handle(request("pages.list"), context));
   assert.equal(pages.pages[0].pageId, FIXTURE_PAGE_ID);
 
-  const frames = result<{ frames: { frameId: string; parentFrameId: string | null }[] }>(
+  const frames = result<{
+    pageId: string;
+    documentId: string;
+    revision: number;
+    frames: { frameId: string; parentFrameId: string | null; url: string; origin: string }[];
+  }>(
     await router.handle(request("page.frames", { pageId: FIXTURE_PAGE_ID }), context),
   );
-  assert.deepEqual(frames.frames, [{
-    frameId: "main",
-    parentFrameId: null,
-    url: "fixture://agent-control",
-    origin: "fixture://agent-control",
-  }]);
+  assert.deepEqual(frames, {
+    pageId: FIXTURE_PAGE_ID,
+    documentId: "fixture-document-1",
+    revision: 0,
+    frames: [{
+      frameId: "main",
+      parentFrameId: null,
+      url: "fixture://agent-control",
+      origin: "fixture://agent-control",
+    }],
+  });
 
   const snapshot = result<PageSnapshot>(
     await router.handle(
