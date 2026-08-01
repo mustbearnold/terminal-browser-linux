@@ -3,7 +3,10 @@ import { TraceRecorder } from "./core/trace";
 import {
   AGENT_PROTOCOL,
   AGENT_PROTOCOL_VERSION,
+  type ActionOutputOptions,
   type ActionResult,
+  type ActionBatchResult,
+  type ActionBatchStep,
   type ActionStatusResult,
   type AgentCapability,
   type AgentEvent,
@@ -75,6 +78,7 @@ export interface AgentOperationResults {
   "page.capture": PageCapture;
   "page.read": SnapshotNode;
   "page.act": ActionResult;
+  "page.act.batch": ActionBatchResult;
   "page.act.status": ActionStatusResult;
   "page.wait": WaitResult;
   "page.observe": PageObserveResult;
@@ -150,6 +154,21 @@ export class AgentClient {
     options?: AgentCallOptions,
   ): Promise<ActionStatusResult> {
     return this.call("page.act.status", { pageId, idempotencyKey }, options);
+  }
+
+  actBatch(
+    pageId: PageId,
+    steps: readonly ActionBatchStep[],
+    output?: ActionOutputOptions,
+    idempotencyKey?: string,
+    options?: AgentCallOptions,
+  ): Promise<ActionBatchResult> {
+    return this.call("page.act.batch", {
+      pageId,
+      steps,
+      ...(output === undefined ? {} : { output }),
+      ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+    }, options);
   }
 
   observe(pageId: PageId, events: readonly AgentEventType[], options: AgentObserveOptions = {}) {

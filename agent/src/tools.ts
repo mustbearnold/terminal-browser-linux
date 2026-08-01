@@ -52,6 +52,7 @@ export interface AgentToolOperationMap {
   terminal_browser_page_capture: "page.capture";
   terminal_browser_page_read: "page.read";
   terminal_browser_page_act: "page.act";
+  terminal_browser_page_act_batch: "page.act.batch";
   terminal_browser_page_act_status: "page.act.status";
   terminal_browser_page_wait: "page.wait";
   terminal_browser_page_observe: "page.observe";
@@ -127,6 +128,12 @@ export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
     output: snapshotOutputSchema(),
     idempotencyKey: string("Stable key for safe retry and replay."),
   }, ["pageId", "action"])),
+  tool("terminal_browser_page_act_batch", "Execute sequential verified actions against the live page with one final output.", "page.act.batch", "page.act.batch", object({
+    pageId: string("Page identifier."),
+    steps: { type: "array", items: actionBatchStepSchema() },
+    output: snapshotOutputSchema(),
+    idempotencyKey: string("Stable key for safe retry and replay."),
+  }, ["pageId", "steps"])),
   tool("terminal_browser_page_act_status", "Check the durable outcome of an idempotent browser action.", "page.act.status", "page.act.status", object({
     pageId: string("Page identifier."),
     idempotencyKey: string("Stable action key to inspect."),
@@ -390,6 +397,14 @@ function expectationSchema(): AgentToolSchema {
     timeoutMs: number("Maximum verification duration."),
     quietMs: number("Required quiet duration."),
   });
+}
+
+function actionBatchStepSchema(): AgentToolSchema {
+  return object({
+    action: actionSchema(),
+    token: snapshotToken(),
+    expect: expectationSchema(),
+  }, ["action"]);
 }
 
 function snapshotOutputSchema(): AgentToolSchema {

@@ -321,6 +321,7 @@ function validateRequest(message: Record<string, unknown>): void {
     case "page.capture":
     case "page.read":
     case "page.act":
+    case "page.act.batch":
     case "page.act.status":
     case "page.wait":
     case "page.observe":
@@ -355,6 +356,14 @@ function validateRequest(message: Record<string, unknown>): void {
       if (key.length > 256) throw new AgentError("INVALID_MESSAGE", "idempotencyKey must be at most 256 characters");
     }
   }
+  if (op === "page.act.batch") {
+    validateActionBatch(message.steps);
+    if (message.output !== undefined) validateSnapshotOutput(message.output);
+    if (message.idempotencyKey !== undefined) {
+      const key = requireString(message.idempotencyKey, "idempotencyKey");
+      if (key.length > 256) throw new AgentError("INVALID_MESSAGE", "idempotencyKey must be at most 256 characters");
+    }
+  }
   if (op === "page.act.status") {
     const key = requireString(message.idempotencyKey, "idempotencyKey");
     if (key.length === 0 || key.length > 256) {
@@ -374,6 +383,21 @@ function validateRequest(message: Record<string, unknown>): void {
     requireStringArray(message.events, "events");
     for (const [index, event] of (message.events as string[]).entries()) validateEventType(event, `events[${index}]`);
     if (message.afterSequence !== undefined) requireNonNegativeInteger(message.afterSequence, "afterSequence");
+  }
+}
+
+function validateActionBatch(value: unknown): void {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 64) {
+    throw new AgentError("INVALID_MESSAGE", "steps must contain between 1 and 64 actions");
+  }
+  for (const [index, rawStep] of value.entries()) {
+    const step = requireObject(rawStep, `steps[${index}]`);
+    if (step.action === undefined) {
+      throw new AgentError("INVALID_MESSAGE", `steps[${index}].action must be provided`);
+    }
+    validateAction(step.action);
+    if (step.token !== undefined) validateSnapshotToken(step.token, `steps[${index}].token`);
+    if (step.expect !== undefined) validateExpectation(step.expect);
   }
 }
 

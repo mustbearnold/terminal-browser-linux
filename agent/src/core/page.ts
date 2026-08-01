@@ -6,6 +6,10 @@ import { applySnapshotDelta, diffSnapshots } from "./snapshots";
 import type { EventSubscription, EventSubscriptionOptions } from "./events";
 import type { LocatorResolutionOptions, ResolvedTarget, SnapshotView } from "./locator";
 import type {
+  ActionBatchResult,
+  ActionBatchStep,
+  ActionBatchStepResult,
+  ActionEffect,
   ActionExpectation,
   ActionOutputOptions,
   ActionResult,
@@ -112,6 +116,11 @@ export interface PageSession {
     signal?: AbortSignal,
     output?: ActionOutputOptions,
   ): Promise<ActionResult>;
+  actBatch(
+    steps: readonly ActionBatchStep[],
+    signal?: AbortSignal,
+    output?: ActionOutputOptions,
+  ): Promise<ActionBatchResult>;
   wait(
     condition: WaitCondition,
     timeoutMs?: number,
@@ -395,6 +404,77 @@ export class RevisionedPageSession implements PageSession {
     }, signal);
   }
 
+  async actBatch(
+    steps: readonly ActionBatchStep[],
+    signal?: AbortSignal,
+    output?: ActionOutputOptions,
+  ): Promise<ActionBatchResult> {
+    return this.enqueueAction(async () => {
+      if (steps.length < 1 || steps.length > 64) {
+        throw new AgentError("INVALID_REQUEST", "action batch must contain between 1 and 64 steps");
+      }
+      const stepResults: ActionBatchStepResult[] = [];
+      const effects: ActionEffect[] = [];
+      let proof: ActionResult["proof"];
+      for (let index = 0; index < steps.length; index += 1) {
+        throwIfAborted(signal);
+        const step = steps[index];
+        try {
+          const before = await this.backend.identity(signal);
+          this.ledger.synchronize(before.pageId, before.documentId, before.revision);
+          if (step.token) this.ledger.assertFresh(step.token);
+          const result = await this.backend.act(step.action, step.token, step.expect, signal);
+          throwIfAborted(signal);
+          const after = await this.backend.identity(signal);
+          this.ledger.synchronize(after.pageId, after.documentId, after.revision);
+          const normalized = { ...result } satisfies ActionResult;
+          effects.push(...normalized.effects);
+          proof = normalized.proof;
+          stepResults.push({
+            index,
+            status: normalized.verified ? "completed" : "failed",
+            result: normalized,
+          });
+          if (!normalized.verified) {
+            stepResults.push(...skippedBatchSteps(index + 1, steps.length));
+            return {
+              pageId: this.pageId,
+              verified: false,
+              completed: index,
+              failedAt: index,
+              steps: stepResults,
+              effects,
+              proof,
+            };
+          }
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          const normalized = normalizeBatchError(error);
+          stepResults.push({ index, status: "failed", error: normalized });
+          stepResults.push(...skippedBatchSteps(index + 1, steps.length));
+          return {
+            pageId: this.pageId,
+            verified: false,
+            completed: stepResults.filter((entry) => entry.status === "completed").length,
+            failedAt: index,
+            steps: stepResults,
+            effects,
+            proof,
+          };
+        }
+      }
+      return {
+        pageId: this.pageId,
+        verified: true,
+        completed: steps.length,
+        steps: stepResults,
+        effects,
+        proof,
+        ...(await this.actionBatchOutput(output, signal)),
+      };
+    }, signal);
+  }
+
   async wait(
     condition: WaitCondition,
     timeoutMs?: number,
@@ -468,6 +548,13 @@ export class RevisionedPageSession implements PageSession {
     return this.snapshotOutput(output, signal);
   }
 
+  private async actionBatchOutput(
+    output: ActionOutputOptions | undefined,
+    signal?: AbortSignal,
+  ): Promise<Pick<ActionBatchResult, "snapshot" | "snapshotDelta">> {
+    return this.snapshotOutput(output, signal);
+  }
+
   private async snapshotOutput(
     output: PageOutputOptions | undefined,
     signal?: AbortSignal,
@@ -498,6 +585,20 @@ interface SnapshotWindowHistoryEntry {
 }
 
 export type SnapshotWindowCapture = Omit<PageSnapshotWindow, "snapshotId" | "nextCursor">;
+
+function skippedBatchSteps(start: number, end: number): ActionBatchStepResult[] {
+  return Array.from({ length: Math.max(0, end - start) }, (_, offset) => ({
+    index: start + offset,
+    status: "skipped" as const,
+  }));
+}
+
+function normalizeBatchError(error: unknown) {
+  const normalized = error instanceof AgentError
+    ? error
+    : new AgentError("INTERNAL_ERROR", error instanceof Error ? error.message : String(error));
+  return normalized.payload();
+}
 
 const DEFAULT_SNAPSHOT_WINDOW_LIMIT = 128;
 const MAX_SNAPSHOT_WINDOW_LIMIT = 1000;

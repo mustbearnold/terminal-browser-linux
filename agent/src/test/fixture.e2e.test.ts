@@ -411,6 +411,62 @@ test("runs the deterministic agent control contract", async () => {
   for (const cleanup of cleanups) cleanup();
 });
 
+test("executes a serialized action batch with one final output and replay", async () => {
+  const runtime = new FixtureRuntime();
+  const router = new AgentRequestRouter(runtime);
+  const batchRequest = request("page.act.batch", {
+    pageId: FIXTURE_PAGE_ID,
+    steps: [
+      {
+        action: {
+          type: "fill",
+          target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } },
+          value: "Grace",
+        },
+      },
+      { action: { type: "type", text: " Hopper" } },
+      {
+        action: { type: "press", key: "Enter" },
+        expect: {
+          element: {
+            target: { locator: { kind: "role", role: "status", name: "Ready", exact: true } },
+            state: { attached: true, text: "Ready" },
+          },
+        },
+      },
+    ],
+    output: { snapshot: "none" },
+    idempotencyKey: "fixture-batch-1",
+  });
+  const first = result<{
+    verified: boolean;
+    completed: number;
+    steps: readonly { index: number; status: string; result?: { proof?: { value?: string } } }[];
+    snapshot?: unknown;
+  }>(await router.handle(batchRequest));
+  assert.equal(first.verified, true);
+  assert.equal(first.completed, 3);
+  assert.deepEqual(first.steps.map((step) => [step.index, step.status]), [
+    [0, "completed"],
+    [1, "completed"],
+    [2, "completed"],
+  ]);
+  assert.equal(first.steps[1].result?.proof?.value, "Grace Hopper");
+  assert.equal(first.snapshot, undefined);
+
+  const status = result<{ status: string; result?: { steps?: readonly unknown[] } }>(await router.handle(
+    request("page.act.status", { pageId: FIXTURE_PAGE_ID, idempotencyKey: "fixture-batch-1" }),
+  ));
+  assert.equal(status.status, "completed");
+  assert.equal(status.result?.steps?.length, 3);
+
+  const replayed = result<{ replayed?: boolean }>(await router.handle({
+    ...batchRequest,
+    requestId: "page.act.batch-replay",
+  }));
+  assert.equal(replayed.replayed, true);
+});
+
 test("replays missed fixture events from an observation cursor", async () => {
   const runtime = new FixtureRuntime();
   const router = new AgentRequestRouter(runtime);

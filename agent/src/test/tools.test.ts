@@ -42,6 +42,19 @@ test("validates and dispatches structured calls through the typed client", async
   });
   assert.equal(node.name, "Name");
 
+  const batch = await tools.callTool("terminal_browser_page_act_batch", {
+    pageId: String(FIXTURE_PAGE_ID),
+    steps: [{
+      action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } } },
+      expect: { text: "Ready" },
+    }],
+    output: { snapshot: "none" },
+    idempotencyKey: "tool-batch-1",
+  });
+  assert.equal(batch.verified, true);
+  assert.equal(batch.completed, 1);
+  assert.equal(batch.snapshot, undefined);
+
   const compactWait = await tools.callTool("terminal_browser_page_wait", {
     pageId: String(FIXTURE_PAGE_ID),
     condition: { type: "text", value: "Fixture" },

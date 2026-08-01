@@ -182,6 +182,77 @@ function largeWindowScenarios(pageId) {
   }];
 }
 
+function batchScenarios(pageId) {
+  return [{
+    id: "live-action-batch-serializes-dependent-controls",
+    name: "live-action-batch-serializes-dependent-controls",
+    async run(client) {
+      const request = {
+        pageId,
+        steps: [
+          {
+            action: {
+              type: "fill",
+              target: { locator: { kind: "role", role: "searchbox", name: "Search records", exact: true } },
+              value: "agent",
+            },
+          },
+          {
+            action: { type: "type", text: " records" },
+            expect: {
+              element: {
+                target: { locator: { kind: "role", role: "searchbox", name: "Search records", exact: true } },
+                state: { value: "agent records" },
+              },
+              timeoutMs: 1_000,
+            },
+          },
+          {
+            action: {
+              type: "select",
+              target: { locator: { kind: "role", role: "listbox", name: "Choices", exact: true } },
+              values: ["a", "b"],
+            },
+          },
+        ],
+        output: { snapshot: "none" },
+        idempotencyKey: "evaluation-action-batch-1",
+      };
+      const batch = await client.call("page.act.batch", request);
+      const status = await client.call("page.act.status", {
+        pageId,
+        idempotencyKey: request.idempotencyKey,
+      });
+      const replay = await client.call("page.act.batch", request);
+      const read = await client.call("page.read", {
+        pageId,
+        target: { locator: { kind: "role", role: "searchbox", name: "Search records", exact: true } },
+      });
+      const steps = batch.steps ?? [];
+      const passed = batch.verified
+        && batch.completed === 3
+        && steps.length === 3
+        && steps.every((step) => step.status === "completed" && step.result?.verified === true)
+        && steps[1]?.result?.proof?.value === "agent records"
+        && steps[2]?.result?.proof?.value === "a,b"
+        && batch.snapshot === undefined
+        && status.status === "completed"
+        && status.result?.steps?.length === 3
+        && replay.replayed === true
+        && read.state?.value === "agent records";
+      return {
+        passed,
+        metrics: {
+          batchSteps: steps.length,
+          batchRequests: 1,
+          batchReplay: Number(replay.replayed === true),
+          compactBatchOutput: Number(batch.snapshot === undefined),
+        },
+      };
+    },
+  }];
+}
+
 function semanticScenarios(pageId) {
   return [
     {
@@ -960,6 +1031,7 @@ async function run() {
     const scenarios = [
       ...fixtureScenarios(pageId),
       ...largeWindowScenarios(largePageId),
+      ...batchScenarios(pageId),
       ...semanticScenarios(pageId),
       ...shadowScenarios(shadowPageId),
       ...frameScenarios(framePageId),

@@ -28,6 +28,7 @@ export type AgentCapability =
   | "page.frames"
   | "page.read"
   | "page.act"
+  | "page.act.batch"
   | "page.act.status"
   | "page.act.click"
   | "page.act.fill"
@@ -255,6 +256,12 @@ export interface ActionExpectation {
   quietMs?: number;
 }
 
+export interface ActionBatchStep {
+  action: AgentAction;
+  token?: SnapshotToken;
+  expect?: ActionExpectation;
+}
+
 export type ActionSnapshotMode = "full" | "delta" | "none";
 
 export interface PageOutputOptions {
@@ -287,6 +294,22 @@ export interface ActionResult {
   proof?: ActionProof;
   snapshot?: PageSnapshot;
   snapshotDelta?: PageSnapshotDelta;
+}
+
+export type ActionBatchStepStatus = "completed" | "failed" | "skipped";
+
+export interface ActionBatchStepResult {
+  index: number;
+  status: ActionBatchStepStatus;
+  result?: ActionResult;
+  error?: AgentErrorPayload;
+}
+
+export interface ActionBatchResult extends ActionResult {
+  pageId: PageId;
+  completed: number;
+  steps: readonly ActionBatchStepResult[];
+  failedAt?: number;
 }
 
 export type ActionStatus = "missing" | "running" | "completed" | "unknown";
@@ -370,6 +393,13 @@ export type AgentRequest =
       action: AgentAction;
       token?: SnapshotToken;
       expect?: ActionExpectation;
+      output?: ActionOutputOptions;
+      idempotencyKey?: string;
+    })
+  | (AgentRequestEnvelope & {
+      op: "page.act.batch";
+      pageId: PageId;
+      steps: readonly ActionBatchStep[];
       output?: ActionOutputOptions;
       idempotencyKey?: string;
     })

@@ -232,6 +232,19 @@ test("validates nested agent request shapes at the wire boundary", () => {
   });
   assert.equal(activate.kind, "request");
 
+  const batch = parseAgentMessage({
+    ...listRequest(),
+    op: "page.act.batch",
+    pageId: "page-1",
+    steps: [{
+      action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } } },
+      expect: { text: "Ready", quietMs: 20 },
+    }],
+    output: { snapshot: "none" },
+    idempotencyKey: "batch-1",
+  });
+  assert.equal(batch.kind, "request");
+
   const invalid = (body: Record<string, unknown>) => {
     assert.throws(
       () => parseAgentMessage({ ...listRequest(), ...body }),
@@ -249,6 +262,8 @@ test("validates nested agent request shapes at the wire boundary", () => {
   invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, expect: { element: { target: { ref: "r1", locator: { kind: "css", value: "button" } } } } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, output: { snapshot: "compressed" } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, output: { snapshot: "delta" } });
+  invalid({ op: "page.act.batch", pageId: "page-1", steps: [] });
+  invalid({ op: "page.act.batch", pageId: "page-1", steps: [{ action: { type: "click" } }] });
   invalid({
     op: "page.act",
     pageId: "page-1",

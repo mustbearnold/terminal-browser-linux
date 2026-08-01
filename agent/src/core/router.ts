@@ -1,5 +1,6 @@
 import { AgentError } from "../protocol/errors";
 import type {
+  ActionBatchResult,
   ActionResult,
   AgentEvent,
   AgentAction,
@@ -62,7 +63,7 @@ export class AgentRequestRouter {
     let execution: RequestExecution | undefined;
     try {
       execution = this.registry(connection).begin(request.requestId, request.deadlineMs, {
-        cancelOnClose: request.op !== "page.act" || request.idempotencyKey === undefined,
+      cancelOnClose: !isIdempotentActionRequest(request),
       });
       throwIfAborted(execution.signal);
       const result = await this.dispatch(request, connection, execution.signal);
@@ -175,6 +176,26 @@ export class AgentRequestRouter {
         const outcome = await this.actionJournal.execute(key, fingerprint, execute);
         return outcome.replayed ? { ...outcome.result, replayed: true } : outcome.result;
       }
+      case "page.act.batch": {
+        if (request.idempotencyKey !== undefined) requireIdempotencyKey(request.idempotencyKey);
+        for (const step of request.steps) {
+          await this.authorize(context, actionCapability(step.action), {
+            pageId: request.pageId,
+            action: step.action,
+            origin: originForAction(step.action),
+          });
+        }
+        const execute = () => this.executeActionBatch(request, signal);
+        if (request.idempotencyKey === undefined) return await execute();
+        const key = actionJournalKey(context.clientId, request.pageId, request.idempotencyKey);
+        const fingerprint = stableSerialize({
+          pageId: request.pageId,
+          steps: request.steps,
+          output: request.output,
+        });
+        const outcome = await this.actionJournal.execute(key, fingerprint, execute);
+        return outcome.replayed ? { ...outcome.result, replayed: true } : outcome.result;
+      }
       case "page.act.status": {
         const status = this.actionJournal.status(
           actionJournalKey(context.clientId, request.pageId, request.idempotencyKey),
@@ -240,6 +261,16 @@ export class AgentRequestRouter {
     return this.page(request.pageId).act(request.action, request.token, request.expect, signal, request.output);
   }
 
+  private async executeActionBatch(
+    request: Extract<AgentRequest, { op: "page.act.batch" }>,
+    signal: AbortSignal,
+  ): Promise<ActionBatchResult> {
+    const capabilities = new Set(this.runtime.capabilities());
+    requireCapability(capabilities, "page.act.batch");
+    for (const step of request.steps) requireCapability(capabilities, actionCapability(step.action));
+    return this.page(request.pageId).actBatch(request.steps, signal, request.output);
+  }
+
   private async authorize(
     context: AgentConnectionContext,
     capability: AgentCapability,
@@ -298,6 +329,13 @@ function requireIdempotencyKey(key: string): void {
   if (key.length === 0 || key.length > 256) {
     throw new AgentError("INVALID_REQUEST", "idempotencyKey must be between 1 and 256 characters");
   }
+}
+
+function isIdempotentActionRequest(request: AgentRequest): boolean {
+  return (
+    (request.op === "page.act" || request.op === "page.act.batch") &&
+    request.idempotencyKey !== undefined
+  );
 }
 
 function actionJournalKey(clientId: string, pageId: PageId, idempotencyKey: string): string {

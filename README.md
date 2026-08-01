@@ -40,6 +40,11 @@ Actions return a full post-action snapshot by default. Set `output.snapshot` to
 Use `expect.element` for target-specific post-action verification; its optional
 state uses the same semantic fields as `page.wait`.
 
+Use `page.act.batch` for a short sequence of dependent actions. Steps execute
+serially against the live page, stop on the first unverified result, return a
+proof for every step, and emit one final snapshot or delta instead of one per
+action. An `idempotencyKey` makes the whole sequence safely replayable.
+
 Successful waits return a full snapshot by default as well. Set
 `output.snapshot` to `none` for a compact satisfaction result, or to `delta`
 with an `output.base` snapshot token when the changed page state is needed.

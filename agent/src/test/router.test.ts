@@ -91,6 +91,14 @@ function page(): PageSession {
     advanceRevision: () => ({ documentId: identity.documentId, revision: 1 }),
     navigate: () => ({ documentId: identity.documentId, revision: 0 }),
     act: async () => ({ verified: true, effects: [], snapshot: pageSnapshot }),
+    actBatch: async (steps) => ({
+      pageId,
+      verified: true,
+      completed: steps.length,
+      steps: steps.map((_, index) => ({ index, status: "completed" as const, result: { verified: true, effects: [] } })),
+      effects: [],
+      snapshot: pageSnapshot,
+    }),
     wait: async () => ({ satisfied: true, elapsedMs: 1, snapshot: pageSnapshot }),
     subscribe: async () => ({ sequence: 0, replayed: 0, unsubscribe: () => {} }),
   };
