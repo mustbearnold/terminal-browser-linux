@@ -250,7 +250,18 @@ export type WaitCondition =
   | { type: "time"; ms: number }
   | { type: "url"; value: string }
   | { type: "text"; value: string; target?: Target }
-  | { type: "stable"; quietMs: number };
+  | { type: "stable"; quietMs: number }
+  | { type: "element"; target: Target; state?: WaitElementState };
+
+export interface WaitElementState {
+  visible?: boolean;
+  enabled?: boolean;
+  focused?: boolean;
+  value?: string;
+  checked?: boolean;
+  selected?: boolean;
+  text?: string;
+}
 
 export interface WaitResult {
   satisfied: boolean;

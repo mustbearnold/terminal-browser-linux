@@ -50,7 +50,7 @@ const frameHtml = `<!doctype html><meta charset="utf-8"><title>Frame evaluation 
 const crossOriginChildHtml = `<!doctype html><label>Frame name <input aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input type="checkbox" aria-label="Frame enabled">Frame enabled</label><div role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
 const navigationStartHtml = `<!doctype html><meta charset="utf-8"><title>Navigation start</title><button aria-label="Start action">Start action</button><output>Navigation start</output>`;
 const navigationNextHtml = `<!doctype html><meta charset="utf-8"><title>Navigation next</title><label>Recovered name <input aria-label="Recovered name"></label><button aria-label="Next action" onclick="document.querySelector('output').textContent='Next clicked'">Next action</button><output>Next ready</output>`;
-const eventHtml = `<!doctype html><meta charset="utf-8"><title>Native event fixture</title><button aria-label="Emit console" onclick="console.warn('agent console probe')">Emit console</button><button aria-label="Emit dialog" onclick="alert('agent dialog probe')">Emit dialog</button><button aria-label="Emit confirm" onclick="document.querySelector('#dialog-status').textContent = confirm('agent confirm probe') ? 'Confirmed' : 'Dismissed'">Emit confirm</button><button aria-label="Schedule update" onclick="setTimeout(() => document.querySelector('#async-status').textContent = 'Asynchronous update', 180)">Schedule update</button><span id="dialog-status">Idle</span><span id="async-status">Idle</span>`;
+const eventHtml = `<!doctype html><meta charset="utf-8"><title>Native event fixture</title><button aria-label="Emit console" onclick="console.warn('agent console probe')">Emit console</button><button aria-label="Emit dialog" onclick="alert('agent dialog probe')">Emit dialog</button><button aria-label="Emit confirm" onclick="document.querySelector('#dialog-status').textContent = confirm('agent confirm probe') ? 'Confirmed' : 'Dismissed'">Emit confirm</button><button id="unlock" aria-label="Unlock" disabled>Unlock</button><button aria-label="Schedule update" onclick="setTimeout(() => { document.querySelector('#async-status').textContent = 'Asynchronous update'; document.querySelector('#unlock').disabled = false }, 180)">Schedule update</button><span id="dialog-status">Idle</span><span id="async-status">Idle</span>`;
 
 async function expectCode(promise, code) {
   await assert.rejects(promise, (error) => error && error.code === code);
@@ -130,14 +130,33 @@ function semanticScenarios(pageId) {
           pageId,
           action: { type: "check", target: { locator: { kind: "role", role: "switch", name: "Notifications", exact: true } }, checked: true },
         });
+        const valueWait = await client.call("page.wait", {
+          pageId,
+          condition: {
+            type: "element",
+            target: { locator: { kind: "role", role: "textbox", name: "Full name", exact: true } },
+            state: { visible: true, enabled: true, value: "Ada" },
+          },
+          timeoutMs: 1_000,
+        });
+        const checkedWait = await client.call("page.wait", {
+          pageId,
+          condition: {
+            type: "element",
+            target: { locator: { kind: "role", role: "switch", name: "Notifications", exact: true } },
+            state: { checked: true },
+          },
+          timeoutMs: 1_000,
+        });
         const snapshot = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
         const fullName = snapshot.nodes.find((node) => node.attributes?.id === "full-name");
         const notifications = snapshot.nodes.find((node) => node.attributes?.id === "notifications");
         const passed = filled.verified && filled.proof?.name === "Full name" && filled.proof.value === "Ada"
           && checked.verified && checked.proof?.value === "true"
+          && valueWait.satisfied && checkedWait.satisfied
           && fullName?.state?.value === "Ada" && fullName.state.invalid === undefined
           && notifications?.state?.checked === true;
-        return { passed, metrics: { verifiedActions: 2, stateUpdates: passed ? 2 : 0 } };
+        return { passed, metrics: { verifiedActions: 2, stateUpdates: passed ? 2 : 0, elementWaits: Number(valueWait.satisfied) + Number(checkedWait.satisfied) } };
       },
     },
     {
@@ -518,11 +537,21 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
           pageId: eventPageId,
           action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Schedule update", exact: true } } },
         });
-        const externalWait = await client.call("page.wait", {
+        const externalWaitCall = client.call("page.wait", {
           pageId: eventPageId,
           condition: { type: "text", value: "Asynchronous update" },
           timeoutMs: 2_000,
         });
+        const enabledWaitCall = client.call("page.wait", {
+          pageId: eventPageId,
+          condition: {
+            type: "element",
+            target: { locator: { kind: "role", role: "button", name: "Unlock", exact: true } },
+            state: { visible: true, enabled: true },
+          },
+          timeoutMs: 2_000,
+        });
+        const [externalWait, enabledWait] = await Promise.all([externalWaitCall, enabledWaitCall]);
         const stableWait = await client.call("page.wait", {
           pageId: eventPageId,
           condition: { type: "stable", quietMs: 50 },
@@ -559,6 +588,7 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
           && dialogAfterNavigationResult?.handled === "accepted"
           && confirmResult?.handled === "dismissed"
           && externalWait.satisfied === true
+          && enabledWait.satisfied === true
           && stableWait.satisfied === true
           && timedOutWait.satisfied === false
           && timedOutWait.elapsedMs >= 90
@@ -572,6 +602,7 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
             consoleEvents: events.filter((event) => event.event === "console").length,
             dialogEvents: events.filter((event) => event.event === "dialog").length,
             externalWaitMs: externalWait.elapsedMs,
+            elementWaitMs: enabledWait.elapsedMs,
             stableWaitMs: stableWait.elapsedMs,
             timedOutWaitMs: timedOutWait.elapsedMs,
             downloadStates: new Set(events.filter((event) => event.event === "download").map((event) => event.data?.state)).size,

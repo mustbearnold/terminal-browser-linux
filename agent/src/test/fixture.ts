@@ -23,9 +23,11 @@ import {
   type PageIdentity,
   type PageId,
   type PageSnapshot,
+  type SnapshotNode,
   type SnapshotOptions,
   type SnapshotToken,
   type WaitCondition,
+  type WaitElementState,
   type WaitResult,
 } from "../protocol/types";
 
@@ -91,6 +93,18 @@ export class FixtureRuntime implements AgentRuntime {
     }
     this.closed = true;
   }
+}
+
+function matchesWaitElementState(node: SnapshotNode, state?: WaitElementState): boolean {
+  if (!state) return true;
+  if (state.visible !== undefined && node.visible !== state.visible) return false;
+  if (state.enabled !== undefined && node.enabled !== state.enabled) return false;
+  if (state.focused !== undefined && (node.state?.focused ?? false) !== state.focused) return false;
+  if (state.value !== undefined && node.state?.value !== state.value) return false;
+  if (state.checked !== undefined && node.state?.checked !== state.checked) return false;
+  if (state.selected !== undefined && node.state?.selected !== state.selected) return false;
+  if (state.text !== undefined && !`${node.name} ${node.text ?? ""}`.toLocaleLowerCase().includes(state.text.toLocaleLowerCase())) return false;
+  return true;
 }
 
 class FixturePageBackend implements PageBackend {
@@ -454,6 +468,12 @@ class FixturePageBackend implements PageBackend {
             `${node.name} ${node.text ?? ""}`.toLocaleLowerCase().includes(condition.value.toLocaleLowerCase()),
           );
         }
+      } else if (condition.type === "element") {
+        const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
+        try {
+          const target = this.resolver.resolve(condition.target, snapshot);
+          satisfied = matchesWaitElementState(target.node, condition.state);
+        } catch {}
       } else {
         if (stableRevision !== identity.revision) {
           stableRevision = identity.revision;

@@ -212,9 +212,24 @@ function validateWaitCondition(value: unknown): void {
     case "stable":
       requireNonNegativeInteger(condition.quietMs, "condition.quietMs");
       return;
+    case "element":
+      validateTarget(condition.target, "condition.target");
+      if (condition.state !== undefined) validateWaitElementState(condition.state);
+      return;
     default:
       throw new AgentError("INVALID_MESSAGE", `condition.type is unsupported: ${type}`);
   }
+}
+
+function validateWaitElementState(value: unknown): void {
+  const state = requireObject(value, "condition.state");
+  optionalBoolean(state, "visible", "condition.state.visible");
+  optionalBoolean(state, "enabled", "condition.state.enabled");
+  optionalBoolean(state, "focused", "condition.state.focused");
+  optionalString(state, "value", "condition.state.value");
+  optionalBoolean(state, "checked", "condition.state.checked");
+  optionalBoolean(state, "selected", "condition.state.selected");
+  optionalString(state, "text", "condition.state.text");
 }
 
 const agentEventTypes = new Set([

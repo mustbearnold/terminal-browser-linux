@@ -39,6 +39,7 @@ import type {
   SnapshotToken,
   Target,
   WaitCondition,
+  WaitElementState,
   WaitResult,
 } from "terminal-browser-agent";
 import type {
@@ -1001,6 +1002,16 @@ export class ElectronPageBackend implements PageBackend {
           );
         }
       }
+      if (condition.type === "element") {
+        const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
+        try {
+          const target = await this.resolve(condition.target, snapshot, signal);
+          satisfied = matchesWaitElementState(target.node, condition.state);
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          if (!(error instanceof AgentError) || error.code !== "TARGET_NOT_FOUND") throw error;
+        }
+      }
       if (condition.type === "stable") {
         if (stableRevision !== identity.revision) {
           stableRevision = identity.revision;
@@ -1409,6 +1420,18 @@ function waitForWake(
 
 function textContains(value: string, expected: string): boolean {
   return normalizeAgentText(value).toLocaleLowerCase().includes(normalizeAgentText(expected).toLocaleLowerCase());
+}
+
+function matchesWaitElementState(node: SnapshotNode, state?: WaitElementState): boolean {
+  if (!state) return true;
+  if (state.visible !== undefined && node.visible !== state.visible) return false;
+  if (state.enabled !== undefined && node.enabled !== state.enabled) return false;
+  if (state.focused !== undefined && (node.state?.focused ?? false) !== state.focused) return false;
+  if (state.value !== undefined && node.state?.value !== state.value) return false;
+  if (state.checked !== undefined && node.state?.checked !== state.checked) return false;
+  if (state.selected !== undefined && node.state?.selected !== state.selected) return false;
+  if (state.text !== undefined && !textContains(`${node.name} ${node.text ?? ""}`, state.text)) return false;
+  return true;
 }
 
 function normalizeAgentText(value: string): string {

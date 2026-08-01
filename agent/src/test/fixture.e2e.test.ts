@@ -202,6 +202,32 @@ test("runs the deterministic agent control contract", async () => {
   );
   assert.equal(waited.satisfied, true);
 
+  const valueWait = result<{ satisfied: boolean }>(await router.handle(
+    request("page.wait", {
+      pageId: FIXTURE_PAGE_ID,
+      condition: {
+        type: "element",
+        target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } },
+        state: { visible: true, enabled: true, value: "Ada Lovelace" },
+      },
+    }),
+    context,
+  ));
+  assert.equal(valueWait.satisfied, true);
+
+  const textWait = result<{ satisfied: boolean }>(await router.handle(
+    request("page.wait", {
+      pageId: FIXTURE_PAGE_ID,
+      condition: {
+        type: "element",
+        target: { locator: { kind: "role", role: "status", name: "Ready", exact: true } },
+        state: { text: "Ready" },
+      },
+    }),
+    context,
+  ));
+  assert.equal(textWait.satisfied, true);
+
   const stale = await router.handle(
     request("page.act", {
       pageId: FIXTURE_PAGE_ID,

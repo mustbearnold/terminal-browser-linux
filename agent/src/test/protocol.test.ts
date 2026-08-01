@@ -145,6 +145,18 @@ test("validates nested agent request shapes at the wire boundary", () => {
   });
   assert.equal(dialog.kind, "request");
 
+  const elementWait = parseAgentMessage({
+    ...listRequest(),
+    op: "page.wait",
+    pageId: "page-1",
+    condition: {
+      type: "element",
+      target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } },
+      state: { visible: true, enabled: true, text: "Continue" },
+    },
+  });
+  assert.equal(elementWait.kind, "request");
+
   const activate = parseAgentMessage({
     ...listRequest(),
     op: "pages.activate",
@@ -167,6 +179,7 @@ test("validates nested agent request shapes at the wire boundary", () => {
   invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, expect: { timeoutMs: -1 } });
   invalid({ op: "page.dialog", pageId: "page-1", dialogId: "dialog-1", action: { type: "accept", promptText: 1 } });
   invalid({ op: "page.dialog", pageId: "page-1", dialogId: "dialog-1", action: { type: "answer" } });
+  invalid({ op: "page.wait", pageId: "page-1", condition: { type: "element", target: { ref: "r1" }, state: { enabled: "yes" } } });
   invalid({ op: "page.wait", pageId: "page-1", condition: { type: "stable", quietMs: 1.5 } });
   invalid({ op: "page.read", pageId: "page-1", target: { ref: "r1" }, token: { pageId: "page-1" } });
   invalid({ op: "page.observe", pageId: "page-1", events: ["unknown.event"] });
