@@ -34,14 +34,14 @@ async function run() {
       trace,
       includeTrace: process.env.TERMINAL_BROWSER_EVALUATION_TRACE === "1",
     });
+    const artifactPath = process.env.TERMINAL_BROWSER_EVALUATION_ARTIFACT;
+    if (artifactPath) fs.writeFileSync(artifactPath, serializeAgentEvaluationReport(report), "utf8");
     assert.equal(report.failed, 0, JSON.stringify(report));
     assert.equal(report.passRate, 1);
     assert.ok(report.metrics.traceRequests > 0);
     assert.ok(report.metrics.traceResponses > 0);
     assert.ok(report.metrics.traceEvents > 0);
     assert.ok(report.cases.every((entry) => entry.trace && entry.trace.entries > 0));
-    const artifactPath = process.env.TERMINAL_BROWSER_EVALUATION_ARTIFACT;
-    if (artifactPath) fs.writeFileSync(artifactPath, serializeAgentEvaluationReport(report), "utf8");
     console.log(JSON.stringify({
       contract: report.contract,
       version: report.version,
