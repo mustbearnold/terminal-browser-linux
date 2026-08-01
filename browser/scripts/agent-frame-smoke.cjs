@@ -1,32 +1,19 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { spawn } = require("node:child_process");
 const { AgentClient } = require("../../agent/dist");
-
-const root = path.resolve(__dirname, "../..");
-const electron = path.join(root, "browser/node_modules/.bin/electron");
-const browserMain = path.join(root, "browser/dist/main.js");
-const runtimeHome = process.env.XDG_RUNTIME_DIR || path.join(os.homedir(), ".local/state");
-const instancesDir = path.join(runtimeHome, "terminal-browser", "instances");
+const { launchHost, listSockets, stopHost, waitForSocket, dataUrl } = require("./agent-smoke-support.cjs");
 
 const child = `<!doctype html><style>body{font:16px sans-serif;margin:18px}button,input{font:16px sans-serif;margin:8px;padding:8px}</style><label>Frame name <input aria-label="Frame name"></label><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
 const html = `<!doctype html><meta charset="utf-8"><title>Frame control fixture</title><style>body{font:16px sans-serif;margin:24px}iframe{display:block;width:460px;height:220px;border:4px solid #888}</style><iframe title="Control frame"></iframe><script>document.querySelector('iframe').srcdoc=${JSON.stringify(child)}</script>`;
 
 async function run() {
   const existing = new Set(listSockets());
-  const host = spawn(
-    "script",
-    ["-qefc", `${shellQuote(electron)} ${shellQuote(browserMain)} --no-toolbar`, "/dev/null"],
-    { cwd: root, detached: true, stdio: "ignore" },
-  );
+  const { host, output } = launchHost();
   let client;
   let pageId;
   try {
-    const socket = await waitForSocket(existing, 15_000);
+    const socket = await waitForSocket(existing, 15_000, output);
     client = await AgentClient.connect(socket, { clientId: "frame-smoke" });
     const opened = await client.call("pages.open", { url: dataUrl(html) });
     pageId = opened.pageId;
@@ -103,49 +90,6 @@ async function run() {
     }
     stopHost(host);
   }
-}
-
-function listSockets() {
-  try {
-    return fs
-      .readdirSync(instancesDir)
-      .filter((name) => name.endsWith(".agent.sock"))
-      .map((name) => path.join(instancesDir, name));
-  } catch {
-    return [];
-  }
-}
-
-async function waitForSocket(existing, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const socket = listSockets().find((candidate) => !existing.has(candidate));
-    if (socket) return socket;
-    await delay(100);
-  }
-  throw new Error(`agent socket did not appear in ${instancesDir}`);
-}
-
-function stopHost(host) {
-  if (!host.pid) return;
-  try {
-    process.kill(-host.pid, "SIGTERM");
-  } catch {}
-  try {
-    host.kill("SIGTERM");
-  } catch {}
-}
-
-function dataUrl(value) {
-  return `data:text/html;base64,${Buffer.from(value).toString("base64")}`;
-}
-
-function shellQuote(value) {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 run().catch((error) => {

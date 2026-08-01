@@ -1,31 +1,18 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { spawn } = require("node:child_process");
 const { AgentClient } = require("../../agent/dist");
-
-const root = path.resolve(__dirname, "../..");
-const electron = path.join(root, "browser/node_modules/.bin/electron");
-const browserMain = path.join(root, "browser/dist/main.js");
-const runtimeHome = process.env.XDG_RUNTIME_DIR || path.join(os.homedir(), ".local/state");
-const instancesDir = path.join(runtimeHome, "terminal-browser", "instances");
+const { launchHost, listSockets, stopHost, waitForSocket, dataUrl } = require("./agent-smoke-support.cjs");
 
 const html = `<!doctype html><meta charset="utf-8"><title>Shadow control fixture</title><style>body{font:16px sans-serif;margin:24px}x-control{display:block;width:320px}button,input{font:16px sans-serif;margin:8px;padding:8px}</style><x-control></x-control><script>customElements.define('x-control',class extends HTMLElement{constructor(){super();const root=this.attachShadow({mode:'open'});root.innerHTML='<label>Shadow name <input aria-label="Shadow name"></label><button aria-label="Shadow action">Shadow action</button><span id="status">Idle</span>';root.querySelector('button').addEventListener('click',()=>{root.querySelector('#status').textContent='Clicked';const dynamic=document.createElement('button');dynamic.setAttribute('aria-label','Dynamic action');dynamic.textContent='Dynamic action';root.append(dynamic)})}});</script>`;
 
 async function run() {
   const existing = new Set(listSockets());
-  const host = spawn(
-    "script",
-    ["-qefc", `${shellQuote(electron)} ${shellQuote(browserMain)} --no-toolbar`, "/dev/null"],
-    { cwd: root, detached: true, stdio: "ignore" },
-  );
+  const { host, output } = launchHost();
   let client;
   let pageId;
   try {
-    const socket = await waitForSocket(existing, 15_000);
+    const socket = await waitForSocket(existing, 15_000, output);
     client = await AgentClient.connect(socket, { clientId: "shadow-smoke" });
     const hello = await client.hello();
     const opened = await client.call("pages.open", { url: dataUrl(html) });
@@ -102,49 +89,6 @@ async function run() {
     }
     stopHost(host);
   }
-}
-
-function listSockets() {
-  try {
-    return fs
-      .readdirSync(instancesDir)
-      .filter((name) => name.endsWith(".agent.sock"))
-      .map((name) => path.join(instancesDir, name));
-  } catch {
-    return [];
-  }
-}
-
-async function waitForSocket(existing, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const socket = listSockets().find((candidate) => !existing.has(candidate));
-    if (socket) return socket;
-    await delay(100);
-  }
-  throw new Error(`agent socket did not appear in ${instancesDir}`);
-}
-
-function stopHost(host) {
-  if (!host.pid) return;
-  try {
-    process.kill(-host.pid, "SIGTERM");
-  } catch {}
-  try {
-    host.kill("SIGTERM");
-  } catch {}
-}
-
-function dataUrl(value) {
-  return `data:text/html;base64,${Buffer.from(value).toString("base64")}`;
-}
-
-function shellQuote(value) {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 run().catch((error) => {
