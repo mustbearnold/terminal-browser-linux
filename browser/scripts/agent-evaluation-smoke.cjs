@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const http = require("node:http");
 const {
   AgentClient,
   fixtureScenarios,
@@ -38,6 +39,13 @@ const html = `<!doctype html>
   document.getElementById('continue').addEventListener('click', () => document.getElementById('status').textContent = 'Ready');
   document.getElementById('notifications').addEventListener('click', event => event.currentTarget.setAttribute('aria-checked', String(event.currentTarget.getAttribute('aria-checked') !== 'true')));
 </script>`;
+
+const shadowHtml = `<!doctype html><meta charset="utf-8"><title>Shadow evaluation fixture</title><x-control></x-control><script>customElements.define('x-control',class extends HTMLElement{constructor(){super();const root=this.attachShadow({mode:'open'});root.innerHTML='<label>Shadow name <input aria-label="Shadow name"></label><button aria-label="Shadow action">Shadow action</button><span id="status">Idle</span>';root.querySelector('button').addEventListener('click',()=>{root.querySelector('#status').textContent='Clicked';const dynamic=document.createElement('button');dynamic.setAttribute('aria-label','Dynamic action');dynamic.textContent='Dynamic action';root.append(dynamic)})}});</script>`;
+
+const frameChildHtml = `<!doctype html><label>Frame name <input aria-label="Frame name"></label><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
+const frameHtml = `<!doctype html><meta charset="utf-8"><title>Frame evaluation fixture</title><iframe title="Control frame"></iframe><script>document.querySelector('iframe').srcdoc=${JSON.stringify(frameChildHtml)}</script>`;
+
+const crossOriginChildHtml = `<!doctype html><label>Frame name <input aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input type="checkbox" aria-label="Frame enabled">Frame enabled</label><div role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
 
 async function expectCode(promise, code) {
   await assert.rejects(promise, (error) => error && error.code === code);
@@ -132,12 +140,137 @@ function semanticScenarios(pageId) {
   ];
 }
 
+function shadowScenarios(pageId) {
+  return [{
+    id: "shadow-dom-resolution-and-mutation",
+    name: "shadow-dom-resolution-and-mutation",
+    async run(client) {
+      await client.call("page.wait", { pageId, condition: { type: "text", value: "Shadow action" }, timeoutMs: 3_000 });
+      const initial = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
+      const shadowButton = initial.nodes.find((node) => node.name === "Shadow action");
+      const shadowTextbox = initial.nodes.find((node) => node.name === "Shadow name");
+      const filled = await client.call("page.act", {
+        pageId,
+        action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Shadow name", exact: true } }, value: "Ada" },
+      });
+      const typed = await client.call("page.act", { pageId, action: { type: "type", text: " Lovelace" } });
+      const clicked = await client.call("page.act", {
+        pageId,
+        action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Shadow action", exact: true } } },
+        expect: { text: "Clicked", timeoutMs: 3_000 },
+      });
+      const after = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
+      const dynamic = after.nodes.find((node) => node.name === "Dynamic action");
+      const passed = shadowButton?.frameId === "main" && shadowTextbox?.frameId === "main"
+        && filled.verified && typed.proof?.value === "Ada Lovelace" && clicked.verified && Boolean(dynamic);
+      return { passed, metrics: { shadowControls: [shadowButton, shadowTextbox].filter(Boolean).length, shadowMutations: dynamic ? 1 : 0 } };
+    },
+  }];
+}
+
+function frameScenarios(pageId) {
+  return [{
+    id: "same-origin-frame-resolution-and-mutation",
+    name: "same-origin-frame-resolution-and-mutation",
+    async run(client) {
+      await client.call("page.wait", { pageId, condition: { type: "text", value: "Frame action" }, timeoutMs: 3_000 });
+      const initial = await client.call("page.snapshot", { pageId, options: { includeGeometry: true } });
+      const frameButton = initial.nodes.find((node) => node.name === "Frame action");
+      const frameTextbox = initial.nodes.find((node) => node.name === "Frame name");
+      const filled = await client.call("page.act", {
+        pageId,
+        action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Frame name", exact: true } }, value: "Ada" },
+      });
+      const clicked = await client.call("page.act", {
+        pageId,
+        action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Frame action", exact: true } } },
+        expect: { text: "Clicked", timeoutMs: 3_000 },
+      });
+      const after = await client.call("page.snapshot", { pageId, options: { includeGeometry: true } });
+      const dynamic = after.nodes.find((node) => node.name === "Frame dynamic");
+      const passed = Boolean(frameButton?.frameId && frameButton.frameId !== "main")
+        && frameTextbox?.frameId === frameButton.frameId && frameButton.box?.width > 0
+        && filled.verified && clicked.verified && dynamic?.frameId === frameButton.frameId;
+      return { passed, metrics: { frameControls: [frameButton, frameTextbox].filter(Boolean).length, frameMutations: dynamic ? 1 : 0 } };
+    },
+  }];
+}
+
+function crossOriginScenarios(pageId) {
+  return [{
+    id: "cross-origin-frame-actions-and-replay",
+    name: "cross-origin-frame-actions-and-replay",
+    async run(client) {
+      await client.call("page.wait", { pageId, condition: { type: "text", value: "Frame action" }, timeoutMs: 5_000 });
+      const frames = await client.frames(pageId);
+      const childFrame = frames.frames.find((frame) => frame.parentFrameId !== null);
+      const initial = await client.call("page.snapshot", { pageId, options: { includeGeometry: true } });
+      const frameButton = initial.nodes.find((node) => node.name === "Frame action");
+      const frameTextbox = initial.nodes.find((node) => node.name === "Frame name");
+      const hovered = await client.call("page.act", {
+        pageId,
+        action: { type: "hover", target: { locator: { kind: "css", value: 'button[aria-label="Frame action"]' } } },
+      });
+      const scrolled = await client.call("page.act", {
+        pageId,
+        idempotencyKey: "evaluation-cross-origin-scroll-1",
+        action: { type: "scroll", target: { locator: { kind: "role", role: "region", name: "Frame scroll area", exact: true } }, direction: "down", amount: 60 },
+      });
+      const selected = await client.call("page.act", {
+        pageId,
+        action: { type: "select", target: { locator: { kind: "role", role: "combobox", name: "Frame choice", exact: true } }, values: ["two"] },
+      });
+      const checked = await client.call("page.act", {
+        pageId,
+        action: { type: "check", target: { locator: { kind: "role", role: "checkbox", name: "Frame enabled", exact: true } }, checked: true },
+      });
+      const filled = await client.call("page.act", {
+        pageId,
+        action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Frame name", exact: true } }, value: "Ada" },
+      });
+      const typed = await client.call("page.act", { pageId, action: { type: "type", text: " Lovelace" } });
+      const clicked = await client.call("page.act", {
+        pageId,
+        action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Frame action", exact: true } } },
+        expect: { text: "Clicked", timeoutMs: 5_000 },
+      });
+      const retry = await client.call("page.act", {
+        pageId,
+        idempotencyKey: "evaluation-cross-origin-scroll-1",
+        action: { type: "scroll", target: { locator: { kind: "role", role: "region", name: "Frame scroll area", exact: true } }, direction: "down", amount: 60 },
+      });
+      const after = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: true } });
+      const dynamic = after.nodes.find((node) => node.name === "Frame dynamic");
+      const passed = Boolean(childFrame && frameButton?.frameId && frameButton.frameId !== "main")
+        && frameTextbox?.frameId === frameButton.frameId && frameButton.box?.width > 0
+        && hovered.verified && scrolled.verified && selected.proof?.value === "two"
+        && checked.proof?.value === "true" && filled.verified && typed.proof?.value === "Ada Lovelace"
+        && clicked.verified && retry.replayed === true && dynamic?.frameId === frameButton.frameId;
+      return {
+        passed,
+        metrics: {
+          crossOriginControls: [frameButton, frameTextbox].filter(Boolean).length,
+          verifiedActions: [hovered, scrolled, selected, checked, filled, typed, clicked].filter((action) => action.verified).length,
+          replayedActions: retry.replayed === true ? 1 : 0,
+        },
+      };
+    },
+  }];
+}
+
 async function run() {
   const existing = new Set(listSockets());
   const { host, output } = launchHost();
+  let childServer;
+  let parentServer;
   let client;
   let pageId;
+  let shadowPageId;
+  let framePageId;
+  let crossOriginPageId;
   try {
+    childServer = await serve(crossOriginChildHtml);
+    parentServer = await serve(`<!doctype html><meta charset="utf-8"><title>Cross-origin evaluation fixture</title><iframe title="Control frame" src="http://127.0.0.1:${childServer.port}/frame.html"></iframe>`);
     const socket = await waitForSocket(existing, 15_000, output);
     const trace = new MemoryTrace();
     client = await AgentClient.connect(socket, {
@@ -147,8 +280,18 @@ async function run() {
     const hello = await client.hello();
     const opened = await client.call("pages.open", { url: dataUrl(html) });
     pageId = opened.pageId;
+    shadowPageId = (await client.call("pages.open", { url: dataUrl(shadowHtml) })).pageId;
+    framePageId = (await client.call("pages.open", { url: dataUrl(frameHtml) })).pageId;
+    crossOriginPageId = (await client.call("pages.open", { url: `http://127.0.0.1:${parentServer.port}/index.html` })).pageId;
     await client.call("page.wait", { pageId, condition: { type: "text", value: "Continue" }, timeoutMs: 3_000 });
-    const report = await runAgentEvaluation(client, [...fixtureScenarios(pageId), ...semanticScenarios(pageId)], {
+    const scenarios = [
+      ...fixtureScenarios(pageId),
+      ...semanticScenarios(pageId),
+      ...shadowScenarios(shadowPageId),
+      ...frameScenarios(framePageId),
+      ...crossOriginScenarios(crossOriginPageId),
+    ];
+    const report = await runAgentEvaluation(client, scenarios, {
       trace,
       includeTrace: process.env.TERMINAL_BROWSER_EVALUATION_TRACE === "1",
     });
@@ -171,10 +314,33 @@ async function run() {
   } finally {
     if (client) {
       if (pageId) await client.call("pages.close", { pageId }).catch(() => {});
+      if (shadowPageId) await client.call("pages.close", { pageId: shadowPageId }).catch(() => {});
+      if (framePageId) await client.call("pages.close", { pageId: framePageId }).catch(() => {});
+      if (crossOriginPageId) await client.call("pages.close", { pageId: crossOriginPageId }).catch(() => {});
       await client.close().catch(() => {});
     }
     stopHost(host);
+    if (parentServer) await closeServer(parentServer);
+    if (childServer) await closeServer(childServer);
   }
+}
+
+function serve(body) {
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    response.end(body);
+  });
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.removeListener("error", reject);
+      resolve({ server, port: server.address().port });
+    });
+  });
+}
+
+function closeServer(entry) {
+  return new Promise((resolve) => entry.server.close(() => resolve()));
 }
 
 run().catch((error) => {
