@@ -46,9 +46,20 @@ const frameChildHtml = `<!doctype html><label>Frame name <input aria-label="Fram
 const frameHtml = `<!doctype html><meta charset="utf-8"><title>Frame evaluation fixture</title><iframe title="Control frame"></iframe><script>document.querySelector('iframe').srcdoc=${JSON.stringify(frameChildHtml)}</script>`;
 
 const crossOriginChildHtml = `<!doctype html><label>Frame name <input aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input type="checkbox" aria-label="Frame enabled">Frame enabled</label><div role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
+const navigationStartHtml = `<!doctype html><meta charset="utf-8"><title>Navigation start</title><button aria-label="Start action">Start action</button><output>Navigation start</output>`;
+const navigationNextHtml = `<!doctype html><meta charset="utf-8"><title>Navigation next</title><label>Recovered name <input aria-label="Recovered name"></label><button aria-label="Next action" onclick="document.querySelector('output').textContent='Next clicked'">Next action</button><output>Next ready</output>`;
 
 async function expectCode(promise, code) {
   await assert.rejects(promise, (error) => error && error.code === code);
+}
+
+function snapshotToken(snapshot) {
+  return {
+    pageId: snapshot.pageId,
+    documentId: snapshot.documentId,
+    revision: snapshot.revision,
+    snapshotId: snapshot.snapshotId,
+  };
 }
 
 function semanticScenarios(pageId) {
@@ -295,6 +306,75 @@ function crossOriginScenarios(pageId) {
   }];
 }
 
+function topLevelNavigationScenarios(pageId, urls) {
+  return [{
+    id: "top-level-navigation-and-stale-recovery",
+    name: "top-level-navigation-and-stale-recovery",
+    async run(client) {
+      await client.call("page.wait", { pageId, condition: { type: "text", value: "Navigation start" }, timeoutMs: 5_000 });
+      const start = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
+      const lifecycleEvents = [];
+      const navigationEvents = [];
+      const unsubscribe = client.onEvent((event) => {
+        if (event.event === "frame.lifecycle") lifecycleEvents.push(event);
+        if (event.event === "navigation") navigationEvents.push(event);
+      });
+      try {
+        await client.observe(pageId, ["frame.lifecycle", "navigation", "load"]);
+        const navigated = await client.call("page.act", {
+          pageId,
+          token: snapshotToken(start),
+          action: { type: "navigate", url: urls.next },
+          expect: { url: "/next.html", title: "Navigation next", text: "Next ready", timeoutMs: 5_000 },
+        });
+        await expectCode(client.call("page.act", {
+          pageId,
+          token: snapshotToken(start),
+          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Start action", exact: true } } },
+        }), "STALE_SNAPSHOT");
+        const next = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
+        const filled = await client.call("page.act", {
+          pageId,
+          action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Recovered name", exact: true } }, value: "Ada" },
+        });
+        const clicked = await client.call("page.act", {
+          pageId,
+          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Next action", exact: true } } },
+          expect: { text: "Next clicked", timeoutMs: 3_000 },
+        });
+        const reloaded = await client.call("page.act", {
+          pageId,
+          action: { type: "navigate", url: `${urls.next}?reload=1` },
+          expect: { url: "/next.html?reload=1", title: "Navigation next", text: "Next ready", timeoutMs: 5_000 },
+        });
+        await expectCode(client.call("page.act", {
+          pageId,
+          token: snapshotToken(next),
+          action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Recovered name", exact: true } }, value: "stale" },
+        }), "STALE_SNAPSHOT");
+        const restored = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
+        const mainNavigations = lifecycleEvents.filter((event) => event.data?.type === "navigated" && event.data.frame?.frameId === "main");
+        const passed = navigated.verified && navigated.effects.some((effect) => effect.type === "navigation")
+          && filled.verified && clicked.verified
+          && reloaded.verified && next.documentId !== restored.documentId
+          && mainNavigations.length >= 2 && navigationEvents.length >= 2
+          && restored.nodes.some((node) => node.name === "Recovered name");
+        return {
+          passed,
+          metrics: {
+            topLevelNavigations: mainNavigations.length,
+            navigationEvents: navigationEvents.length,
+            staleTokenRejections: 2,
+            recoveredControls: restored.nodes.filter((node) => node.name === "Recovered name").length,
+          },
+        };
+      } finally {
+        unsubscribe();
+      }
+    },
+  }];
+}
+
 async function run() {
   const existing = new Set(listSockets());
   const { host, output } = launchHost();
@@ -305,9 +385,12 @@ async function run() {
   let shadowPageId;
   let framePageId;
   let crossOriginPageId;
+  let navigationPageId;
+  let navigationServer;
   try {
     childServer = await serve(crossOriginChildHtml);
     parentServer = await serve(`<!doctype html><meta charset="utf-8"><title>Cross-origin evaluation fixture</title><button aria-label="Navigate frame" onclick="document.querySelector('iframe').src='http://127.0.0.1:${childServer.port}/frame-next.html'">Navigate frame</button><button aria-label="Remove frame" onclick="document.querySelector('iframe').remove()">Remove frame</button><button aria-label="Add frame" onclick="const frame=document.createElement('iframe');frame.title='Control frame';frame.src='http://127.0.0.1:${childServer.port}/frame-restored.html';document.body.append(frame)">Add frame</button><iframe title="Control frame" src="http://127.0.0.1:${childServer.port}/frame.html"></iframe>`);
+    navigationServer = await serveRoutes({ "/start.html": navigationStartHtml, "/next.html": navigationNextHtml });
     const socket = await waitForSocket(existing, 15_000, output);
     const trace = new MemoryTrace();
     client = await AgentClient.connect(socket, {
@@ -320,6 +403,7 @@ async function run() {
     shadowPageId = (await client.call("pages.open", { url: dataUrl(shadowHtml) })).pageId;
     framePageId = (await client.call("pages.open", { url: dataUrl(frameHtml) })).pageId;
     crossOriginPageId = (await client.call("pages.open", { url: `http://127.0.0.1:${parentServer.port}/index.html` })).pageId;
+    navigationPageId = (await client.call("pages.open", { url: `http://127.0.0.1:${navigationServer.port}/start.html` })).pageId;
     await client.call("page.wait", { pageId, condition: { type: "text", value: "Continue" }, timeoutMs: 3_000 });
     const scenarios = [
       ...fixtureScenarios(pageId),
@@ -327,6 +411,9 @@ async function run() {
       ...shadowScenarios(shadowPageId),
       ...frameScenarios(framePageId),
       ...crossOriginScenarios(crossOriginPageId),
+      ...topLevelNavigationScenarios(navigationPageId, {
+        next: `http://127.0.0.1:${navigationServer.port}/next.html`,
+      }),
     ];
     const report = await runAgentEvaluation(client, scenarios, {
       trace,
@@ -354,16 +441,39 @@ async function run() {
       if (shadowPageId) await client.call("pages.close", { pageId: shadowPageId }).catch(() => {});
       if (framePageId) await client.call("pages.close", { pageId: framePageId }).catch(() => {});
       if (crossOriginPageId) await client.call("pages.close", { pageId: crossOriginPageId }).catch(() => {});
+      if (navigationPageId) await client.call("pages.close", { pageId: navigationPageId }).catch(() => {});
       await client.close().catch(() => {});
     }
     stopHost(host);
     if (parentServer) await closeServer(parentServer);
     if (childServer) await closeServer(childServer);
+    if (navigationServer) await closeServer(navigationServer);
   }
 }
 
 function serve(body) {
   const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    response.end(body);
+  });
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.removeListener("error", reject);
+      resolve({ server, port: server.address().port });
+    });
+  });
+}
+
+function serveRoutes(routes) {
+  const server = http.createServer((request, response) => {
+    const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+    const body = routes[pathname];
+    if (body === undefined) {
+      response.writeHead(404);
+      response.end("not found");
+      return;
+    }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(body);
   });
