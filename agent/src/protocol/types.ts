@@ -32,6 +32,8 @@ export type AgentCapability =
   | "page.act.press"
   | "page.act.select"
   | "page.act.check"
+  | "page.act.hover"
+  | "page.act.scroll"
   | "page.act.navigate"
   | "page.wait"
   | "page.observe"

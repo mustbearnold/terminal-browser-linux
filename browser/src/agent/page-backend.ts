@@ -57,6 +57,7 @@ type ElementInspection = {
 type ClickResult = { ok: boolean };
 type SelectResult = { ok: boolean; values?: string[] };
 type CheckResult = { ok: boolean; checked?: boolean };
+type ScrollResult = { ok: boolean; x?: number; y?: number; changed?: boolean };
 type ActiveElementInfo = {
   ok: boolean;
   frameId?: string;
@@ -205,6 +206,10 @@ export class ElectronPageBackend implements PageBackend {
         return this.select(action, token, expect, signal);
       case "check":
         return this.check(action, token, expect, signal);
+      case "hover":
+        return this.hover(action, token, expect, signal);
+      case "scroll":
+        return this.scroll(action, token, expect, signal);
       case "type":
         return this.typeText(action.text, token, expect, signal);
       case "press":
@@ -212,7 +217,7 @@ export class ElectronPageBackend implements PageBackend {
       case "navigate":
         return this.navigate(action, token, expect, signal);
       default:
-        throw new AgentError("INVALID_REQUEST", `live adapter does not support ${action.type} yet`);
+        return unsupportedAction(action);
     }
   }
 
@@ -479,6 +484,95 @@ export class ElectronPageBackend implements PageBackend {
     const after = outcome.identity;
     const effects = this.transitionEffects(before, after);
     const proof: ActionProof = { url: after.url, title: after.title };
+    return { verified: outcome.satisfied, effects, proof };
+  }
+
+  private async hover(
+    action: Extract<AgentAction, { type: "hover" }>,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+    signal?: AbortSignal,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    const before = await this.identity(signal);
+    const snapshot = await this.snapshot(undefined, signal);
+    this.assertToken(token, snapshot.documentId, snapshot.revision);
+    const target = this.resolver.resolve(action.target, snapshot);
+    const frameId = String(target.node.frameId);
+    const inspection = await this.inspect(target.ref, frameId, signal);
+    if (!inspection.ok || !inspection.visible || !inspection.enabled || inspection.x === undefined || inspection.y === undefined) {
+      throw new AgentError("NOT_INTERACTABLE", "target is not safely hoverable", { retryable: true });
+    }
+
+    this.controller.focusContent();
+    throwIfAborted(signal);
+    await this.controller.cdp("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: inspection.x,
+      y: inspection.y,
+    });
+    this.invalidateSnapshots();
+    const outcome = hasExpectation(expect)
+      ? await this.waitForOutcome(before, expect, signal)
+      : { identity: await this.identity(signal), changed: false, satisfied: true };
+    const after = outcome.identity;
+    const proof: ActionProof = {
+      target: target.ref,
+      role: inspection.role,
+      name: inspection.name,
+      url: after.url,
+      title: after.title,
+    };
+    return { verified: outcome.satisfied, effects: this.transitionEffects(before, after), proof };
+  }
+
+  private async scroll(
+    action: Extract<AgentAction, { type: "scroll" }>,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+    signal?: AbortSignal,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    const before = await this.identity(signal);
+    const snapshot = await this.snapshot(undefined, signal);
+    this.assertToken(token, snapshot.documentId, snapshot.revision);
+    const target = action.target ? this.resolver.resolve(action.target, snapshot) : null;
+    const frameId = target ? String(target.node.frameId) : "main";
+    if (target) {
+      const inspection = await this.inspect(target.ref, frameId, signal);
+      if (!inspection.ok || !inspection.visible || !inspection.enabled) {
+        throw new AgentError("NOT_INTERACTABLE", "scroll target is not safely usable", { retryable: true });
+      }
+    }
+
+    const amount = Math.max(1, action.amount ?? 500);
+    const deltaX = action.direction === "right" ? amount : action.direction === "left" ? -amount : 0;
+    const deltaY = action.direction === "down" ? amount : action.direction === "up" ? -amount : 0;
+    throwIfAborted(signal);
+    const source = scrollScript(this.agentKey, target?.ref ? String(target.ref) : null, deltaX, deltaY);
+    const raw = frameId === "main"
+      ? await this.controller.runJs(source)
+      : await this.controller.runJsInFrame(frameId, source);
+    throwIfAborted(signal);
+    if (!isScrollResult(raw) || !raw.ok) {
+      throw new AgentError("ACTION_UNVERIFIED", "scroll position could not be read after scrolling", { retryable: true });
+    }
+    this.invalidateSnapshots();
+    const outcome = hasExpectation(expect)
+      ? await this.waitForOutcome(before, expect, signal)
+      : { identity: await this.identity(signal), changed: false, satisfied: true };
+    const after = outcome.identity;
+    const effects = this.transitionEffects(before, after);
+    effects.push({
+      type: "scroll.changed",
+      data: { direction: action.direction, amount, x: raw.x ?? 0, y: raw.y ?? 0, changed: raw.changed ?? false },
+    });
+    const proof: ActionProof = {
+      target: target?.ref,
+      role: target?.node.role,
+      name: target?.node.name,
+      value: `${raw.x ?? 0},${raw.y ?? 0}`,
+      url: after.url,
+      title: after.title,
+    };
     return { verified: outcome.satisfied, effects, proof };
   }
 
@@ -1216,6 +1310,32 @@ function checkScript(key: string, ref: string, checked: boolean): string {
   })()`;
 }
 
+function scrollScript(key: string, ref: string | null, deltaX: number, deltaY: number): string {
+  return `(() => {
+    const state = window[${JSON.stringify(key)}];
+    const ref = ${JSON.stringify(ref)};
+    const target = ref && state && state.refs ? state.refs.get(ref) : null;
+    const root = document.scrollingElement || document.documentElement;
+    const scrollable = (el) => el && (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth);
+    let scroller = target;
+    while (scroller && scroller !== document.body && scroller !== document.documentElement && !scrollable(scroller)) {
+      scroller = scroller.parentElement;
+    }
+    if (!scrollable(scroller)) scroller = root;
+    const before = { x: scroller.scrollLeft || 0, y: scroller.scrollTop || 0 };
+    if (scroller === root) {
+      window.scrollBy(${deltaX}, ${deltaY});
+    } else if (typeof scroller.scrollBy === "function") {
+      scroller.scrollBy(${deltaX}, ${deltaY});
+    } else {
+      scroller.scrollLeft += ${deltaX};
+      scroller.scrollTop += ${deltaY};
+    }
+    const after = { x: scroller.scrollLeft || 0, y: scroller.scrollTop || 0 };
+    return { ok: true, x: after.x, y: after.y, changed: before.x !== after.x || before.y !== after.y };
+  })()`;
+}
+
 function clickScript(key: string, ref: string, frameId: string, button: string, clickCount: number): string {
   return `(() => {
     const state = window[${JSON.stringify(key)}];
@@ -1284,12 +1404,27 @@ function isCheckResult(value: unknown): value is CheckResult & { checked: boolea
   return typeof result.ok === "boolean" && typeof result.checked === "boolean";
 }
 
+function isScrollResult(value: unknown): value is ScrollResult {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Record<string, unknown>;
+  return (
+    result.ok === true &&
+    (result.x === undefined || typeof result.x === "number") &&
+    (result.y === undefined || typeof result.y === "number") &&
+    (result.changed === undefined || typeof result.changed === "boolean")
+  );
+}
+
 function isActiveElementInfo(value: unknown): value is ActiveElementInfo {
   return !!value && typeof value === "object" && typeof (value as Record<string, unknown>).ok === "boolean";
 }
 
 function hasExpectation(expect: ActionExpectation | undefined): boolean {
   return !!expect && (expect.url !== undefined || expect.title !== undefined || expect.text !== undefined);
+}
+
+function unsupportedAction(action: never): never {
+  throw new AgentError("INVALID_REQUEST", `live adapter received an unsupported action: ${String(action)}`);
 }
 
 function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
