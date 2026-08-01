@@ -108,6 +108,7 @@ type ActiveElementInfo = {
   value?: string;
 };
 type CssQueryResult = { ok: boolean; invalid?: boolean; refs?: string[] };
+type LiveRefResult = { ok: boolean; node?: SnapshotNode };
 
 const AGENT_STATE_KEY = "__terminalBrowserAgent";
 const AGENT_EVENT_CHANNEL = "terminal-browser.agent";
@@ -173,6 +174,10 @@ export class ElectronPageBackend implements PageBackend {
     options?: LocatorResolutionOptions,
   ): Promise<ResolvedTarget> {
     throwIfAborted(signal);
+    if ("ref" in target && !snapshot.nodes.some((node) => node.ref === target.ref)) {
+      const live = await this.liveRefNode(String(target.ref), signal);
+      if (live) return live;
+    }
     if (!("locator" in target) || target.locator.kind !== "css") {
       return this.resolver.resolve(target, snapshot, options);
     }
@@ -234,6 +239,27 @@ export class ElectronPageBackend implements PageBackend {
       }
     }
     return [...refs];
+  }
+
+  private async liveRefNode(ref: string, signal?: AbortSignal): Promise<ResolvedTarget | null> {
+    throwIfAborted(signal);
+    const frames = await this.controller.agentFrames();
+    const values = await Promise.all(frames.map(async (frame) => {
+      throwIfAborted(signal);
+      const source = refNodeScript(this.agentKey, ref);
+      try {
+        const raw = frame.parentId === null
+          ? await this.controller.runJs(source)
+          : await this.controller.runJsInFrame(frame.id, source);
+        throwIfAborted(signal);
+        return isLiveRefResult(raw) && raw.ok && raw.node ? raw.node : null;
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        return null;
+      }
+    }));
+    const node = values.find((value): value is SnapshotNode => value !== null);
+    return node ? { ref: asSnapshotRef(ref), node } : null;
   }
 
   async frames(signal?: AbortSignal): Promise<PageFrameSnapshot> {
@@ -626,9 +652,7 @@ export class ElectronPageBackend implements PageBackend {
   ): Promise<Omit<ActionResult, "snapshot">> {
 
     const before = await this.identity(signal);
-    const snapshot = await this.snapshot(undefined, signal);
-    this.assertToken(token, snapshot.documentId, snapshot.revision);
-    const target = await this.resolve(action.target, snapshot, signal);
+    const target = await this.resolveActionTarget(action.target, token, before, signal);
     const frameId = String(target.node.frameId);
     const inspection = await this.inspect(target.ref, frameId, signal);
     if (!inspection.ok || !inspection.visible || !inspection.enabled || inspection.occluded) {
@@ -691,9 +715,7 @@ export class ElectronPageBackend implements PageBackend {
     signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
     const before = await this.identity(signal);
-    const snapshot = await this.snapshot(undefined, signal);
-    this.assertToken(token, snapshot.documentId, snapshot.revision);
-    const target = await this.resolve(action.target, snapshot, signal);
+    const target = await this.resolveActionTarget(action.target, token, before, signal);
     const frameId = String(target.node.frameId);
     const inspection = await this.inspect(target.ref, frameId, signal);
     if (!inspection.ok || !inspection.visible || !inspection.enabled || !inspection.editable) {
@@ -774,9 +796,7 @@ export class ElectronPageBackend implements PageBackend {
     signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
     const before = await this.identity(signal);
-    const snapshot = await this.snapshot(undefined, signal);
-    this.assertToken(token, snapshot.documentId, snapshot.revision);
-    const target = await this.resolve(action.target, snapshot, signal);
+    const target = await this.resolveActionTarget(action.target, token, before, signal);
     const frameId = String(target.node.frameId);
     const inspection = await this.inspect(target.ref, frameId, signal);
     if (
@@ -823,9 +843,7 @@ export class ElectronPageBackend implements PageBackend {
     signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
     const before = await this.identity(signal);
-    const snapshot = await this.snapshot(undefined, signal);
-    this.assertToken(token, snapshot.documentId, snapshot.revision);
-    const target = await this.resolve(action.target, snapshot, signal);
+    const target = await this.resolveActionTarget(action.target, token, before, signal);
     const frameId = String(target.node.frameId);
     const inspection = await this.inspect(target.ref, frameId, signal);
     if (
@@ -938,9 +956,7 @@ export class ElectronPageBackend implements PageBackend {
     signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
     const before = await this.identity(signal);
-    const snapshot = await this.snapshot(undefined, signal);
-    this.assertToken(token, snapshot.documentId, snapshot.revision);
-    const target = await this.resolve(action.target, snapshot, signal);
+    const target = await this.resolveActionTarget(action.target, token, before, signal);
     const frameId = String(target.node.frameId);
     const inspection = await this.inspect(target.ref, frameId, signal);
     if (!inspection.ok || !inspection.visible || !inspection.enabled || inspection.x === undefined || inspection.y === undefined) {
@@ -976,9 +992,9 @@ export class ElectronPageBackend implements PageBackend {
     signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
     const before = await this.identity(signal);
-    const snapshot = await this.snapshot(undefined, signal);
-    this.assertToken(token, snapshot.documentId, snapshot.revision);
-    const target = action.target ? await this.resolve(action.target, snapshot, signal) : null;
+    const target = action.target
+      ? await this.resolveActionTarget(action.target, token, before, signal)
+      : null;
     const frameId = target ? String(target.node.frameId) : "main";
     if (target) {
       const inspection = await this.inspect(target.ref, frameId, signal);
@@ -1350,6 +1366,26 @@ export class ElectronPageBackend implements PageBackend {
       ...(value.x === undefined ? {} : { x: value.x + offset.x }),
       ...(value.y === undefined ? {} : { y: value.y + offset.y }),
     };
+  }
+
+  private async resolveActionTarget(
+    target: Target,
+    token: SnapshotToken | undefined,
+    before: PageIdentity,
+    signal?: AbortSignal,
+  ): Promise<ResolvedTarget> {
+    this.assertToken(token, before.documentId, before.revision);
+    if ("ref" in target) {
+      const live = await this.liveRefNode(String(target.ref), signal);
+      if (live) {
+        const current = await this.identity(signal);
+        this.assertToken(token, current.documentId, current.revision);
+        return live;
+      }
+    }
+    const snapshot = await this.snapshot(undefined, signal);
+    this.assertToken(token, snapshot.documentId, snapshot.revision);
+    return this.resolve(target, snapshot, signal);
   }
 
   private async activeElement(signal?: AbortSignal): Promise<ActiveElementInfo> {
@@ -2235,6 +2271,22 @@ function inspectScript(key: string, ref: string, frameId: string): string {
   })()`;
 }
 
+function refNodeScript(key: string, ref: string): string {
+  return `(() => {
+    const state = window[${JSON.stringify(key)}];
+    const el = state && state.refs && state.refs.get(${JSON.stringify(ref)});
+    if (!el || !el.isConnected) return { ok: false };
+    const interactiveOnly = false;
+    const includeGeometry = true;
+    const includeText = true;
+    ${snapshotNodeHelpersScript()}
+    const captured = captureNode(el, null, true);
+    return captured.included && captured.node
+      ? { ok: true, node: captured.node }
+      : { ok: false };
+  })()`;
+}
+
 function fillScript(key: string, ref: string, value: string): string {
   return `(() => {
     const state = window[${JSON.stringify(key)}];
@@ -2494,6 +2546,12 @@ function isCssQueryResult(value: unknown): value is CssQueryResult {
 
 function isInspection(value: unknown): value is ElementInspection {
   return !!value && typeof value === "object" && typeof (value as Record<string, unknown>).ok === "boolean";
+}
+
+function isLiveRefResult(value: unknown): value is LiveRefResult {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Record<string, unknown>;
+  return result.ok === false || (result.ok === true && !!result.node && typeof result.node === "object");
 }
 
 function isClickResult(value: unknown): value is ClickResult {

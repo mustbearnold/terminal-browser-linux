@@ -43,7 +43,10 @@ state uses the same semantic fields as `page.wait`.
 For large pages, use `page.snapshot.window` with a bounded `limit`. The first
 window reports `totalNodes` and a revision-bound `nextCursor`; send that cursor
 alone to continue without transferring one oversized snapshot. A cursor becomes
-stale when the page changes, so the agent can restart from a fresh window.
+stale when the page changes, so the agent can restart from a fresh window. Refs
+returned by any window can be passed to `page.act` with that window's token;
+the live backend resolves the ref directly instead of rebuilding only the
+default snapshot prefix.
 
 Locator failures include bounded candidate summaries, hidden-candidate counts,
 and whether the snapshot was truncated so an agent can recover without blindly

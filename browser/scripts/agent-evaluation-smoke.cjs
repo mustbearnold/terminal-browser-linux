@@ -56,6 +56,7 @@ const crossOriginChildHtml = `<!doctype html><label>Frame name <input aria-label
 const navigationStartHtml = `<!doctype html><meta charset="utf-8"><title>Navigation start</title><button aria-label="Start action">Start action</button><output>Navigation start</output>`;
 const navigationNextHtml = `<!doctype html><meta charset="utf-8"><title>Navigation next</title><label>Recovered name <input aria-label="Recovered name"></label><button aria-label="Next action" onclick="document.querySelector('output').textContent='Next clicked'">Next action</button><output>Next ready</output>`;
 const eventHtml = `<!doctype html><meta charset="utf-8"><title>Native event fixture</title><button aria-label="Emit console" onclick="console.warn('agent console probe')">Emit console</button><button aria-label="Emit dialog" onclick="alert('agent dialog probe')">Emit dialog</button><button aria-label="Emit confirm" onclick="document.querySelector('#dialog-status').textContent = confirm('agent confirm probe') ? 'Confirmed' : 'Dismissed'">Emit confirm</button><button id="unlock" aria-label="Unlock" disabled>Unlock</button><button aria-label="Schedule update" onclick="setTimeout(() => { document.querySelector('#async-status').textContent = 'Asynchronous update'; document.querySelector('#unlock').disabled = false }, 180)">Schedule update</button><span id="dialog-status">Idle</span><span id="async-status">Idle</span>`;
+const largeWindowHtml = `<!doctype html><meta charset="utf-8"><title>Large window fixture</title><output id="status">Idle</output><div id="controls">${Array.from({ length: 1099 }, (_, index) => `<button id="large-${index}" aria-label="Large ${index}">Large ${index}</button>`).join("")}<button id="tail" aria-label="Tail action" onclick="document.querySelector('#status').textContent='Tail clicked'">Tail action</button></div>`;
 
 async function expectCode(promise, code) {
   await assert.rejects(promise, (error) => error && error.code === code);
@@ -68,6 +69,43 @@ function snapshotToken(snapshot) {
     revision: snapshot.revision,
     snapshotId: snapshot.snapshotId,
   };
+}
+
+function largeWindowScenarios(pageId) {
+  return [{
+    id: "large-window-ref-reaches-action",
+    name: "large-window-ref-reaches-action",
+    async run(client) {
+      let current = await client.call("page.snapshot.window", {
+        pageId,
+        options: { limit: 256 },
+      });
+      let tail;
+      let windows = 0;
+      while (true) {
+        windows += 1;
+        tail = current.nodes.find((node) => node.attributes?.id === "tail");
+        if (tail || current.done) break;
+        if (!current.nextCursor) return { passed: false, reason: "window traversal omitted its continuation cursor" };
+        current = await client.call("page.snapshot.window", {
+          pageId,
+          cursor: current.nextCursor,
+        });
+      }
+      if (!tail) return { passed: false, reason: "window traversal did not expose the tail control" };
+      const clicked = await client.call("page.act", {
+        pageId,
+        token: snapshotToken(current),
+        action: { type: "click", target: { ref: tail.ref } },
+        expect: { text: "Tail clicked" },
+        output: { snapshot: "none" },
+      });
+      return {
+        passed: clicked.verified,
+        metrics: { largeWindowPages: windows, largeWindowNodes: current.totalNodes, largeTargetOffset: current.offset },
+      };
+    },
+  }];
 }
 
 function semanticScenarios(pageId) {
@@ -796,14 +834,17 @@ async function run() {
   let navigationPageId;
   let eventPageId;
   let downloadPageId;
+  let largePageId;
   let navigationServer;
   let downloadServer;
+  let largeServer;
   let failurePort;
   try {
     childServer = await serve(crossOriginChildHtml);
     parentServer = await serve(`<!doctype html><meta charset="utf-8"><title>Cross-origin evaluation fixture</title><button aria-label="Navigate frame" onclick="document.querySelector('iframe').src='http://127.0.0.1:${childServer.port}/frame-next.html'">Navigate frame</button><button aria-label="Remove frame" onclick="document.querySelector('iframe').remove()">Remove frame</button><button aria-label="Add frame" onclick="const frame=document.createElement('iframe');frame.title='Control frame';frame.src='http://127.0.0.1:${childServer.port}/frame-restored.html';document.body.append(frame)">Add frame</button><iframe title="Control frame" src="http://127.0.0.1:${childServer.port}/frame.html"></iframe>`);
     navigationServer = await serveRoutes({ "/start.html": navigationStartHtml, "/next.html": navigationNextHtml });
     downloadServer = await serveDownload();
+    largeServer = await serve(largeWindowHtml);
     failurePort = await closedPort();
     const socket = await waitForSocket(existing, 15_000, output);
     const trace = new MemoryTrace();
@@ -821,9 +862,12 @@ async function run() {
     navigationPageId = (await client.call("pages.open", { url: `http://127.0.0.1:${navigationServer.port}/start.html` })).pageId;
     eventPageId = (await client.call("pages.open", { url: dataUrl(eventHtml) })).pageId;
     downloadPageId = (await client.call("pages.open", { url: `http://127.0.0.1:${downloadServer.port}/index.html` })).pageId;
+    largePageId = (await client.call("pages.open", { url: `http://127.0.0.1:${largeServer.port}/index.html` })).pageId;
     await client.call("page.wait", { pageId, condition: { type: "text", value: "Continue" }, timeoutMs: 3_000 });
+    await client.call("page.wait", { pageId: largePageId, condition: { type: "text", value: "Tail action" }, timeoutMs: 3_000 });
     const scenarios = [
       ...fixtureScenarios(pageId),
+      ...largeWindowScenarios(largePageId),
       ...semanticScenarios(pageId),
       ...shadowScenarios(shadowPageId),
       ...frameScenarios(framePageId),
@@ -864,6 +908,7 @@ async function run() {
       if (navigationPageId) await client.call("pages.close", { pageId: navigationPageId }).catch(() => {});
       if (eventPageId) await client.call("pages.close", { pageId: eventPageId }).catch(() => {});
       if (downloadPageId) await client.call("pages.close", { pageId: downloadPageId }).catch(() => {});
+      if (largePageId) await client.call("pages.close", { pageId: largePageId }).catch(() => {});
       await client.close().catch(() => {});
     }
     stopHost(host);
@@ -871,6 +916,7 @@ async function run() {
     if (childServer) await closeServer(childServer);
     if (navigationServer) await closeServer(navigationServer);
     if (downloadServer) await closeServer(downloadServer);
+    if (largeServer) await closeServer(largeServer);
   }
 }
 
