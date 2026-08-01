@@ -34,11 +34,10 @@ export interface BrowserAgentFrame {
   origin: string;
 }
 
-export interface BrowserAgentFrameNavigation {
-  frameId: string;
-  url: string;
-  detached: boolean;
-}
+export type BrowserAgentFrameLifecycle =
+  | { type: "attached"; frameId: string; parentId: string }
+  | { type: "navigated"; frameId: string; parentId: string; url: string; origin: string }
+  | { type: "detached"; frameId: string };
 
 export class BrowserController {
   readonly surface: Surface;
@@ -82,7 +81,7 @@ export class BrowserController {
   onDevtoolsAction: ((action: DevtoolsAction) => void) | null = null;
   onContextMenu: ((params: Electron.ContextMenuParams) => void) | null = null;
   onLifecycleEvent: ((event: BrowserLifecycleEvent) => void) | null = null;
-  onFrameNavigation: ((event: BrowserAgentFrameNavigation) => void) | null = null;
+  onFrameLifecycle: ((event: BrowserAgentFrameLifecycle) => void) | null = null;
 
   constructor(
     surface: Surface,
@@ -319,16 +318,26 @@ export class BrowserController {
     this.window.webContents.debugger.attach("1.3");
     this.cdpAttached = true;
     this.window.webContents.debugger.on("message", (_event, method, params) => {
-      if (method === "Page.frameNavigated") {
+      if (method === "Page.frameAttached") {
+        const frameId = (params as { frameId?: string }).frameId;
+        const parentId = (params as { parentFrameId?: string }).parentFrameId;
+        if (frameId && parentId) this.onFrameLifecycle?.({ type: "attached", frameId, parentId });
+      } else if (method === "Page.frameNavigated") {
         this.frameContexts.clear();
-        const frame = (params as { frame?: { id?: string; parentId?: string; url?: string } }).frame;
+        const frame = (params as { frame?: { id?: string; parentId?: string; url?: string; securityOrigin?: string } }).frame;
         if (frame?.id && frame.parentId) {
-          this.onFrameNavigation?.({ frameId: frame.id, url: frame.url ?? "", detached: false });
+          this.onFrameLifecycle?.({
+            type: "navigated",
+            frameId: frame.id,
+            parentId: frame.parentId,
+            url: frame.url ?? "",
+            origin: frame.securityOrigin ?? "",
+          });
         }
       } else if (method === "Page.frameDetached") {
         this.frameContexts.clear();
         const frameId = (params as { frameId?: string }).frameId;
-        if (frameId) this.onFrameNavigation?.({ frameId, url: "", detached: true });
+        if (frameId) this.onFrameLifecycle?.({ type: "detached", frameId });
       }
       if (method !== "Runtime.bindingCalled") return;
       const call = params as { name: string; payload: string };
@@ -555,7 +564,7 @@ export class BrowserController {
     screen.off("display-removed", this.onDisplayChange);
     screen.off("display-metrics-changed", this.onDisplayChange);
     this.onLifecycleEvent = null;
-    this.onFrameNavigation = null;
+    this.onFrameLifecycle = null;
     this.emitHandlers.clear();
     this.surface.close();
     this.window.destroy();

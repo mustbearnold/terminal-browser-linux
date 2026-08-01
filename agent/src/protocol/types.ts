@@ -48,6 +48,11 @@ export interface PageFrame {
   origin: string;
 }
 
+export type FrameLifecycleEventData =
+  | { type: "attached"; frameId: FrameId; parentFrameId: FrameId | null }
+  | { type: "navigated"; frame: PageFrame }
+  | { type: "detached"; frameId: FrameId };
+
 export interface SnapshotOptions {
   interactiveOnly?: boolean;
   includeGeometry?: boolean;
@@ -221,6 +226,7 @@ export interface AgentResponse {
 
 export type AgentEventType =
   | "navigation"
+  | "frame.lifecycle"
   | "load"
   | "dom.changed"
   | "console"

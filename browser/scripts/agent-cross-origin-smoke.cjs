@@ -9,7 +9,7 @@ const child = `<!doctype html><style>body{font:16px sans-serif;margin:18px}butto
 
 async function run() {
   const childServer = await serve(child);
-  const parent = `<!doctype html><meta charset="utf-8"><title>Cross-origin frame control fixture</title><style>body{font:16px sans-serif;margin:24px}iframe{display:block;width:460px;height:220px;border:4px solid #888}</style><iframe title="Control frame" src="http://127.0.0.1:${childServer.port}/frame.html"></iframe>`;
+  const parent = `<!doctype html><meta charset="utf-8"><title>Cross-origin frame control fixture</title><style>body{font:16px sans-serif;margin:24px}button{font:16px sans-serif;margin:8px;padding:8px}iframe{display:block;width:460px;height:220px;border:4px solid #888}</style><button aria-label="Navigate frame" onclick="document.querySelector('iframe').src='http://127.0.0.1:${childServer.port}/frame-next.html'">Navigate frame</button><button aria-label="Remove frame" onclick="document.querySelector('iframe').remove()">Remove frame</button><button aria-label="Add frame" onclick="const frame=document.createElement('iframe');frame.title='Control frame';frame.src='http://127.0.0.1:${childServer.port}/frame-restored.html';document.body.append(frame)">Add frame</button><iframe title="Control frame" src="http://127.0.0.1:${childServer.port}/frame.html"></iframe>`;
   const parentServer = await serve(parent);
   const existing = new Set(listSockets());
   const { host, output } = launchHost();
@@ -35,7 +35,7 @@ async function run() {
     const events = [];
     const unsubscribe = client.onEvent((event) => events.push(event));
     try {
-      await client.observe(pageId, ["dom.changed"]);
+      await client.observe(pageId, ["dom.changed", "frame.lifecycle"]);
       const initial = await client.call("page.snapshot", {
         pageId,
         options: { includeGeometry: true },
@@ -85,6 +85,53 @@ async function run() {
         "cross-origin frame event did not preserve its frame identity",
       );
 
+      await client.call("page.act", {
+        pageId,
+        action: {
+          type: "click",
+          target: { locator: { kind: "role", role: "button", name: "Navigate frame", exact: true } },
+        },
+      });
+      const navigatedEvent = await waitForEvent(
+        events,
+        (event) => event.event === "frame.lifecycle" && event.data?.type === "navigated" && event.data.frame?.frameId === frameButton.frameId,
+      );
+      const navigatedFrames = await client.frames(pageId);
+      const navigatedFrame = navigatedFrames.find((frame) => frame.frameId === frameButton.frameId);
+      assert.equal(navigatedEvent.data.frame.url, `http://127.0.0.1:${childServer.port}/frame-next.html`);
+      assert.equal(navigatedFrame?.url, `http://127.0.0.1:${childServer.port}/frame-next.html`);
+
+      await client.call("page.act", {
+        pageId,
+        action: {
+          type: "click",
+          target: { locator: { kind: "role", role: "button", name: "Remove frame", exact: true } },
+        },
+      });
+      const detachedEvent = await waitForEvent(
+        events,
+        (event) => event.event === "frame.lifecycle" && event.data?.type === "detached" && event.data.frameId === frameButton.frameId,
+      );
+      const detachedFrames = await client.frames(pageId);
+      assert.equal(detachedEvent.data.frameId, frameButton.frameId);
+      assert.equal(detachedFrames.some((frame) => frame.frameId === frameButton.frameId), false);
+
+      await client.call("page.act", {
+        pageId,
+        action: {
+          type: "click",
+          target: { locator: { kind: "role", role: "button", name: "Add frame", exact: true } },
+        },
+      });
+      const attachedEvent = await waitForEvent(
+        events,
+        (event) => event.event === "frame.lifecycle" && event.data?.type === "attached",
+      );
+      const restoredFrames = await client.frames(pageId);
+      const restoredFrame = restoredFrames.find((frame) => frame.parentFrameId !== null);
+      assert.equal(attachedEvent.data.parentFrameId, "main");
+      assert.equal(restoredFrame?.url, `http://127.0.0.1:${childServer.port}/frame-restored.html`);
+
       console.log(JSON.stringify({
         parentPort: parentServer.port,
         childPort: childServer.port,
@@ -94,6 +141,7 @@ async function run() {
         dynamicNode: dynamicButton.name,
         revisionDelta: after.revision - initial.revision,
         domEvents: events.filter((event) => event.event === "dom.changed").length,
+        frameLifecycleEvents: events.filter((event) => event.event === "frame.lifecycle").length,
       }));
     } finally {
       unsubscribe();
@@ -107,6 +155,16 @@ async function run() {
     await closeServer(parentServer);
     await closeServer(childServer);
   }
+}
+
+async function waitForEvent(events, predicate) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() <= deadline) {
+    const event = events.find(predicate);
+    if (event) return event;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("timed out waiting for frame lifecycle event");
 }
 
 function serve(body) {

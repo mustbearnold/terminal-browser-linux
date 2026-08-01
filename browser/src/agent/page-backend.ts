@@ -25,7 +25,7 @@ import type {
   WaitCondition,
   WaitResult,
 } from "terminal-browser-agent";
-import type { BrowserAgentFrame, BrowserController } from "../page/controller";
+import type { BrowserAgentFrame, BrowserAgentFrameLifecycle, BrowserController } from "../page/controller";
 import type { BrowserLifecycleEvent, BrowserState } from "../page/types";
 
 type CapturedSnapshot = Omit<PageSnapshot, "snapshotId">;
@@ -74,6 +74,7 @@ export class ElectronPageBackend implements PageBackend {
   private lastSnapshot: CapturedSnapshot | null = null;
   private lastSnapshotOptions: string | null = null;
   private observationReady: Promise<void> | null = null;
+  private mainBrowserFrameId: string | null = null;
 
   constructor(
     readonly pageId: PageId,
@@ -83,7 +84,7 @@ export class ElectronPageBackend implements PageBackend {
   ) {
     this.controller.onEmit(AGENT_EVENT_CHANNEL, (data) => this.handlePageEvent(data));
     this.controller.onLifecycleEvent = (event) => this.handleLifecycleEvent(event);
-    this.controller.onFrameNavigation = (event) => this.handleFrameNavigation(event.frameId, event.url, event.detached);
+    this.controller.onFrameLifecycle = (event) => this.handleFrameLifecycle(event);
   }
 
   async identity(signal?: AbortSignal): Promise<PageIdentity> {
@@ -108,10 +109,10 @@ export class ElectronPageBackend implements PageBackend {
     throwIfAborted(signal);
     const mainFrame = browserFrames.find((frame) => frame.parentId === null);
     if (!mainFrame) throw new AgentError("INTERNAL_ERROR", "browser frame tree has no main frame");
-    const protocolFrameId = (frameId: string) => frameId === mainFrame.id ? MAIN_FRAME_ID : asFrameId(frameId);
+    this.mainBrowserFrameId = mainFrame.id;
     return browserFrames.map((frame) => ({
-      frameId: protocolFrameId(frame.id),
-      parentFrameId: frame.parentId === null ? null : protocolFrameId(frame.parentId),
+      frameId: this.protocolFrameId(frame.id, frame.parentId),
+      parentFrameId: frame.parentId === null ? null : this.protocolFrameId(frame.parentId),
       url: frame.url,
       origin: frame.origin,
     }));
@@ -137,6 +138,7 @@ export class ElectronPageBackend implements PageBackend {
     throwIfAborted(signal);
     const mainFrame = frames.find((frame) => frame.parentId === null);
     if (!mainFrame) throw new AgentError("INTERNAL_ERROR", "browser frame tree has no main frame");
+    this.mainBrowserFrameId = mainFrame.id;
     const offsets = await this.frameOffsets(frames, signal);
     const captures = await Promise.all(
       frames.map((frame) => this.captureFrame(frame, options, signal)),
@@ -616,16 +618,53 @@ export class ElectronPageBackend implements PageBackend {
     if (event.type === "navigation") {
       this.remoteRevision = 0;
       this.invalidateSnapshots();
+      this.emit("frame.lifecycle", {
+        type: "navigated",
+        frame: {
+          frameId: MAIN_FRAME_ID,
+          parentFrameId: null,
+          url: event.url,
+          origin: originForUrl(event.url),
+        },
+      });
       this.emit("navigation", { url: event.url, inPage: event.inPage });
       return;
     }
     this.emit("load", { loading: event.loading, url: event.url });
   }
 
-  private handleFrameNavigation(frameId: string, url: string, detached: boolean): void {
+  private handleFrameLifecycle(event: BrowserAgentFrameLifecycle): void {
     this.remoteRevision += 1;
     this.invalidateSnapshots();
-    this.emit("navigation", { url, inPage: false, frameId, detached });
+    if (event.type === "attached") {
+      this.emit("frame.lifecycle", {
+        type: "attached",
+        frameId: this.protocolFrameId(event.frameId, event.parentId),
+        parentFrameId: this.protocolFrameId(event.parentId),
+      });
+      return;
+    }
+    if (event.type === "navigated") {
+      const frameId = this.protocolFrameId(event.frameId, event.parentId);
+      this.emit("frame.lifecycle", {
+        type: "navigated",
+        frame: {
+          frameId,
+          parentFrameId: this.protocolFrameId(event.parentId),
+          url: event.url,
+          origin: event.origin,
+        },
+      });
+      this.emit("navigation", { url: event.url, inPage: false, frameId, detached: false });
+      return;
+    }
+    const frameId = this.protocolFrameId(event.frameId);
+    this.emit("frame.lifecycle", { type: "detached", frameId });
+    this.emit("navigation", { url: "", inPage: false, frameId, detached: true });
+  }
+
+  private protocolFrameId(frameId: string, parentId?: string | null): PageFrame["frameId"] {
+    return parentId === null || frameId === this.mainBrowserFrameId ? MAIN_FRAME_ID : asFrameId(frameId);
   }
 
   private async waitForOutcome(
@@ -692,6 +731,14 @@ function identityChanged(before: PageIdentity, after: PageIdentity): boolean {
     before.title !== after.title ||
     before.revision !== after.revision
   );
+}
+
+function originForUrl(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "";
+  }
 }
 
 function snapshotOptionsKey(options?: SnapshotOptions): string {
