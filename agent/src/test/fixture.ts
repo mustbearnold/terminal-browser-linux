@@ -78,6 +78,8 @@ class FixturePageBackend implements PageBackend {
   private revision = 0;
   private nextSequence = 0;
   private ready = false;
+  private value = "";
+  private focused = false;
 
   constructor(pageId: PageId) {
     this.pageId = pageId;
@@ -119,8 +121,8 @@ class FixturePageBackend implements PageBackend {
         parent: null,
         role: "textbox",
         name: "Name",
-        ...(includeText ? { text: "" } : {}),
-        state: { value: "" },
+        ...(includeText ? { text: this.value } : {}),
+        state: { value: this.value, focused: this.focused },
         ...(includeGeometry ? { box: { x: 12, y: 56, width: 180, height: 32 } } : {}),
         visible: true,
         enabled: true,
@@ -175,11 +177,26 @@ class FixturePageBackend implements PageBackend {
     token?: SnapshotToken,
     expect?: ActionExpectation,
   ): Promise<Omit<ActionResult, "snapshot">> {
-    if (action.type !== "click") throw new AgentError("INVALID_REQUEST", `fixture does not support ${action.type}`);
-    const snapshot = await this.snapshot({ interactiveOnly: false });
-    if (token && (token.documentId !== snapshot.documentId || token.revision !== snapshot.revision)) {
-      throw new AgentError("STALE_SNAPSHOT", "snapshot is no longer current", { retryable: true });
+    switch (action.type) {
+      case "click":
+        return this.click(action, token, expect);
+      case "fill":
+        return this.fill(action, token, expect);
+      case "type":
+        return this.typeText(action.text, token, expect);
+      case "press":
+        return this.press(action.key, token, expect);
+      default:
+        throw new AgentError("INVALID_REQUEST", `fixture does not support ${action.type}`);
     }
+  }
+
+  private async click(
+    action: Extract<AgentAction, { type: "click" }>,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    const snapshot = await this.actionSnapshot(token);
     const target = this.resolver.resolve(action.target, snapshot);
     if (target.node.role !== "button" || target.node.name !== "Continue") {
       throw new AgentError("NOT_INTERACTABLE", "fixture target is not clickable", { retryable: true });
@@ -187,8 +204,7 @@ class FixturePageBackend implements PageBackend {
     this.ready = true;
     this.revision += 1;
     const identity = await this.identity();
-    const event = this.event("dom.changed", { revision: this.revision });
-    this.events.publish(event);
+    this.emitChanged();
     return {
       verified: await this.matches(expect, identity),
       effects: [{ type: "dom.changed", data: { revision: this.revision } }],
@@ -200,6 +216,101 @@ class FixturePageBackend implements PageBackend {
         title: identity.title,
       },
     };
+  }
+
+  private async fill(
+    action: Extract<AgentAction, { type: "fill" }>,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    const snapshot = await this.actionSnapshot(token);
+    const target = this.resolver.resolve(action.target, snapshot);
+    if (target.node.role !== "textbox") {
+      throw new AgentError("NOT_INTERACTABLE", "fixture target is not editable", { retryable: true });
+    }
+    this.value = action.value;
+    this.focused = true;
+    this.revision += 1;
+    const identity = await this.identity();
+    this.emitChanged();
+    return {
+      verified: await this.matches(expect, identity),
+      effects: [
+        { type: "dom.changed", data: { revision: this.revision } },
+        { type: "value.changed", data: { value: this.value } },
+      ],
+      proof: {
+        target: target.ref,
+        role: target.node.role,
+        name: target.node.name,
+        value: this.value,
+        url: identity.url,
+        title: identity.title,
+      },
+    };
+  }
+
+  private async typeText(
+    text: string,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    await this.actionSnapshot(token);
+    if (!this.focused) throw new AgentError("NOT_INTERACTABLE", "fixture has no focused editable control", { retryable: true });
+    this.value += text;
+    this.revision += 1;
+    const identity = await this.identity();
+    this.emitChanged();
+    return {
+      verified: await this.matches(expect, identity),
+      effects: [
+        { type: "dom.changed", data: { revision: this.revision } },
+        { type: "value.changed", data: { value: this.value } },
+      ],
+      proof: {
+        role: "textbox",
+        name: "Name",
+        value: this.value,
+        url: identity.url,
+        title: identity.title,
+      },
+    };
+  }
+
+  private async press(
+    key: string,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    await this.actionSnapshot(token);
+    if (!this.focused) throw new AgentError("NOT_INTERACTABLE", "fixture has no focused control", { retryable: true });
+    if (key.toLocaleLowerCase() === "enter") this.ready = true;
+    this.revision += 1;
+    const identity = await this.identity();
+    this.emitChanged();
+    return {
+      verified: await this.matches(expect, identity),
+      effects: [{ type: "dom.changed", data: { revision: this.revision } }],
+      proof: {
+        role: "textbox",
+        name: "Name",
+        value: this.value,
+        url: identity.url,
+        title: identity.title,
+      },
+    };
+  }
+
+  private async actionSnapshot(token?: SnapshotToken): Promise<Omit<PageSnapshot, "snapshotId">> {
+    const snapshot = await this.snapshot({ interactiveOnly: false });
+    if (token && (token.documentId !== snapshot.documentId || token.revision !== snapshot.revision)) {
+      throw new AgentError("STALE_SNAPSHOT", "snapshot is no longer current", { retryable: true });
+    }
+    return snapshot;
+  }
+
+  private emitChanged(): void {
+    this.events.publish(this.event("dom.changed", { revision: this.revision }));
   }
 
   async wait(condition: WaitCondition, timeoutMs = 1000): Promise<Omit<WaitResult, "snapshot">> {

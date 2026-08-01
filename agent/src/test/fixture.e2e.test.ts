@@ -8,7 +8,7 @@ import {
   AGENT_PROTOCOL_VERSION,
   type PageIdentity,
 } from "../protocol/types";
-import { FIXTURE_PAGE_ID, FIXTURE_URL, FixtureRuntime } from "./fixture";
+import { FIXTURE_PAGE_ID, FixtureRuntime } from "./fixture";
 
 let requestSequence = 0;
 
@@ -48,31 +48,57 @@ test("runs the deterministic agent control contract", async () => {
     await router.handle(
       request("page.read", {
         pageId: FIXTURE_PAGE_ID,
-        target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } },
+        target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } },
         token: token(snapshot),
       }),
       context,
     ),
   );
-  assert.equal(read.name, "Continue");
+  assert.equal(read.name, "Name");
 
   result(await router.handle(request("page.observe", { pageId: FIXTURE_PAGE_ID, events: ["dom.changed"] }), context));
 
-  const action = result<{ verified: boolean; proof?: { url?: string }; snapshot?: PageSnapshot }>(
+  const filled = result<{ verified: boolean; proof?: { value?: string }; snapshot?: PageSnapshot }>(
     await router.handle(
       request("page.act", {
         pageId: FIXTURE_PAGE_ID,
         token: token(snapshot),
-        action: { type: "click", target: { ref: read.ref } },
+        action: { type: "fill", target: { ref: read.ref }, value: "Ada" },
+      }),
+      context,
+    ),
+  );
+  assert.equal(filled.verified, true);
+  assert.equal(filled.proof?.value, "Ada");
+
+  const typed = result<{ verified: boolean; proof?: { value?: string }; snapshot?: PageSnapshot }>(
+    await router.handle(
+      request("page.act", {
+        pageId: FIXTURE_PAGE_ID,
+        token: token(filled.snapshot!),
+        action: { type: "type", text: " Lovelace" },
+      }),
+      context,
+    ),
+  );
+  assert.equal(typed.verified, true);
+  assert.equal(typed.proof?.value, "Ada Lovelace");
+
+  const pressed = result<{ verified: boolean; proof?: { value?: string }; snapshot?: PageSnapshot }>(
+    await router.handle(
+      request("page.act", {
+        pageId: FIXTURE_PAGE_ID,
+        token: token(typed.snapshot!),
+        action: { type: "press", key: "Enter" },
         expect: { text: "Ready" },
       }),
       context,
     ),
   );
-  assert.equal(action.verified, true);
-  assert.equal(action.proof?.url, FIXTURE_URL);
-  assert.equal(action.snapshot?.nodes.some((node) => node.name === "Ready"), true);
-  assert.deepEqual(events.map((event) => event.event), ["dom.changed"]);
+  assert.equal(pressed.verified, true);
+  assert.equal(pressed.proof?.value, "Ada Lovelace");
+  assert.equal(pressed.snapshot?.nodes.some((node) => node.name === "Ready"), true);
+  assert.deepEqual(events.map((event) => event.event), ["dom.changed", "dom.changed", "dom.changed"]);
 
   const waited = result<{ satisfied: boolean; snapshot?: PageSnapshot }>(
     await router.handle(
@@ -86,7 +112,7 @@ test("runs the deterministic agent control contract", async () => {
     request("page.act", {
       pageId: FIXTURE_PAGE_ID,
       token: token(snapshot),
-      action: { type: "click", target: { ref: read.ref } },
+      action: { type: "fill", target: { ref: read.ref }, value: "stale" },
     }),
     context,
   );

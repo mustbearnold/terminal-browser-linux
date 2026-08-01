@@ -34,6 +34,15 @@ type ElementInspection = {
   visible?: boolean;
   enabled?: boolean;
   occluded?: boolean;
+  editable?: boolean;
+  focused?: boolean;
+  role?: string;
+  name?: string;
+  value?: string;
+};
+type ActiveElementInfo = {
+  ok: boolean;
+  editable?: boolean;
   role?: string;
   name?: string;
   value?: string;
@@ -100,17 +109,29 @@ export class ElectronPageBackend implements PageBackend {
     token?: SnapshotToken,
     expect?: ActionExpectation,
   ): Promise<Omit<ActionResult, "snapshot">> {
-    if (action.type !== "click") {
-      throw new AgentError("INVALID_REQUEST", `live adapter does not support ${action.type} yet`);
+    switch (action.type) {
+      case "click":
+        return this.click(action, token, expect);
+      case "fill":
+        return this.fill(action, token, expect);
+      case "type":
+        return this.typeText(action.text, token, expect);
+      case "press":
+        return this.press(action.key, token, expect);
+      default:
+        throw new AgentError("INVALID_REQUEST", `live adapter does not support ${action.type} yet`);
     }
+  }
+
+  private async click(
+    action: Extract<AgentAction, { type: "click" }>,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+  ): Promise<Omit<ActionResult, "snapshot">> {
 
     const before = await this.identity();
     const snapshot = await this.snapshot();
-    if (token) {
-      if (token.documentId !== snapshot.documentId || token.revision !== snapshot.revision) {
-        throw new AgentError("STALE_SNAPSHOT", "snapshot is no longer current", { retryable: true });
-      }
-    }
+    this.assertToken(token, snapshot.documentId, snapshot.revision);
     const target = this.resolver.resolve(action.target, snapshot);
     const inspection = await this.inspect(target.ref);
     if (!inspection.ok || !inspection.visible || !inspection.enabled || inspection.occluded) {
@@ -136,19 +157,11 @@ export class ElectronPageBackend implements PageBackend {
       button,
       clickCount,
     });
+    this.invalidateSnapshots();
     const outcome = await this.waitForOutcome(before, expect);
 
-    this.lastSnapshot = null;
-    this.lastSnapshotOptions = null;
     const after = outcome.identity;
-    const effects: ActionEffect[] = [];
-    if (before.documentId !== after.documentId || before.url !== after.url) {
-      effects.push({ type: "navigation", data: { url: after.url } });
-      this.emit("navigation", { url: after.url, documentId: after.documentId });
-    } else if (before.revision !== after.revision) {
-      effects.push({ type: "dom.changed", data: { revision: after.revision } });
-      this.emit("dom.changed", { revision: after.revision });
-    }
+    const effects = this.transitionEffects(before, after);
 
     const proof: ActionProof = {
       target: target.ref,
@@ -158,8 +171,119 @@ export class ElectronPageBackend implements PageBackend {
       url: after.url,
       title: after.title,
     };
-    const verified = expect ? outcome.satisfied : outcome.changed;
+    const verified = hasExpectation(expect) ? outcome.satisfied : outcome.changed;
     return { verified, effects, proof };
+  }
+
+  private async fill(
+    action: Extract<AgentAction, { type: "fill" }>,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    const before = await this.identity();
+    const snapshot = await this.snapshot();
+    this.assertToken(token, snapshot.documentId, snapshot.revision);
+    const target = this.resolver.resolve(action.target, snapshot);
+    const inspection = await this.inspect(target.ref);
+    if (!inspection.ok || !inspection.visible || !inspection.enabled || !inspection.editable) {
+      throw new AgentError("NOT_INTERACTABLE", "target is not an editable control", { retryable: true });
+    }
+
+    this.controller.focusContent();
+    const value = await this.controller.runJs(fillScript(this.agentKey, target.ref, action.value));
+    if (!isActiveElementInfo(value) || !value.ok || !value.editable || value.value !== action.value) {
+      throw new AgentError("ACTION_UNVERIFIED", "control value did not match the requested fill", {
+        retryable: true,
+      });
+    }
+    this.invalidateSnapshots();
+    const outcome = await this.waitForOutcome(before, expect);
+    const after = outcome.identity;
+    const effects = this.transitionEffects(before, after);
+    effects.push({ type: "value.changed", data: { value: value.value } });
+    const proof: ActionProof = {
+      target: target.ref,
+      role: value.role ?? inspection.role,
+      name: value.name ?? inspection.name,
+      value: value.value,
+      url: after.url,
+      title: after.title,
+    };
+    const verified = hasExpectation(expect) ? outcome.satisfied : true;
+    return { verified, effects, proof };
+  }
+
+  private async typeText(
+    text: string,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    const before = await this.identity();
+    this.assertToken(token, before.documentId, before.revision);
+    const activeBefore = await this.activeElement();
+    if (!activeBefore.ok || !activeBefore.editable) {
+      throw new AgentError("NOT_INTERACTABLE", "the active element is not editable", { retryable: true });
+    }
+
+    this.controller.focusContent();
+    await this.controller.cdp("Input.insertText", { text });
+    this.invalidateSnapshots();
+    const outcome = await this.waitForOutcome(before, expect);
+    const activeAfter = await this.activeElement().catch(() => activeBefore);
+    const after = outcome.identity;
+    const effects = this.transitionEffects(before, after);
+    effects.push({ type: "value.changed", data: { value: activeAfter.value ?? "" } });
+    const proof: ActionProof = {
+      role: activeAfter.role ?? activeBefore.role,
+      name: activeAfter.name ?? activeBefore.name,
+      value: activeAfter.value,
+      url: after.url,
+      title: after.title,
+    };
+    const verified = hasExpectation(expect)
+      ? outcome.satisfied
+      : text === "" || activeAfter.value !== activeBefore.value;
+    return { verified, effects, proof };
+  }
+
+  private async press(
+    rawKey: string,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    const before = await this.identity();
+    this.assertToken(token, before.documentId, before.revision);
+    const key = parsePressKey(rawKey);
+    this.controller.focusContent();
+    const base = {
+      key: key.key,
+      code: key.code,
+      windowsVirtualKeyCode: key.keyCode,
+      nativeVirtualKeyCode: key.keyCode,
+      modifiers: key.modifiers,
+    };
+    await this.controller.cdp("Input.dispatchKeyEvent", {
+      type: "rawKeyDown",
+      ...base,
+      autoRepeat: false,
+    });
+    if (key.text && (key.modifiers & (MODIFIER_ALT | MODIFIER_CTRL | MODIFIER_META)) === 0) {
+      await this.controller.cdp("Input.dispatchKeyEvent", { type: "char", text: key.text, ...base });
+    }
+    await this.controller.cdp("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+    this.invalidateSnapshots();
+    const outcome = await this.waitForOutcome(before, expect);
+    const active = await this.activeElement().catch(() => ({ ok: false } as ActiveElementInfo));
+    const after = outcome.identity;
+    const effects = this.transitionEffects(before, after);
+    const proof: ActionProof = {
+      role: active.role,
+      name: active.name,
+      value: active.value,
+      url: after.url,
+      title: after.title,
+    };
+    return { verified: hasExpectation(expect) ? outcome.satisfied : true, effects, proof };
   }
 
   async wait(condition: WaitCondition, timeoutMs = 10_000): Promise<Omit<WaitResult, "snapshot">> {
@@ -217,6 +341,36 @@ export class ElectronPageBackend implements PageBackend {
     const value = await this.controller.runJs(inspectScript(this.agentKey, ref));
     if (!isInspection(value)) throw new AgentError("INTERNAL_ERROR", "target inspection returned an invalid shape");
     return value;
+  }
+
+  private async activeElement(): Promise<ActiveElementInfo> {
+    const value = await this.controller.runJs(activeElementScript());
+    if (!isActiveElementInfo(value)) throw new AgentError("INTERNAL_ERROR", "active element returned an invalid shape");
+    return value;
+  }
+
+  private assertToken(token: SnapshotToken | undefined, documentId: string, revision: number): void {
+    if (!token) return;
+    if (token.documentId !== documentId || token.revision !== revision) {
+      throw new AgentError("STALE_SNAPSHOT", "snapshot is no longer current", { retryable: true });
+    }
+  }
+
+  private invalidateSnapshots(): void {
+    this.lastSnapshot = null;
+    this.lastSnapshotOptions = null;
+  }
+
+  private transitionEffects(before: PageIdentity, after: PageIdentity): ActionEffect[] {
+    const effects: ActionEffect[] = [];
+    if (before.documentId !== after.documentId || before.url !== after.url) {
+      effects.push({ type: "navigation", data: { url: after.url } });
+      this.emit("navigation", { url: after.url, documentId: after.documentId });
+    } else if (before.revision !== after.revision) {
+      effects.push({ type: "dom.changed", data: { revision: after.revision } });
+      this.emit("dom.changed", { revision: after.revision });
+    }
+    return effects;
   }
 
   private async waitForOutcome(
@@ -308,12 +462,16 @@ function scriptStateScript(key: string): string {
         elementRefs: new WeakMap(),
         snapshotRevision: -1,
       };
-      const observer = new MutationObserver(() => {
+      const invalidate = () => {
         state.revision += 1;
         state.refs = new Map();
         state.elementRefs = new WeakMap();
-      });
+      };
+      const observer = new MutationObserver(invalidate);
       observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+      for (const event of ["input", "change", "focusin", "focusout"]) {
+        document.addEventListener(event, invalidate, true);
+      }
       window[key] = state;
     }
     return { documentId: state.documentId, revision: state.revision };
@@ -335,12 +493,16 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined): stri
         elementRefs: new WeakMap(),
         snapshotRevision: -1,
       };
-      const observer = new MutationObserver(() => {
+      const invalidate = () => {
         state.revision += 1;
         state.refs = new Map();
         state.elementRefs = new WeakMap();
-      });
+      };
+      const observer = new MutationObserver(invalidate);
       observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+      for (const event of ["input", "change", "focusin", "focusout"]) {
+        document.addEventListener(event, invalidate, true);
+      }
       window[key] = state;
     }
     const maxNodes = Number.isFinite(options.maxNodes) ? Math.max(1, options.maxNodes) : 1000;
@@ -385,6 +547,7 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined): stri
     const stateFor = (el) => {
       const value = {};
       if (el.disabled || el.getAttribute("aria-disabled") === "true") value.disabled = true;
+      if (document.activeElement === el) value.focused = true;
       if ("checked" in el && typeof el.checked === "boolean") value.checked = el.checked;
       if ("selected" in el && typeof el.selected === "boolean") value.selected = el.selected;
       if (el.getAttribute("aria-expanded")) value.expanded = el.getAttribute("aria-expanded") === "true";
@@ -463,9 +626,64 @@ function inspectScript(key: string, ref: string): string {
       visible: style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0,
       enabled: !el.disabled && el.getAttribute("aria-disabled") !== "true",
       occluded: !!hit && hit !== el && !el.contains(hit),
+      editable:
+        el.isContentEditable ||
+        el.tagName === "TEXTAREA" ||
+        (el.tagName === "INPUT" && !["checkbox", "radio", "file", "button", "submit", "reset", "image"].includes(el.type)),
+      focused: document.activeElement === el,
       role: el.getAttribute("role") || el.tagName.toLowerCase(),
       name: el.getAttribute("aria-label") || el.innerText || el.value || "",
       value: "value" in el && typeof el.value === "string" ? el.value : undefined,
+    };
+  })()`;
+}
+
+function fillScript(key: string, ref: string, value: string): string {
+  return `(() => {
+    const state = window[${JSON.stringify(key)}];
+    const el = state && state.refs && state.refs.get(${JSON.stringify(ref)});
+    if (!el || !el.isConnected) return { ok: false };
+    const editable = el.isContentEditable || el.tagName === "TEXTAREA" ||
+      (el.tagName === "INPUT" && !["checkbox", "radio", "file", "button", "submit", "reset", "image"].includes(el.type));
+    const role = el.getAttribute("role") || el.tagName.toLowerCase();
+    const name = el.getAttribute("aria-label") || (el.labels && el.labels.length ? Array.from(el.labels).map((label) => label.innerText).join(" ") : "") || el.getAttribute("placeholder") || el.name || "";
+    if (!editable || el.disabled || el.getAttribute("aria-disabled") === "true") {
+      return { ok: true, editable: false, role, name, value: "value" in el ? String(el.value ?? "") : String(el.innerText ?? "") };
+    }
+    el.focus();
+    if (el.isContentEditable) {
+      el.textContent = ${JSON.stringify(value)};
+    } else {
+      const prototype = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+      if (!setter) return { ok: false, editable: true, role, name };
+      setter.call(el, ${JSON.stringify(value)});
+    }
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ${JSON.stringify(value)} }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return {
+      ok: true,
+      editable: true,
+      focused: document.activeElement === el,
+      role,
+      name,
+      value: "value" in el ? String(el.value ?? "") : String(el.innerText ?? ""),
+    };
+  })()`;
+}
+
+function activeElementScript(): string {
+  return `(() => {
+    const el = document.activeElement;
+    if (!el || el === document.body || el === document.documentElement) return { ok: false };
+    const editable = el.isContentEditable || el.tagName === "TEXTAREA" ||
+      (el.tagName === "INPUT" && !["checkbox", "radio", "file", "button", "submit", "reset", "image"].includes(el.type));
+    return {
+      ok: true,
+      editable,
+      role: el.getAttribute("role") || el.tagName.toLowerCase(),
+      name: el.getAttribute("aria-label") || (el.labels && el.labels.length ? Array.from(el.labels).map((label) => label.innerText).join(" ") : "") || el.getAttribute("placeholder") || el.name || "",
+      value: "value" in el ? String(el.value ?? "") : String(el.innerText ?? ""),
     };
   })()`;
 }
@@ -490,4 +708,84 @@ function isSnapshot(value: unknown): value is CapturedSnapshot {
 
 function isInspection(value: unknown): value is ElementInspection {
   return !!value && typeof value === "object" && typeof (value as Record<string, unknown>).ok === "boolean";
+}
+
+function isActiveElementInfo(value: unknown): value is ActiveElementInfo {
+  return !!value && typeof value === "object" && typeof (value as Record<string, unknown>).ok === "boolean";
+}
+
+function hasExpectation(expect: ActionExpectation | undefined): boolean {
+  return !!expect && (expect.url !== undefined || expect.title !== undefined || expect.text !== undefined);
+}
+
+const MODIFIER_ALT = 1;
+const MODIFIER_CTRL = 2;
+const MODIFIER_META = 4;
+const MODIFIER_SHIFT = 8;
+
+type PressKey = {
+  key: string;
+  code: string;
+  keyCode: number;
+  text?: string;
+  modifiers: number;
+};
+
+const NAMED_KEYS: Record<string, Omit<PressKey, "modifiers">> = {
+  enter: { key: "Enter", code: "Enter", keyCode: 13, text: "\r" },
+  tab: { key: "Tab", code: "Tab", keyCode: 9 },
+  escape: { key: "Escape", code: "Escape", keyCode: 27 },
+  esc: { key: "Escape", code: "Escape", keyCode: 27 },
+  backspace: { key: "Backspace", code: "Backspace", keyCode: 8 },
+  delete: { key: "Delete", code: "Delete", keyCode: 46 },
+  arrowleft: { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37 },
+  left: { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37 },
+  arrowright: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
+  right: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
+  arrowup: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
+  up: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
+  arrowdown: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
+  down: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
+  home: { key: "Home", code: "Home", keyCode: 36 },
+  end: { key: "End", code: "End", keyCode: 35 },
+  pageup: { key: "PageUp", code: "PageUp", keyCode: 33 },
+  pagedown: { key: "PageDown", code: "PageDown", keyCode: 34 },
+  space: { key: " ", code: "Space", keyCode: 32, text: " " },
+};
+
+function parsePressKey(raw: string): PressKey {
+  const parts = raw.split("+").map((part) => part.trim()).filter(Boolean);
+  const base = parts.pop();
+  if (!base) throw new AgentError("INVALID_REQUEST", "press key must be non-empty");
+  let modifiers = 0;
+  for (const modifier of parts) {
+    switch (modifier.toLocaleLowerCase()) {
+      case "alt":
+        modifiers |= MODIFIER_ALT;
+        break;
+      case "ctrl":
+      case "control":
+        modifiers |= MODIFIER_CTRL;
+        break;
+      case "cmd":
+      case "command":
+      case "meta":
+      case "super":
+        modifiers |= MODIFIER_META;
+        break;
+      case "shift":
+        modifiers |= MODIFIER_SHIFT;
+        break;
+      default:
+        throw new AgentError("INVALID_REQUEST", `unsupported press modifier: ${modifier}`);
+    }
+  }
+  const named = NAMED_KEYS[base.toLocaleLowerCase()];
+  if (named) return { ...named, modifiers };
+  if (base.length === 1) {
+    const upper = base.toLocaleUpperCase();
+    const code = /^[A-Z]$/.test(upper) ? `Key${upper}` : /^\d$/.test(base) ? `Digit${base}` : undefined;
+    if (code) return { key: base, code, keyCode: upper.charCodeAt(0), text: base, modifiers };
+  }
+  throw new AgentError("INVALID_REQUEST", `unsupported press key: ${raw}`);
 }
