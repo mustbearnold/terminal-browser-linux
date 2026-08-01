@@ -58,10 +58,25 @@ async function run() {
       assert.notEqual(frameButton.frameId, "main");
       assert.equal(frameButton.frameId, frameTextbox.frameId);
       assert.ok(frameButton.box && frameButton.box.x > 0 && frameButton.box.y > 0);
+      const cssRead = await client.call("page.read", {
+        pageId,
+        target: { locator: { kind: "css", value: 'button[aria-label="Frame action"]' } },
+      });
+      assert.equal(cssRead.ref, frameButton.ref, "CSS locator did not resolve the cross-origin frame button");
+      await assert.rejects(
+        client.call("page.read", { pageId, target: { locator: { kind: "css", value: "button" } } }),
+        (error) => error?.code === "AMBIGUOUS_TARGET",
+        "ambiguous CSS locator was not rejected",
+      );
+      await assert.rejects(
+        client.call("page.read", { pageId, target: { locator: { kind: "css", value: "button[" } } }),
+        (error) => error?.code === "INVALID_REQUEST",
+        "invalid CSS locator was not rejected",
+      );
 
       const hovered = await client.call("page.act", {
         pageId,
-        action: { type: "hover", target: { locator: { kind: "role", role: "button", name: "Frame action", exact: true } } },
+        action: { type: "hover", target: { locator: { kind: "css", value: 'button[aria-label="Frame action"]' } } },
       });
       const scrolled = await client.call("page.act", {
         pageId,

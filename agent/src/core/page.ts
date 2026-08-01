@@ -1,6 +1,8 @@
 import { RevisionLedger } from "./revisions";
 import { throwIfAborted } from "./cancellation";
+import { SnapshotLocatorResolver } from "./locator";
 import type { EventSubscription, EventSubscriptionOptions } from "./events";
+import type { ResolvedTarget, SnapshotView } from "./locator";
 import type {
   ActionExpectation,
   ActionResult,
@@ -12,6 +14,7 @@ import type {
   PageSnapshot,
   SnapshotOptions,
   SnapshotToken,
+  Target,
   WaitCondition,
   WaitResult,
 } from "../protocol/types";
@@ -20,6 +23,7 @@ import type { PageId } from "../protocol/types";
 
 export interface PageBackend {
   readonly pageId: PageId;
+  resolve?(target: Target, snapshot: SnapshotView, signal?: AbortSignal): Promise<ResolvedTarget>;
   identity(signal?: AbortSignal): Promise<PageIdentity>;
   frames(signal?: AbortSignal): Promise<PageFrameSnapshot>;
   snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<Omit<PageSnapshot, "snapshotId">>;
@@ -39,6 +43,7 @@ export interface PageBackend {
 
 export interface PageSession {
   readonly pageId: PageId;
+  resolve?(target: Target, snapshot: PageSnapshot, signal?: AbortSignal): Promise<ResolvedTarget>;
   frames(signal?: AbortSignal): Promise<PageFrameSnapshot>;
   snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<PageSnapshot>;
   assertFresh(token: SnapshotToken): void;
@@ -57,6 +62,7 @@ export interface PageSession {
 export class RevisionedPageSession implements PageSession {
   private snapshotSequence = 0;
   private actionTail: Promise<void> = Promise.resolve();
+  private readonly snapshotLocator = new SnapshotLocatorResolver();
 
   constructor(
     private readonly backend: PageBackend,
@@ -65,6 +71,12 @@ export class RevisionedPageSession implements PageSession {
 
   get pageId(): PageId {
     return this.backend.pageId;
+  }
+
+  async resolve(target: Target, snapshot: PageSnapshot, signal?: AbortSignal): Promise<ResolvedTarget> {
+    throwIfAborted(signal);
+    if (this.backend.resolve) return this.backend.resolve(target, snapshot, signal);
+    return this.snapshotLocator.resolve(target, snapshot);
   }
 
   async frames(signal?: AbortSignal): Promise<PageFrameSnapshot> {

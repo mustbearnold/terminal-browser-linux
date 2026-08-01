@@ -78,6 +78,7 @@ function runtime(): AgentRuntime {
       "pages.list",
       "snapshot.read",
       "page.frames",
+      "page.read",
       "page.act",
       "page.act.click",
       "page.act.fill",
@@ -137,6 +138,31 @@ test("returns a typed error for an unknown page", async () => {
   );
   assert.equal(response.ok, false);
   assert.equal(response.error?.code, "PAGE_NOT_FOUND");
+});
+
+test("routes page reads through a live page target resolver when available", async () => {
+  let resolved = false;
+  const resolvedPage: PageSession = {
+    ...page(),
+    resolve: async (target) => {
+      resolved = "locator" in target && target.locator.kind === "css";
+      return { ref: asSnapshotRef("r1"), node: pageSnapshot.nodes[0] };
+    },
+  };
+  const liveRuntime: AgentRuntime = {
+    ...runtime(),
+    getPage: (candidate) => (candidate === pageId ? resolvedPage : undefined),
+  };
+  const router = new AgentRequestRouter(liveRuntime);
+  const response = await router.handle(envelope({
+    op: "page.read",
+    pageId,
+    target: { locator: { kind: "css", value: "button" } },
+  }));
+
+  assert.equal(response.ok, true);
+  assert.equal(resolved, true);
+  assert.equal((response.result as { ref: string }).ref, "r1");
 });
 
 test("rejects actions that the runtime does not advertise", async () => {

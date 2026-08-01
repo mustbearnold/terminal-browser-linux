@@ -2,15 +2,23 @@ Dependencies:
 - cargo
 - pnpm
 
-To run the agent:
+Install dependencies and build the agent contract:
 ```
 pnpm install
-pnpm --filter pixel-react... build
-cd agent/app && pnpm dev
-```
-
-To verify the agent-control contract:
-```
-pnpm agent:e2e
 pnpm agent:check
 ```
+
+The agent transport is a versioned JSON-lines session exposed through the
+running browser. The CLI can bridge stdin/stdout to it:
+```
+terminal-browser agent --browser <browser-key>
+```
+
+For the browser-compatible control path:
+```
+pnpm agent:live-smoke
+```
+
+The default agent runtime keeps action deduplication and event history in
+memory. Set `TERMINAL_BROWSER_AGENT_JOURNAL=/absolute/path/to/journal` to opt
+into durable action outcomes and per-page event history.

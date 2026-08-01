@@ -124,7 +124,10 @@ export class AgentRequestRouter {
         const page = this.page(request.pageId);
         const snapshot = await page.snapshot(undefined, signal);
         if (request.token) page.assertFresh(request.token);
-        return this.locator.resolve(request.target, snapshot).node;
+        const resolved = page.resolve
+          ? await page.resolve(request.target, snapshot, signal)
+          : this.locator.resolve(request.target, snapshot);
+        return resolved.node;
       }
       case "page.act": {
         if (request.idempotencyKey !== undefined) requireIdempotencyKey(request.idempotencyKey);

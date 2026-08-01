@@ -61,7 +61,7 @@ function matches(locator: Locator, node: SnapshotNode): boolean {
     case "testid":
       return node.attributes?.["data-testid"] === locator.value;
     case "css":
-      return false;
+      throw new AgentError("INVALID_REQUEST", "CSS locators require a live page resolver");
   }
 }
 

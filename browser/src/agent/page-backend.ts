@@ -25,8 +25,11 @@ import type {
   PageId,
   PageIdentity,
   PageSnapshot,
+  ResolvedTarget,
+  SnapshotView,
   SnapshotOptions,
   SnapshotToken,
+  Target,
   WaitCondition,
   WaitResult,
 } from "terminal-browser-agent";
@@ -70,10 +73,12 @@ type ActiveElementInfo = {
   name?: string;
   value?: string;
 };
+type CssQueryResult = { ok: boolean; invalid?: boolean; refs?: string[] };
 
 const AGENT_STATE_KEY = "__terminalBrowserAgent";
 const AGENT_EVENT_CHANNEL = "terminal-browser.agent";
 const MAIN_FRAME_ID = asFrameId("main");
+const CSS_RESOLUTION_MAX_NODES = 5_000;
 
 export class ElectronPageBackend implements PageBackend {
   private readonly resolver = new SnapshotLocatorResolver();
@@ -114,6 +119,66 @@ export class ElectronPageBackend implements PageBackend {
       active: this.active(),
       loading: page.loading,
     };
+  }
+
+  async resolve(target: Target, snapshot: SnapshotView, signal?: AbortSignal): Promise<ResolvedTarget> {
+    throwIfAborted(signal);
+    if (!("locator" in target) || target.locator.kind !== "css") {
+      return this.resolver.resolve(target, snapshot);
+    }
+
+    let candidateSnapshot = snapshot;
+    let refs = await this.cssRefs(target.locator.value, signal);
+    let nodes = nodesForRefs(refs, candidateSnapshot);
+    if (nodes.length !== refs.length) {
+      candidateSnapshot = await this.snapshot({
+        interactiveOnly: false,
+        maxNodes: CSS_RESOLUTION_MAX_NODES,
+      }, signal);
+      refs = await this.cssRefs(target.locator.value, signal);
+      nodes = nodesForRefs(refs, candidateSnapshot);
+    }
+    if (refs.length === 0) {
+      throw new AgentError("TARGET_NOT_FOUND", "CSS locator matched no snapshot nodes", { retryable: true });
+    }
+    if (nodes.length !== refs.length) {
+      throw new AgentError("TARGET_NOT_FOUND", "CSS locator matched a node outside the current snapshot", {
+        retryable: true,
+      });
+    }
+    if (nodes.length > 1) {
+      throw new AgentError("AMBIGUOUS_TARGET", "CSS locator matched multiple snapshot nodes", {
+        retryable: true,
+        details: { refs: nodes.map((node) => node.ref) },
+      });
+    }
+    return { ref: nodes[0].ref, node: nodes[0] };
+  }
+
+  private async cssRefs(selector: string, signal?: AbortSignal): Promise<string[]> {
+    const frames = await this.controller.agentFrames();
+    const main = frames.find((frame) => frame.parentId === null);
+    if (!main) return [];
+    this.mainBrowserFrameId = main.id;
+    const refs = new Set<string>();
+    for (const frame of frames) {
+      throwIfAborted(signal);
+      const source = cssQueryScript(this.agentKey, selector);
+      try {
+        const raw = frame.parentId === null
+          ? await this.controller.runJs(source)
+          : await this.controller.runJsInFrame(frame.id, source);
+        throwIfAborted(signal);
+        if (!isCssQueryResult(raw)) continue;
+        if (raw.invalid) throw new AgentError("INVALID_REQUEST", "invalid CSS locator");
+        if (!raw.ok) continue;
+        for (const ref of raw.refs ?? []) refs.add(ref);
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        if (error instanceof AgentError && error.code === "INVALID_REQUEST") throw error;
+      }
+    }
+    return [...refs];
   }
 
   async frames(signal?: AbortSignal): Promise<PageFrameSnapshot> {
@@ -238,7 +303,7 @@ export class ElectronPageBackend implements PageBackend {
     const before = await this.identity(signal);
     const snapshot = await this.snapshot(undefined, signal);
     this.assertToken(token, snapshot.documentId, snapshot.revision);
-    const target = this.resolver.resolve(action.target, snapshot);
+    const target = await this.resolve(action.target, snapshot, signal);
     const frameId = String(target.node.frameId);
     const inspection = await this.inspect(target.ref, frameId, signal);
     if (!inspection.ok || !inspection.visible || !inspection.enabled || inspection.occluded) {
@@ -303,7 +368,7 @@ export class ElectronPageBackend implements PageBackend {
     const before = await this.identity(signal);
     const snapshot = await this.snapshot(undefined, signal);
     this.assertToken(token, snapshot.documentId, snapshot.revision);
-    const target = this.resolver.resolve(action.target, snapshot);
+    const target = await this.resolve(action.target, snapshot, signal);
     const frameId = String(target.node.frameId);
     const inspection = await this.inspect(target.ref, frameId, signal);
     if (!inspection.ok || !inspection.visible || !inspection.enabled || !inspection.editable) {
@@ -386,7 +451,7 @@ export class ElectronPageBackend implements PageBackend {
     const before = await this.identity(signal);
     const snapshot = await this.snapshot(undefined, signal);
     this.assertToken(token, snapshot.documentId, snapshot.revision);
-    const target = this.resolver.resolve(action.target, snapshot);
+    const target = await this.resolve(action.target, snapshot, signal);
     const frameId = String(target.node.frameId);
     const inspection = await this.inspect(target.ref, frameId, signal);
     if (
@@ -435,7 +500,7 @@ export class ElectronPageBackend implements PageBackend {
     const before = await this.identity(signal);
     const snapshot = await this.snapshot(undefined, signal);
     this.assertToken(token, snapshot.documentId, snapshot.revision);
-    const target = this.resolver.resolve(action.target, snapshot);
+    const target = await this.resolve(action.target, snapshot, signal);
     const frameId = String(target.node.frameId);
     const inspection = await this.inspect(target.ref, frameId, signal);
     if (
@@ -503,7 +568,7 @@ export class ElectronPageBackend implements PageBackend {
     const before = await this.identity(signal);
     const snapshot = await this.snapshot(undefined, signal);
     this.assertToken(token, snapshot.documentId, snapshot.revision);
-    const target = this.resolver.resolve(action.target, snapshot);
+    const target = await this.resolve(action.target, snapshot, signal);
     const frameId = String(target.node.frameId);
     const inspection = await this.inspect(target.ref, frameId, signal);
     if (!inspection.ok || !inspection.visible || !inspection.enabled || inspection.x === undefined || inspection.y === undefined) {
@@ -541,7 +606,7 @@ export class ElectronPageBackend implements PageBackend {
     const before = await this.identity(signal);
     const snapshot = await this.snapshot(undefined, signal);
     this.assertToken(token, snapshot.documentId, snapshot.revision);
-    const target = action.target ? this.resolver.resolve(action.target, snapshot) : null;
+    const target = action.target ? await this.resolve(action.target, snapshot, signal) : null;
     const frameId = target ? String(target.node.frameId) : "main";
     if (target) {
       const inspection = await this.inspect(target.ref, frameId, signal);
@@ -649,7 +714,7 @@ export class ElectronPageBackend implements PageBackend {
         const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
         if (condition.target) {
           try {
-            this.resolver.resolve(condition.target, snapshot);
+            await this.resolve(condition.target, snapshot, signal);
             satisfied = true;
           } catch {}
         } else {
@@ -988,6 +1053,11 @@ function originForUrl(url: string): string {
   }
 }
 
+function nodesForRefs(refs: readonly string[], snapshot: SnapshotView) {
+  const wanted = new Set(refs);
+  return snapshot.nodes.filter((node) => wanted.has(String(node.ref)));
+}
+
 function snapshotOptionsKey(options?: SnapshotOptions): string {
   return JSON.stringify({
     interactiveOnly: options?.interactiveOnly ?? true,
@@ -995,6 +1065,43 @@ function snapshotOptionsKey(options?: SnapshotOptions): string {
     includeText: options?.includeText !== false,
     maxNodes: options?.maxNodes ?? 1000,
   });
+}
+
+function cssQueryScript(key: string, selector: string): string {
+  return `(() => {
+    let roots;
+    try {
+      roots = [document];
+      const visited = new Set(roots);
+      for (let index = 0; index < roots.length; index += 1) {
+        const elements = roots[index].querySelectorAll("*");
+        for (const element of elements) {
+          if (element.shadowRoot && !visited.has(element.shadowRoot)) {
+            visited.add(element.shadowRoot);
+            roots.push(element.shadowRoot);
+          }
+        }
+      }
+      const matches = [];
+      for (const root of roots) matches.push(...root.querySelectorAll(${JSON.stringify(selector)}));
+      const state = window[${JSON.stringify(key)}];
+      if (!state) return { ok: true, refs: [] };
+      const refs = [];
+      for (const element of matches) {
+        let ref = state.elementRefs.get(element);
+        if (!ref) {
+          ref = state.frameId + ":r" + (++state.nextRef);
+          state.elementRefs.set(element, ref);
+          state.refs.set(ref, element);
+        }
+        refs.push(ref);
+      }
+      return { ok: true, refs: [...new Set(refs)] };
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "SyntaxError") return { ok: false, invalid: true };
+      return { ok: false };
+    }
+  })()`;
 }
 
 function scriptStateScript(key: string): string {
@@ -1396,6 +1503,16 @@ function isFrameSnapshot(value: unknown): value is FrameSnapshot {
     typeof snapshot.title === "string" &&
     Array.isArray(snapshot.nodes) &&
     typeof snapshot.truncated === "boolean"
+  );
+}
+
+function isCssQueryResult(value: unknown): value is CssQueryResult {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Record<string, unknown>;
+  return (
+    typeof result.ok === "boolean" &&
+    (result.invalid === undefined || typeof result.invalid === "boolean") &&
+    (result.refs === undefined || (Array.isArray(result.refs) && result.refs.every((ref) => typeof ref === "string")))
   );
 }
 

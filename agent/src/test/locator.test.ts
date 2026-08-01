@@ -66,3 +66,13 @@ test("fails instead of guessing when a locator is ambiguous", () => {
     (error: unknown) => error instanceof AgentError && error.code === "AMBIGUOUS_TARGET",
   );
 });
+
+test("requires a live resolver for CSS locators", () => {
+  assert.throws(
+    () => new SnapshotLocatorResolver().resolve(
+      { locator: { kind: "css", value: "button" } },
+      snapshot(),
+    ),
+    (error: unknown) => error instanceof AgentError && error.code === "INVALID_REQUEST",
+  );
+});
