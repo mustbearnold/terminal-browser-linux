@@ -82,7 +82,10 @@ export interface SnapshotNodeState {
   disabled?: boolean;
   expanded?: boolean;
   focused?: boolean;
+  invalid?: boolean;
   pressed?: boolean;
+  readOnly?: boolean;
+  required?: boolean;
   selected?: boolean;
   value?: string;
 }

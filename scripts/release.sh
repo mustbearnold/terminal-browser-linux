@@ -31,6 +31,7 @@ if [ "$TARGET" = darwin-arm64 ]; then
   codesign --force --sign - --timestamp=none "$STAGE/agent-browser/bin/agent-browser" 2>/dev/null || true
 fi
 
+(cd "$ROOT" && pnpm --filter terminal-browser-agent build)
 "$ROOT/scripts/bundle.sh" "$ROOT/cli/src/main.ts" "$STAGE/cli/dist/main.js"
 "$ROOT/scripts/bundle.sh" "$ROOT/browser/src/main.tsx" "$STAGE/browser/dist/main.js"
 

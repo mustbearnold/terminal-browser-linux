@@ -9,7 +9,7 @@
     "agent:eval": "pnpm --filter terminal-browser-agent evaluate",
     "agent:live-cross-origin-smoke": "pnpm agent:build && pnpm agent:browser-deps && pnpm --filter terminal-browser build && pnpm --filter terminal-browser agent:cross-origin-smoke",
     "agent:live-frame-smoke": "pnpm agent:build && pnpm agent:browser-deps && pnpm --filter terminal-browser build && pnpm --filter terminal-browser agent:frame-smoke",
-    "agent:live-smoke": "pnpm agent:build && pnpm agent:browser-deps && pnpm --filter terminal-browser build && pnpm --filter terminal-browser agent:shadow-smoke && pnpm --filter terminal-browser agent:frame-smoke && pnpm --filter terminal-browser agent:cross-origin-smoke",
+    "agent:live-smoke": "pnpm agent:build && pnpm agent:browser-deps && pnpm --filter terminal-browser build && pnpm --filter terminal-browser agent:shadow-smoke && pnpm --filter terminal-browser agent:frame-smoke && pnpm --filter terminal-browser agent:cross-origin-smoke && pnpm --filter terminal-browser agent:semantics-smoke",
     "agent:test": "pnpm --filter terminal-browser-agent test",
     "browser": "pnpm --filter terminal-browser start",
     "build:dist": "scripts/release.sh \"local-$(git rev-parse --short HEAD)\"",

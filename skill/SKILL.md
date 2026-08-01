@@ -27,6 +27,7 @@ Usage: terminal-browser [url] [direction]
   ls      List running browsers and their tabs
   setup   Configure installed terminals so terminal-browser works best
   action  Use the open browser through the agent-browser CLI
+  agent   Connect a persistent JSON agent session to the open browser
 
 terminal-browser <command> --help for one command's options
 ```
@@ -36,7 +37,7 @@ $ terminal-browser open --help
 Usage: terminal-browser open [url] [direction] [options]
 
 Opens the browser in the current pane. Pass a direction (right, left, down,
-up) to open it in a new pane instead.
+up) to open it in a new split pane instead.
 
 The url can be a normal url, a localhost port, or a path to an html file.
 
@@ -89,4 +90,19 @@ Examples:
   terminal-browser action -- click @e14
   terminal-browser action -- eval "document.title"
   terminal-browser action --browser 90107-1 --tab 2 -- fill @e3 "hello"
+```
+
+```
+$ terminal-browser agent --help
+Usage: terminal-browser agent [options]
+
+Connects stdin and stdout to the selected terminal-browser agent socket. Each
+line is one versioned JSON request or response.
+
+Options:
+  --browser <key>     A browser key from terminal-browser ls
+
+Examples:
+  terminal-browser agent --browser 90107-1
+  printf '%s\n' '{"kind":"request",...}' | terminal-browser agent
 ```

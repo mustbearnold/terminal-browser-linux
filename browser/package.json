@@ -6,6 +6,7 @@
   "scripts": {
     "agent:cross-origin-smoke": "node scripts/agent-cross-origin-smoke.cjs",
     "agent:frame-smoke": "node scripts/agent-frame-smoke.cjs",
+    "agent:semantics-smoke": "node scripts/agent-semantics-smoke.cjs",
     "agent:shadow-smoke": "node scripts/agent-shadow-smoke.cjs",
     "bench:bun-webview": "bun scripts/bun-webview-bench.ts",
     "bench:electron-offscreen": "electron scripts/electron-offscreen-bench.cjs",

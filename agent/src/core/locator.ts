@@ -22,7 +22,7 @@ export interface LocatorResolver {
 export class SnapshotLocatorResolver implements LocatorResolver {
   resolve(target: Target, snapshot: SnapshotView): ResolvedTarget {
     if ("ref" in target) return this.resolveRef(target.ref, snapshot);
-    const candidates = snapshot.nodes.filter((node) => matches(target.locator, node));
+    const candidates = snapshot.nodes.filter((node) => node.visible && matches(target.locator, node));
     if (candidates.length === 0) {
       throw new AgentError("TARGET_NOT_FOUND", "locator matched no snapshot nodes", {
         retryable: true,
@@ -66,5 +66,13 @@ function matches(locator: Locator, node: SnapshotNode): boolean {
 }
 
 function textMatches(value: string, expected: string, exact = false): boolean {
-  return exact ? value === expected : value.toLocaleLowerCase().includes(expected.toLocaleLowerCase());
+  const normalizedValue = normalizeText(value);
+  const normalizedExpected = normalizeText(expected);
+  return exact
+    ? normalizedValue === normalizedExpected
+    : normalizedValue.toLocaleLowerCase().includes(normalizedExpected.toLocaleLowerCase());
+}
+
+function normalizeText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
 }

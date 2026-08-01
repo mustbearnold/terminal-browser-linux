@@ -85,6 +85,8 @@ type ScrollResult = { ok: boolean; x?: number; y?: number; changed?: boolean };
 type ActiveElementInfo = {
   ok: boolean;
   frameId?: string;
+  enabled?: boolean;
+  visible?: boolean;
   editable?: boolean;
   role?: string;
   name?: string;
@@ -586,7 +588,7 @@ export class ElectronPageBackend implements PageBackend {
     const before = await this.identity(signal);
     this.assertToken(token, before.documentId, before.revision);
     const activeBefore = await this.activeElement(signal);
-    if (!activeBefore.ok || !activeBefore.editable) {
+    if (!activeBefore.ok || !activeBefore.visible || !activeBefore.enabled || !activeBefore.editable) {
       throw new AgentError("NOT_INTERACTABLE", "the active element is not editable", { retryable: true });
     }
 
@@ -631,7 +633,7 @@ export class ElectronPageBackend implements PageBackend {
       !inspection.ok ||
       !inspection.visible ||
       !inspection.enabled ||
-      (inspection.role !== "combobox" && inspection.role !== "select")
+      (inspection.role !== "combobox" && inspection.role !== "listbox" && inspection.role !== "select")
     ) {
       throw new AgentError("NOT_INTERACTABLE", "target is not a selectable control", { retryable: true });
     }
@@ -1325,70 +1327,237 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined, frame
   })()`;
 }
 
-function snapshotNodeHelpersScript(): string {
+function semanticHelpersScript(): string {
   return `
     const text = (value) => String(value ?? "").replace(/\\s+/g, " ").trim().slice(0, 240);
+    const rawTextFor = (el) => text(el.innerText || el.textContent || "");
+    const firstToken = (value) => String(value ?? "").trim().split(/\\s+/)[0]?.toLocaleLowerCase() || "";
+    const typeFor = (el) => String(el.type || el.getAttribute("type") || "text").toLocaleLowerCase();
     const styleFor = (el) => {
       const view = el.ownerDocument && el.ownerDocument.defaultView;
       return view ? view.getComputedStyle(el) : getComputedStyle(el);
     };
-    const boxFor = (el) => {
-      const rect = el.getBoundingClientRect();
-      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, rect };
+    const parentFor = (el) => {
+      if (el.parentElement) return el.parentElement;
+      const root = el.getRootNode && el.getRootNode();
+      return root && root.host ? root.host : null;
+    };
+    const rootFor = (el) => {
+      const root = el && typeof el.getRootNode === "function" ? el.getRootNode() : null;
+      return root && (typeof root.querySelectorAll === "function" || typeof root.getElementById === "function")
+        ? root
+        : el.ownerDocument;
+    };
+    const findById = (el, id) => {
+      const root = rootFor(el);
+      if (root && typeof root.getElementById === "function") {
+        const candidate = root.getElementById(id);
+        if (candidate) return candidate;
+      }
+      if (root && typeof root.querySelectorAll === "function") {
+        for (const candidate of root.querySelectorAll("[id]")) {
+          if (candidate.id === id) return candidate;
+        }
+      }
+      return null;
     };
     const roleFor = (el) => {
-      const explicit = el.getAttribute("role");
+      const explicit = firstToken(el.getAttribute("role"));
       if (explicit) return explicit;
-      const tag = el.tagName;
-      if (tag === "A" && el.hasAttribute("href")) return "link";
+      const tag = String(el.tagName || "").toLocaleUpperCase();
+      if ((tag === "A" || tag === "AREA") && el.hasAttribute("href")) return "link";
       if (tag === "BUTTON") return "button";
-      if (tag === "SELECT") return "combobox";
+      if (tag === "SELECT") return el.multiple ? "listbox" : "combobox";
       if (tag === "TEXTAREA") return "textbox";
-      if (tag === "INPUT") return el.type === "checkbox" ? "checkbox" : el.type === "radio" ? "radio" : "textbox";
+      if (tag === "INPUT") {
+        const type = typeFor(el);
+        if (type === "hidden") return "generic";
+        if (type === "checkbox") return "checkbox";
+        if (type === "radio") return "radio";
+        if (type === "search") return "searchbox";
+        if (type === "range") return "slider";
+        if (type === "number") return "spinbutton";
+        if (["button", "submit", "reset", "image", "file"].includes(type)) return "button";
+        return "textbox";
+      }
+      if (tag === "OPTION") return "option";
       if (tag === "IMG") return "img";
       if (tag === "NAV") return "navigation";
       if (tag === "MAIN") return "main";
+      if (tag === "ASIDE") return "complementary";
+      if (tag === "DIALOG") return "dialog";
+      if (tag === "FORM") return "form";
+      if (tag === "UL" || tag === "OL") return "list";
+      if (tag === "LI") return "listitem";
+      if (tag === "TABLE") return "table";
+      if (tag === "TR") return "row";
+      if (tag === "TD") return "cell";
+      if (tag === "TH") return el.scope === "row" ? "rowheader" : "columnheader";
+      if (tag === "PROGRESS") return "progressbar";
+      if (tag === "METER") return "meter";
+      if (tag === "SUMMARY") return "button";
       if (/^H[1-6]$/.test(tag)) return "heading";
+      if (el.isContentEditable || el.getAttribute("contenteditable") === "true") return "textbox";
       return "generic";
     };
+    const referencedNameFor = (el) => {
+      const ids = String(el.getAttribute("aria-labelledby") || "").trim().split(/\\s+/).filter(Boolean);
+      return text(ids.map((id) => {
+        const referenced = findById(el, id);
+        return referenced ? rawTextFor(referenced) : "";
+      }).filter(Boolean).join(" "));
+    };
+    const labelTextFor = (label) => rawTextFor(label);
     const nameFor = (el) => {
-      const labelled = el.getAttribute("aria-label");
-      if (labelled) return text(labelled);
-      if (el.labels && el.labels.length) return text(Array.from(el.labels).map((label) => label.innerText).join(" "));
-      if (el.alt) return text(el.alt);
+      const referenced = referencedNameFor(el);
+      if (referenced) return referenced;
+      if (el.hasAttribute("aria-label")) return text(el.getAttribute("aria-label"));
+      if (el.labels && el.labels.length) {
+        const labels = text(Array.from(el.labels).map(labelTextFor).join(" "));
+        if (labels) return labels;
+      }
+      const tag = String(el.tagName || "").toLocaleUpperCase();
+      const type = typeFor(el);
+      if ((tag === "IMG" || tag === "AREA") && el.hasAttribute("alt")) return text(el.alt);
+      if (tag === "INPUT" && ["button", "submit", "reset", "image", "file"].includes(type)) {
+        return text(el.value || el.getAttribute("value") || el.alt || "");
+      }
+      if (tag === "INPUT" && el.getAttribute("placeholder")) return text(el.getAttribute("placeholder"));
       if (el.title) return text(el.title);
-      return text(el.innerText || el.value || "");
+      return rawTextFor(el);
+    };
+    const ariaBooleanFor = (el, name) => {
+      const value = el.getAttribute(name);
+      if (value === null) return undefined;
+      if (value === "true") return true;
+      if (value === "false") return false;
+      return undefined;
+    };
+    const hiddenFor = (el) => {
+      let current = el;
+      while (current && current.nodeType === 1) {
+        const style = styleFor(current);
+        if (
+          current.hasAttribute("hidden") ||
+          current.getAttribute("aria-hidden") === "true" ||
+          current.hasAttribute("inert") ||
+          current.inert ||
+          style.display === "none" ||
+          style.visibility === "hidden" ||
+          style.visibility === "collapse" ||
+          style.opacity === "0" ||
+          style.contentVisibility === "hidden"
+        ) return true;
+        current = parentFor(current);
+      }
+      return false;
     };
     const visibleFor = (el) => {
+      if (hiddenFor(el)) return false;
       const style = styleFor(el);
       const rect = el.getBoundingClientRect();
-      return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0" && (rect.width > 0 || rect.height > 0);
+      return style.display === "contents" || (rect.width > 0 && rect.height > 0);
     };
-    const interactiveFor = (el, role) => el.matches("a[href],button,input,select,textarea,[tabindex],summary,[contenteditable=true]") || el.hasAttribute("role") || role === "heading";
-    const focusableFor = (el) => el.tabIndex >= 0 || el.matches("a[href],button,input,select,textarea");
+    const disabledFor = (el) => {
+      let current = el;
+      while (current && current.nodeType === 1) {
+        if (
+          current.disabled === true ||
+          current.getAttribute("aria-disabled") === "true" ||
+          current.hasAttribute("inert") ||
+          current.inert ||
+          current.getAttribute("aria-hidden") === "true"
+        ) return true;
+        if (current.tagName === "FIELDSET" && current.disabled === true) {
+          const firstLegend = Array.from(current.children || []).find((child) => child.tagName === "LEGEND");
+          if (!firstLegend || !firstLegend.contains(el)) return true;
+        }
+        current = parentFor(current);
+      }
+      return false;
+    };
+    const enabledFor = (el) => !disabledFor(el) && !hiddenFor(el);
+    const interactiveRoles = new Set([
+      "button", "checkbox", "combobox", "gridcell", "link", "listbox", "menuitem", "option",
+      "radio", "searchbox", "slider", "spinbutton", "switch", "tab", "textbox", "treeitem",
+      "region", "main", "navigation", "complementary", "dialog",
+    ]);
+    const interactiveFor = (el, role) => (
+      interactiveRoles.has(role) ||
+      el.matches("a[href],button,input:not([type=hidden]),select,textarea,summary,[tabindex],[contenteditable=true]") ||
+      el.isContentEditable
+    );
+    const focusableFor = (el) => enabledFor(el) && (
+      el.tabIndex >= 0 || el.matches("a[href],button,input:not([type=hidden]),select,textarea,summary")
+    );
     const activeFor = (el) => {
       const root = el.getRootNode();
-      let active = root && root.activeElement ? root.activeElement : document.activeElement;
+      let active = root && root.activeElement ? root.activeElement : el.ownerDocument.activeElement;
       while (active && active.shadowRoot && active.shadowRoot.activeElement) active = active.shadowRoot.activeElement;
       return active;
     };
+    const checkedFor = (el) => {
+      const aria = ariaBooleanFor(el, "aria-checked");
+      if (aria !== undefined) return aria;
+      if (el.tagName === "INPUT" && ["checkbox", "radio"].includes(typeFor(el)) && typeof el.checked === "boolean") return el.checked;
+      return undefined;
+    };
+    const selectedFor = (el) => {
+      const aria = ariaBooleanFor(el, "aria-selected");
+      if (aria !== undefined) return aria;
+      if (el.tagName === "OPTION" && typeof el.selected === "boolean") return el.selected;
+      return undefined;
+    };
+    const pressedFor = (el) => ariaBooleanFor(el, "aria-pressed");
+    const expandedFor = (el) => ariaBooleanFor(el, "aria-expanded");
+    const editableFor = (el) => {
+      if (!enabledFor(el) || el.readOnly === true || ariaBooleanFor(el, "aria-readonly") === true) return false;
+      if (el.isContentEditable || el.getAttribute("contenteditable") === "true") return true;
+      if (el.tagName === "TEXTAREA") return true;
+      return el.tagName === "INPUT" && !["checkbox", "radio", "file", "hidden", "button", "submit", "reset", "image"].includes(typeFor(el));
+    };
     const stateFor = (el) => {
       const value = {};
-      if (el.disabled || el.getAttribute("aria-disabled") === "true") value.disabled = true;
+      if (disabledFor(el)) value.disabled = true;
       if (activeFor(el) === el) value.focused = true;
-      if ("checked" in el && typeof el.checked === "boolean") value.checked = el.checked;
-      if ("selected" in el && typeof el.selected === "boolean") value.selected = el.selected;
-      if (el.getAttribute("aria-expanded")) value.expanded = el.getAttribute("aria-expanded") === "true";
-      if ("value" in el && typeof el.value === "string" && el.value) value.value = el.value.slice(0, 240);
+      const checked = checkedFor(el);
+      if (typeof checked === "boolean") value.checked = checked;
+      const selected = selectedFor(el);
+      if (typeof selected === "boolean") value.selected = selected;
+      const pressed = pressedFor(el);
+      if (typeof pressed === "boolean") value.pressed = pressed;
+      const expanded = expandedFor(el);
+      if (typeof expanded === "boolean") value.expanded = expanded;
+      const required = el.required === true || ariaBooleanFor(el, "aria-required") === true;
+      if (required) value.required = true;
+      const readOnly = el.readOnly === true || ariaBooleanFor(el, "aria-readonly") === true;
+      if (readOnly) value.readOnly = true;
+      const invalid = ariaBooleanFor(el, "aria-invalid") === true || (el.validity && el.validity.valid === false);
+      if (invalid) value.invalid = true;
+      if ("value" in el && typeof el.value === "string") value.value = el.value.slice(0, 240);
       return Object.keys(value).length ? value : undefined;
     };
     const attrsFor = (el) => {
       const attrs = {};
-      for (const name of ["data-testid", "aria-label", "placeholder", "title", "name", "label"]) {
+      for (const name of [
+        "data-testid", "id", "role", "type", "aria-label", "aria-labelledby", "aria-describedby", "aria-disabled",
+        "aria-checked", "aria-expanded", "aria-invalid", "aria-pressed", "aria-readonly", "aria-required", "aria-selected",
+        "placeholder", "title", "name", "label", "hidden", "inert",
+      ]) {
         const value = el.getAttribute(name);
-        if (value) attrs[name] = value;
+        if (value !== null) attrs[name] = value;
       }
       return Object.keys(attrs).length ? attrs : undefined;
+    };
+  `;
+}
+
+function snapshotNodeHelpersScript(): string {
+  return `
+    ${semanticHelpersScript()}
+    const boxFor = (el) => {
+      const rect = el.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, rect };
     };
     const captureNode = (el, parent, parentVisible) => {
       const role = roleFor(el);
@@ -1420,11 +1589,11 @@ function snapshotNodeHelpersScript(): string {
           parent,
           role,
           name: nameFor(el),
-          ...(includeText ? { text: text(el.innerText || "") } : {}),
+          ...(includeText ? { text: text(el.innerText || el.textContent || "") } : {}),
           state: stateFor(el),
           ...(box ? { box: { x: box.x, y: box.y, width: box.width, height: box.height } } : {}),
           visible,
-          enabled: !el.disabled && el.getAttribute("aria-disabled") !== "true",
+          enabled: enabledFor(el),
           focusable: focusableFor(el),
           attributes: attrsFor(el),
         },
@@ -1601,15 +1770,11 @@ function inspectScript(key: string, ref: string, frameId: string): string {
     const el = state && state.refs && state.refs.get(${JSON.stringify(ref)});
     if (!el || !el.isConnected) return { ok: false };
     el.scrollIntoView({ block: "center", inline: "center" });
+    ${semanticHelpersScript()}
     const rect = el.getBoundingClientRect();
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
     const root = el.getRootNode();
-    const activeFor = () => {
-      let active = root && root.activeElement ? root.activeElement : el.ownerDocument.activeElement;
-      while (active && active.shadowRoot && active.shadowRoot.activeElement) active = active.shadowRoot.activeElement;
-      return active;
-    };
     const localX = rect.left + rect.width / 2;
     const localY = rect.top + rect.height / 2;
     const hit = typeof root.elementFromPoint === "function"
@@ -1627,25 +1792,20 @@ function inspectScript(key: string, ref: string, frameId: string): string {
       }
       return false;
     };
-    const view = el.ownerDocument.defaultView || window;
-    const style = view.getComputedStyle(el);
     return {
       ok: true,
       x,
       y,
-      visible: style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0" && rect.width > 0 && rect.height > 0,
-      enabled: !el.disabled && el.getAttribute("aria-disabled") !== "true",
+      visible: visibleFor(el),
+      enabled: enabledFor(el),
       occluded: !!hit && !composedHit(el, hit),
-      editable:
-        el.isContentEditable ||
-        el.tagName === "TEXTAREA" ||
-        (el.tagName === "INPUT" && !["checkbox", "radio", "file", "button", "submit", "reset", "image"].includes(el.type)),
+      editable: editableFor(el),
       focused: activeFor(el) === el,
-      role: el.getAttribute("role") || el.tagName.toLowerCase(),
-      name: el.getAttribute("aria-label") || el.innerText || el.value || "",
+      role: roleFor(el),
+      name: nameFor(el),
       value: "value" in el && typeof el.value === "string" ? el.value : undefined,
-      checked: "checked" in el && typeof el.checked === "boolean" ? el.checked : undefined,
-      selected: "selected" in el && typeof el.selected === "boolean" ? el.selected : undefined,
+      checked: checkedFor(el),
+      selected: selectedFor(el),
     };
   })()`;
 }
@@ -1655,17 +1815,11 @@ function fillScript(key: string, ref: string, value: string): string {
     const state = window[${JSON.stringify(key)}];
     const el = state && state.refs && state.refs.get(${JSON.stringify(ref)});
     if (!el || !el.isConnected) return { ok: false };
-    const root = el.getRootNode();
-    const activeFor = () => {
-      let active = root && root.activeElement ? root.activeElement : el.ownerDocument.activeElement;
-      while (active && active.shadowRoot && active.shadowRoot.activeElement) active = active.shadowRoot.activeElement;
-      return active;
-    };
-    const editable = el.isContentEditable || el.tagName === "TEXTAREA" ||
-      (el.tagName === "INPUT" && !["checkbox", "radio", "file", "button", "submit", "reset", "image"].includes(el.type));
-    const role = el.getAttribute("role") || el.tagName.toLowerCase();
-    const name = el.getAttribute("aria-label") || (el.labels && el.labels.length ? Array.from(el.labels).map((label) => label.innerText).join(" ") : "") || el.getAttribute("placeholder") || el.name || "";
-    if (!editable || el.disabled || el.getAttribute("aria-disabled") === "true") {
+    ${semanticHelpersScript()}
+    const editable = editableFor(el);
+    const role = roleFor(el);
+    const name = nameFor(el);
+    if (!editable || !enabledFor(el) || !visibleFor(el)) {
       return { ok: true, editable: false, role, name, value: "value" in el ? String(el.value ?? "") : String(el.innerText ?? "") };
     }
     el.focus();
@@ -1697,7 +1851,9 @@ function selectScript(key: string, ref: string, values: readonly string[]): stri
   return `(() => {
     const state = window[${JSON.stringify(key)}];
     const el = state && state.refs && state.refs.get(${JSON.stringify(ref)});
-    if (!el || !el.isConnected || el.tagName !== "SELECT" || el.disabled || el.getAttribute("aria-disabled") === "true") {
+    if (!el || !el.isConnected) return { ok: false };
+    ${semanticHelpersScript()}
+    if (el.tagName !== "SELECT" || !enabledFor(el) || !visibleFor(el)) {
       return { ok: false };
     }
     const wanted = new Set(${JSON.stringify(values)});
@@ -1718,13 +1874,20 @@ function checkScript(key: string, ref: string, checked: boolean): string {
   return `(() => {
     const state = window[${JSON.stringify(key)}];
     const el = state && state.refs && state.refs.get(${JSON.stringify(ref)});
-    const type = el && String(el.type || "").toLowerCase();
-    if (!el || !el.isConnected || (type !== "checkbox" && type !== "radio") || el.disabled || el.getAttribute("aria-disabled") === "true") {
+    if (!el || !el.isConnected) return { ok: false };
+    ${semanticHelpersScript()}
+    const type = typeFor(el);
+    const role = roleFor(el);
+    const ariaCheckable = ["checkbox", "radio", "switch"].includes(role) && el.hasAttribute("aria-checked");
+    const nativeCheckable = el.tagName === "INPUT" && (type === "checkbox" || type === "radio");
+    if ((!nativeCheckable && !ariaCheckable) || !enabledFor(el) || !visibleFor(el)) {
       return { ok: false };
     }
-    if (type === "radio" && !${checked} && el.checked) return { ok: false, checked: true };
-    if (el.checked !== ${checked}) el.click();
-    return { ok: true, checked: !!el.checked };
+    const before = checkedFor(el);
+    if (type === "radio" && !${checked} && before) return { ok: false, checked: true };
+    if (before !== ${checked}) el.click();
+    const after = checkedFor(el);
+    return { ok: typeof after === "boolean", checked: after };
   })()`;
 }
 
@@ -1771,13 +1934,14 @@ function activeElementScript(): string {
     let el = document.activeElement;
     while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
     if (!el || el === document.body || el === document.documentElement) return { ok: false };
-    const editable = el.isContentEditable || el.tagName === "TEXTAREA" ||
-      (el.tagName === "INPUT" && !["checkbox", "radio", "file", "button", "submit", "reset", "image"].includes(el.type));
+    ${semanticHelpersScript()}
     return {
       ok: true,
-      editable,
-      role: el.getAttribute("role") || el.tagName.toLowerCase(),
-      name: el.getAttribute("aria-label") || (el.labels && el.labels.length ? Array.from(el.labels).map((label) => label.innerText).join(" ") : "") || el.getAttribute("placeholder") || el.name || "",
+      enabled: enabledFor(el),
+      visible: visibleFor(el),
+      editable: editableFor(el),
+      role: roleFor(el),
+      name: nameFor(el),
       value: "value" in el ? String(el.value ?? "") : String(el.innerText ?? ""),
     };
   })()`;

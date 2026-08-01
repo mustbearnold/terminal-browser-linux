@@ -56,6 +56,24 @@ test("resolves an unambiguous semantic locator", () => {
   assert.equal(result.ref, "r1");
 });
 
+test("normalizes whitespace and ignores hidden locator candidates", () => {
+  const base = snapshot();
+  const result = new SnapshotLocatorResolver().resolve(
+    { locator: { kind: "role", role: "button", name: "  Continue\n  ", exact: true } },
+    {
+      nodes: [
+        ...base.nodes,
+        {
+          ...base.nodes[0],
+          ref: asSnapshotRef("hidden"),
+          visible: false,
+        },
+      ],
+    },
+  );
+  assert.equal(result.ref, "r1");
+});
+
 test("fails instead of guessing when a locator is ambiguous", () => {
   assert.throws(
     () =>
