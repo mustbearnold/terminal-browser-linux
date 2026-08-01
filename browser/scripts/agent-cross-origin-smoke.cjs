@@ -63,6 +63,7 @@ async function run() {
         queries: [
           { locator: { kind: "role", role: "button" }, options: { frameId: frameButton.frameId, limit: 8 } },
           { locator: { kind: "role", role: "textbox", name: "Frame name", exact: true }, options: { frameId: frameButton.frameId, limit: 1 } },
+          { locator: { kind: "role", role: "checkbox", name: "Frame enabled", exact: true, state: { checked: false } }, options: { frameId: frameButton.frameId, limit: 1 } },
         ],
       });
       assert.equal(queryBatch.revision, initial.revision);
@@ -71,6 +72,8 @@ async function run() {
       assert.equal(queryBatch.queries[0].nodes.some((node) => node.name === "Parent action"), false);
       assert.equal(queryBatch.queries[1].nodes[0]?.ref, frameTextbox.ref);
       assert.equal(queryBatch.queries[0].nodes[0]?.frameId, queryBatch.queries[1].nodes[0]?.frameId);
+      assert.equal(queryBatch.queries[2].nodes[0]?.name, "Frame enabled");
+      assert.equal(queryBatch.queries[2].nodes[0]?.state?.checked, false);
       const cssRead = await client.call("page.read", {
         pageId,
         target: { locator: { kind: "css", value: 'button[aria-label="Frame action"]' } },
@@ -310,6 +313,7 @@ async function run() {
         targetedPressVerified: pressed.verified && pressed.proof?.target !== undefined,
         frameScopedQueryVerified: queryBatch.queries[0].matchCount === 3
           && queryBatch.queries[0].nodes.every((node) => node.frameId === frameButton.frameId),
+        stateLocatorVerified: queryBatch.queries[2].nodes[0]?.state?.checked === false,
         idempotentReplayVerified: scrolledRetry.replayed === true,
         frameLifecycleVerified: events.some((event) => event.event === "frame.lifecycle"),
       }));

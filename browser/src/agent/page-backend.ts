@@ -2580,28 +2580,54 @@ function liveLocatorScript(
         ? normalizedValue === normalizedExpected
         : normalizedValue.toLocaleLowerCase().includes(normalizedExpected.toLocaleLowerCase());
     };
+    const matchesState = (el, state) => {
+      if (!state) return true;
+      const elementState = stateFor(el) || {};
+      if (state.visible !== undefined && visibleFor(el) !== state.visible) return false;
+      if (state.enabled !== undefined && enabledFor(el) !== state.enabled) return false;
+      if (state.disabled !== undefined && disabledFor(el) !== state.disabled) return false;
+      if (state.focused !== undefined && (activeFor(el) === el) !== state.focused) return false;
+      if (state.value !== undefined && elementState.value !== state.value) return false;
+      if (state.checked !== undefined && (elementState.checked ?? false) !== state.checked) return false;
+      if (state.expanded !== undefined && (elementState.expanded ?? false) !== state.expanded) return false;
+      if (state.invalid !== undefined && (elementState.invalid ?? false) !== state.invalid) return false;
+      if (state.pressed !== undefined && (elementState.pressed ?? false) !== state.pressed) return false;
+      if (state.readOnly !== undefined && (elementState.readOnly ?? false) !== state.readOnly) return false;
+      if (state.required !== undefined && (elementState.required ?? false) !== state.required) return false;
+      if (state.selected !== undefined && (elementState.selected ?? false) !== state.selected) return false;
+      if (state.text !== undefined && !textMatches(nameFor(el) + " " + rawTextFor(el), state.text, false)) return false;
+      return true;
+    };
     let invalid = false;
     const matchesBase = (el, candidateLocator) => {
+      let matched = false;
       switch (candidateLocator.kind) {
         case "role":
-          return roleFor(el) === candidateLocator.role
+          matched = roleFor(el) === candidateLocator.role
             && (!candidateLocator.name || textMatches(nameFor(el), candidateLocator.name, candidateLocator.exact));
+          break;
         case "text":
-          return textMatches(rawTextFor(el) || nameFor(el), candidateLocator.text, candidateLocator.exact);
+          matched = textMatches(rawTextFor(el) || nameFor(el), candidateLocator.text, candidateLocator.exact);
+          break;
         case "label":
-          return textMatches(el.getAttribute("label") || nameFor(el), candidateLocator.text, candidateLocator.exact);
+          matched = textMatches(el.getAttribute("label") || nameFor(el), candidateLocator.text, candidateLocator.exact);
+          break;
         case "placeholder":
-          return textMatches(el.getAttribute("placeholder") || "", candidateLocator.text, candidateLocator.exact);
+          matched = textMatches(el.getAttribute("placeholder") || "", candidateLocator.text, candidateLocator.exact);
+          break;
         case "testid":
-          return el.getAttribute("data-testid") === candidateLocator.value;
+          matched = el.getAttribute("data-testid") === candidateLocator.value;
+          break;
         case "css":
           try {
-            return el.matches(candidateLocator.value);
+            matched = el.matches(candidateLocator.value);
           } catch (error) {
             if (error instanceof DOMException && error.name === "SyntaxError") invalid = true;
-            return false;
+            matched = false;
           }
+          break;
       }
+      return matched && matchesState(el, candidateLocator.state);
     };
     const matchesScoped = (el, candidateLocator) => {
       if (!matchesBase(el, candidateLocator)) return false;

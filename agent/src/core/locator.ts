@@ -1,4 +1,5 @@
 import { AgentError } from "../protocol/errors";
+import { matchesWaitElementState } from "./element-state";
 import type {
   JsonValue,
   FrameId,
@@ -192,20 +193,27 @@ function matches(locator: Locator, node: SnapshotNode, nodesByRef: ReadonlyMap<s
 }
 
 function matchesBase(locator: Locator, node: SnapshotNode): boolean {
+  let matched: boolean;
   switch (locator.kind) {
     case "role":
-      return node.role === locator.role && (!locator.name || textMatches(node.name, locator.name, locator.exact));
+      matched = node.role === locator.role && (!locator.name || textMatches(node.name, locator.name, locator.exact));
+      break;
     case "text":
-      return textMatches(node.text ?? node.name, locator.text, locator.exact);
+      matched = textMatches(node.text ?? node.name, locator.text, locator.exact);
+      break;
     case "label":
-      return textMatches(node.attributes?.label ?? node.name, locator.text, locator.exact);
+      matched = textMatches(node.attributes?.label ?? node.name, locator.text, locator.exact);
+      break;
     case "placeholder":
-      return textMatches(node.attributes?.placeholder ?? "", locator.text, locator.exact);
+      matched = textMatches(node.attributes?.placeholder ?? "", locator.text, locator.exact);
+      break;
     case "testid":
-      return node.attributes?.["data-testid"] === locator.value;
+      matched = node.attributes?.["data-testid"] === locator.value;
+      break;
     case "css":
       throw new AgentError("INVALID_REQUEST", "CSS locators require a live page resolver");
   }
+  return matched && matchesWaitElementState(node, locator.state);
 }
 
 function textMatches(value: string, expected: string, exact = false): boolean {

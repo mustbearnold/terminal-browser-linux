@@ -175,11 +175,22 @@ test("validates nested agent request shapes at the wire boundary", () => {
       role: "button",
       name: "Continue",
       exact: true,
+      state: { enabled: true, checked: false },
       within: { kind: "role", role: "region", name: "Primary card", exact: true },
     },
     options: { includeHidden: true, limit: 16, frameId: "frame-1" },
   });
   assert.equal(query.kind, "request");
+
+  assert.throws(
+    () => parseAgentMessage({
+      ...listRequest(),
+      op: "page.query",
+      pageId: "page-1",
+      locator: { kind: "role", role: "button", state: { enabled: "yes" } },
+    }),
+    (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
+  );
 
   const queryBatch = parseAgentMessage({
     ...listRequest(),

@@ -393,11 +393,29 @@ function locatorDefinition(): AgentToolSchema {
   const within = { $ref: "#/$defs/locator", description: "Ancestor scope that must contain the match." };
   return {
     oneOf: [
-      object({ kind: string("Locator kind.", ["role"]), role: string("ARIA role."), name: string("Accessible name."), exact: boolean("Require an exact name."), within }, ["kind", "role"]),
-      object({ kind: string("Locator kind.", ["text", "label", "placeholder"]), text: string("Text to match."), exact: boolean("Require an exact match."), within }, ["kind", "text"]),
-      object({ kind: string("Locator kind.", ["testid", "css"]), value: string("Locator value."), within }, ["kind", "value"]),
+      object({ kind: string("Locator kind.", ["role"]), role: string("ARIA role."), name: string("Accessible name."), exact: boolean("Require an exact name."), state: locatorStateSchema(), within }, ["kind", "role"]),
+      object({ kind: string("Locator kind.", ["text", "label", "placeholder"]), text: string("Text to match."), exact: boolean("Require an exact match."), state: locatorStateSchema(), within }, ["kind", "text"]),
+      object({ kind: string("Locator kind.", ["testid", "css"]), value: string("Locator value."), state: locatorStateSchema(), within }, ["kind", "value"]),
     ],
   };
+}
+
+function locatorStateSchema(): AgentToolSchema {
+  return object({
+    visible: boolean("Match visibility."),
+    enabled: boolean("Match enabled state."),
+    disabled: boolean("Match disabled state."),
+    focused: boolean("Match focus state."),
+    value: string("Match control value."),
+    checked: boolean("Match checked state."),
+    expanded: boolean("Match expanded state."),
+    invalid: boolean("Match validity state."),
+    pressed: boolean("Match pressed state."),
+    readOnly: boolean("Match read-only state."),
+    required: boolean("Match required state."),
+    selected: boolean("Match selected state."),
+    text: string("Match text content."),
+  });
 }
 
 function targetSchema(): AgentToolSchema {

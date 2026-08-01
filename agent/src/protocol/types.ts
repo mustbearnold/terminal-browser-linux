@@ -269,13 +269,29 @@ export interface PageDialogResult {
   promptText?: string;
 }
 
+export interface LocatorState {
+  visible?: boolean;
+  enabled?: boolean;
+  disabled?: boolean;
+  focused?: boolean;
+  value?: string;
+  checked?: boolean;
+  expanded?: boolean;
+  invalid?: boolean;
+  pressed?: boolean;
+  readOnly?: boolean;
+  required?: boolean;
+  selected?: boolean;
+  text?: string;
+}
+
 export type Locator =
-  | { kind: "role"; role: string; name?: string; exact?: boolean; within?: Locator }
-  | { kind: "text"; text: string; exact?: boolean; within?: Locator }
-  | { kind: "label"; text: string; exact?: boolean; within?: Locator }
-  | { kind: "placeholder"; text: string; exact?: boolean; within?: Locator }
-  | { kind: "testid"; value: string; within?: Locator }
-  | { kind: "css"; value: string; within?: Locator };
+  | { kind: "role"; role: string; name?: string; exact?: boolean; state?: LocatorState; within?: Locator }
+  | { kind: "text"; text: string; exact?: boolean; state?: LocatorState; within?: Locator }
+  | { kind: "label"; text: string; exact?: boolean; state?: LocatorState; within?: Locator }
+  | { kind: "placeholder"; text: string; exact?: boolean; state?: LocatorState; within?: Locator }
+  | { kind: "testid"; value: string; state?: LocatorState; within?: Locator }
+  | { kind: "css"; value: string; state?: LocatorState; within?: Locator };
 
 export type Target =
   | { ref: SnapshotRef }
@@ -384,21 +400,8 @@ export type WaitCondition =
   | { type: "stable"; quietMs: number }
   | { type: "element"; target: Target; state?: WaitElementState };
 
-export interface WaitElementState {
+export interface WaitElementState extends LocatorState {
   attached?: boolean;
-  visible?: boolean;
-  enabled?: boolean;
-  disabled?: boolean;
-  focused?: boolean;
-  value?: string;
-  checked?: boolean;
-  expanded?: boolean;
-  invalid?: boolean;
-  pressed?: boolean;
-  readOnly?: boolean;
-  required?: boolean;
-  selected?: boolean;
-  text?: string;
 }
 
 export interface WaitResult {

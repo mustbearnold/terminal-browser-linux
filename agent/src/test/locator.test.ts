@@ -231,6 +231,31 @@ test("bounds snapshot query results while preserving hidden-match counts", () =>
   assert.equal(inclusive.hiddenCandidatesTruncated, false);
 });
 
+test("filters snapshot locator matches by semantic state", () => {
+  const base = snapshot().nodes[0];
+  const unchecked = {
+    ...base,
+    ref: asSnapshotRef("unchecked"),
+    state: { checked: false, value: "Ada", text: "Continue" },
+  };
+  const checked = {
+    ...base,
+    ref: asSnapshotRef("checked"),
+    state: { checked: true, value: "Grace", text: "Continue" },
+  };
+  const result = querySnapshot(
+    {
+      kind: "role",
+      role: "button",
+      name: "Continue",
+      exact: true,
+      state: { checked: true, value: "Grace", text: "Continue" },
+    },
+    { nodes: [unchecked, checked] },
+  );
+  assert.deepEqual(result.candidates.map((node) => node.ref), ["checked"]);
+});
+
 test("matches the complete semantic wait state", () => {
   const node = {
     ...snapshot().nodes[0],

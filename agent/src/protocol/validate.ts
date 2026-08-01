@@ -176,7 +176,25 @@ function validateLocator(value: unknown, field: string, depth = 0): void {
     default:
       throw new AgentError("INVALID_MESSAGE", `${field}.kind is unsupported`);
   }
+  if (locator.state !== undefined) validateLocatorState(locator.state, `${field}.state`);
   if (locator.within !== undefined) validateLocator(locator.within, `${field}.within`, depth + 1);
+}
+
+function validateLocatorState(value: unknown, field: string): void {
+  const state = requireObject(value, field);
+  optionalBoolean(state, "visible", `${field}.visible`);
+  optionalBoolean(state, "enabled", `${field}.enabled`);
+  optionalBoolean(state, "disabled", `${field}.disabled`);
+  optionalBoolean(state, "focused", `${field}.focused`);
+  optionalString(state, "value", `${field}.value`);
+  optionalBoolean(state, "checked", `${field}.checked`);
+  optionalBoolean(state, "expanded", `${field}.expanded`);
+  optionalBoolean(state, "invalid", `${field}.invalid`);
+  optionalBoolean(state, "pressed", `${field}.pressed`);
+  optionalBoolean(state, "readOnly", `${field}.readOnly`);
+  optionalBoolean(state, "required", `${field}.required`);
+  optionalBoolean(state, "selected", `${field}.selected`);
+  optionalString(state, "text", `${field}.text`);
 }
 
 function validateTarget(value: unknown, field: string): void {

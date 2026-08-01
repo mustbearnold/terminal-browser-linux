@@ -56,7 +56,7 @@ test("validates and dispatches structured calls through the typed client", async
     pageId: String(FIXTURE_PAGE_ID),
     queries: [
       {
-        locator: { kind: "role", role: "textbox", name: "Name", exact: true },
+        locator: { kind: "role", role: "textbox", name: "Name", exact: true, state: { value: "" } },
         options: { frameId: String(query.nodes[0].frameId), limit: 1 },
       },
       {

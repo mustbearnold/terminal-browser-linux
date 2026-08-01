@@ -154,6 +154,23 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(scopedQuery.matchCount, 1);
   assert.equal(scopedQuery.nodes[0].ref, query.nodes[0].ref);
 
+  const stateQuery = result<PageQueryResult>(await router.handle(
+    request("page.query", {
+      pageId: FIXTURE_PAGE_ID,
+      locator: {
+        kind: "role",
+        role: "textbox",
+        name: "Name",
+        exact: true,
+        state: { value: "" },
+      },
+      options: { frameId: query.nodes[0].frameId, limit: 1 },
+    }),
+    context,
+  ));
+  assert.equal(stateQuery.matchCount, 1);
+  assert.equal(stateQuery.nodes[0].ref, query.nodes[0].ref);
+
   const queryBatch = result<PageQueryBatchResult>(await router.handle(
     request("page.query.batch", {
       pageId: FIXTURE_PAGE_ID,
