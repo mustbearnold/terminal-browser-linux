@@ -223,11 +223,18 @@ function validateWaitCondition(value: unknown): void {
 
 function validateWaitElementState(value: unknown): void {
   const state = requireObject(value, "condition.state");
+  optionalBoolean(state, "attached", "condition.state.attached");
   optionalBoolean(state, "visible", "condition.state.visible");
   optionalBoolean(state, "enabled", "condition.state.enabled");
+  optionalBoolean(state, "disabled", "condition.state.disabled");
   optionalBoolean(state, "focused", "condition.state.focused");
   optionalString(state, "value", "condition.state.value");
   optionalBoolean(state, "checked", "condition.state.checked");
+  optionalBoolean(state, "expanded", "condition.state.expanded");
+  optionalBoolean(state, "invalid", "condition.state.invalid");
+  optionalBoolean(state, "pressed", "condition.state.pressed");
+  optionalBoolean(state, "readOnly", "condition.state.readOnly");
+  optionalBoolean(state, "required", "condition.state.required");
   optionalBoolean(state, "selected", "condition.state.selected");
   optionalString(state, "text", "condition.state.text");
 }

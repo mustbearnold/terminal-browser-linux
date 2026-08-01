@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { AgentError } from "../protocol/errors";
+import { matchesWaitElementState } from "../core/element-state";
 import {
   asDocumentId,
   asFrameId,
@@ -88,6 +89,41 @@ test("resolves hidden locator candidates only when requested", () => {
   );
   const result = new SnapshotLocatorResolver().resolve(target, { nodes: [hidden] }, { includeHidden: true });
   assert.equal(result.ref, "hidden");
+});
+
+test("matches the complete semantic wait state", () => {
+  const node = {
+    ...snapshot().nodes[0],
+    state: {
+      disabled: true,
+      expanded: true,
+      focused: true,
+      invalid: true,
+      pressed: true,
+      readOnly: true,
+      required: true,
+      value: "Ada",
+      checked: true,
+      selected: true,
+    },
+  };
+  assert.equal(matchesWaitElementState(node, {
+    attached: true,
+    visible: true,
+    enabled: true,
+    disabled: true,
+    focused: true,
+    value: "Ada",
+    checked: true,
+    expanded: true,
+    invalid: true,
+    pressed: true,
+    readOnly: true,
+    required: true,
+    selected: true,
+  }), true);
+  assert.equal(matchesWaitElementState(node, { invalid: false }), false);
+  assert.equal(matchesWaitElementState(node, { attached: false }), false);
 });
 
 test("fails instead of guessing when a locator is ambiguous", () => {

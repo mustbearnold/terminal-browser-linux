@@ -152,7 +152,22 @@ test("validates nested agent request shapes at the wire boundary", () => {
     condition: {
       type: "element",
       target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } },
-      state: { visible: true, enabled: true, text: "Continue" },
+      state: {
+        attached: true,
+        visible: true,
+        enabled: true,
+        disabled: false,
+        focused: false,
+        value: "",
+        checked: false,
+        expanded: false,
+        invalid: false,
+        pressed: false,
+        readOnly: false,
+        required: false,
+        selected: false,
+        text: "Continue",
+      },
     },
   });
   assert.equal(elementWait.kind, "request");
@@ -180,6 +195,7 @@ test("validates nested agent request shapes at the wire boundary", () => {
   invalid({ op: "page.dialog", pageId: "page-1", dialogId: "dialog-1", action: { type: "accept", promptText: 1 } });
   invalid({ op: "page.dialog", pageId: "page-1", dialogId: "dialog-1", action: { type: "answer" } });
   invalid({ op: "page.wait", pageId: "page-1", condition: { type: "element", target: { ref: "r1" }, state: { enabled: "yes" } } });
+  invalid({ op: "page.wait", pageId: "page-1", condition: { type: "element", target: { ref: "r1" }, state: { attached: "yes" } } });
   invalid({ op: "page.wait", pageId: "page-1", condition: { type: "stable", quietMs: 1.5 } });
   invalid({ op: "page.read", pageId: "page-1", target: { ref: "r1" }, token: { pageId: "page-1" } });
   invalid({ op: "page.observe", pageId: "page-1", events: ["unknown.event"] });

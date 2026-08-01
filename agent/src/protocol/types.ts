@@ -254,11 +254,18 @@ export type WaitCondition =
   | { type: "element"; target: Target; state?: WaitElementState };
 
 export interface WaitElementState {
+  attached?: boolean;
   visible?: boolean;
   enabled?: boolean;
+  disabled?: boolean;
   focused?: boolean;
   value?: string;
   checked?: boolean;
+  expanded?: boolean;
+  invalid?: boolean;
+  pressed?: boolean;
+  readOnly?: boolean;
+  required?: boolean;
   selected?: boolean;
   text?: string;
 }

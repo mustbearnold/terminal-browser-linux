@@ -24,7 +24,8 @@ Respond with `page.dialog` using `accept` or `dismiss`; prompt responses may
 include `promptText` when the underlying browser supports prompts.
 
 Use `page.wait` with an `element` condition to wait on semantic state such as
-`visible`, `enabled`, `focused`, `value`, `checked`, `selected`, or `text`.
+`attached`, `visible`, `enabled`, `disabled`, `focused`, `value`, `checked`,
+`expanded`, `invalid`, `pressed`, `readOnly`, `required`, `selected`, or `text`.
 Hidden existing elements remain addressable for visibility transitions, and a
 targeted `text` condition checks the matched node's text rather than presence alone.
 

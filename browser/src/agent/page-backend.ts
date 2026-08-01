@@ -1018,6 +1018,7 @@ export class ElectronPageBackend implements PageBackend {
         } catch (error) {
           if (signal?.aborted) throw error;
           if (!(error instanceof AgentError) || error.code !== "TARGET_NOT_FOUND") throw error;
+          if (condition.state?.attached === false && !snapshot.truncated) satisfied = true;
         }
       }
       if (condition.type === "stable") {

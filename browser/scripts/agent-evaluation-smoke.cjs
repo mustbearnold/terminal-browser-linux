@@ -35,11 +35,16 @@ const html = `<!doctype html>
 <div aria-hidden="true"><button id="aria-hidden">ARIA hidden action</button></div>
 <div inert><button id="inert">Inert action</button></div>
 <fieldset disabled><button id="disabled">Disabled action</button></fieldset>
+<button id="expand" aria-label="Expand" aria-expanded="false">Expand</button>
+<input id="readonly" aria-label="Read only" value="Locked" readonly>
+<button id="remove" aria-label="Remove me">Remove me</button>
 <output id="status">Idle</output>
 <script>
   document.getElementById('launch').addEventListener('click', () => document.getElementById('status').textContent = 'Launched');
   document.getElementById('continue').addEventListener('click', () => document.getElementById('status').textContent = 'Ready');
   document.getElementById('notifications').addEventListener('click', event => event.currentTarget.setAttribute('aria-checked', String(event.currentTarget.getAttribute('aria-checked') !== 'true')));
+  document.getElementById('expand').addEventListener('click', event => event.currentTarget.setAttribute('aria-expanded', String(event.currentTarget.getAttribute('aria-expanded') !== 'true')));
+  document.getElementById('remove').addEventListener('click', event => event.currentTarget.remove());
 </script>`;
 
 const shadowHtml = `<!doctype html><meta charset="utf-8"><title>Shadow evaluation fixture</title><x-control></x-control><script>customElements.define('x-control',class extends HTMLElement{constructor(){super();const root=this.attachShadow({mode:'open'});root.innerHTML='<label>Shadow name <input aria-label="Shadow name"></label><button aria-label="Shadow action">Shadow action</button><span id="status">Idle</span>';root.querySelector('button').addEventListener('click',()=>{root.querySelector('#status').textContent='Clicked';const dynamic=document.createElement('button');dynamic.setAttribute('aria-label','Dynamic action');dynamic.textContent='Dynamic action';root.append(dynamic)})}});</script>`;
@@ -122,6 +127,15 @@ function semanticScenarios(pageId) {
       id: "semantic-actions-verify-state",
       name: "semantic-actions-verify-state",
       async run(client) {
+        const initialFormStateWait = await client.call("page.wait", {
+          pageId,
+          condition: {
+            type: "element",
+            target: { locator: { kind: "role", role: "textbox", name: "Full name", exact: true } },
+            state: { attached: true, invalid: true, required: true },
+          },
+          timeoutMs: 1_000,
+        });
         const filled = await client.call("page.act", {
           pageId,
           action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Full name", exact: true } }, value: "Ada" },
@@ -148,6 +162,86 @@ function semanticScenarios(pageId) {
           },
           timeoutMs: 1_000,
         });
+        const validWait = await client.call("page.wait", {
+          pageId,
+          condition: {
+            type: "element",
+            target: { locator: { kind: "role", role: "textbox", name: "Full name", exact: true } },
+            state: { attached: true, invalid: false, required: true },
+          },
+          timeoutMs: 1_000,
+        });
+        const disabledWait = await client.call("page.wait", {
+          pageId,
+          condition: {
+            type: "element",
+            target: { locator: { kind: "role", role: "button", name: "Disabled action", exact: true } },
+            state: { attached: true, enabled: false, disabled: true },
+          },
+          timeoutMs: 1_000,
+        });
+        const pressedWait = await client.call("page.wait", {
+          pageId,
+          condition: {
+            type: "element",
+            target: { locator: { kind: "role", role: "button", name: "Pressed action", exact: true } },
+            state: { pressed: true },
+          },
+          timeoutMs: 1_000,
+        });
+        const selectedWait = await client.call("page.wait", {
+          pageId,
+          condition: {
+            type: "element",
+            target: { locator: { kind: "role", role: "option", name: "Alpha", exact: true } },
+            state: { selected: true },
+          },
+          timeoutMs: 1_000,
+        });
+        const readOnlyWait = await client.call("page.wait", {
+          pageId,
+          condition: {
+            type: "element",
+            target: { locator: { kind: "role", role: "textbox", name: "Read only", exact: true } },
+            state: { readOnly: true },
+          },
+          timeoutMs: 1_000,
+        });
+        const collapsedWait = await client.call("page.wait", {
+          pageId,
+          condition: {
+            type: "element",
+            target: { locator: { kind: "role", role: "button", name: "Expand", exact: true } },
+            state: { expanded: false },
+          },
+          timeoutMs: 1_000,
+        });
+        const expandedAction = await client.call("page.act", {
+          pageId,
+          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Expand", exact: true } } },
+        });
+        const expandedWait = await client.call("page.wait", {
+          pageId,
+          condition: {
+            type: "element",
+            target: { locator: { kind: "role", role: "button", name: "Expand", exact: true } },
+            state: { expanded: true },
+          },
+          timeoutMs: 1_000,
+        });
+        const removedAction = await client.call("page.act", {
+          pageId,
+          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Remove me", exact: true } } },
+        });
+        const detachedWait = await client.call("page.wait", {
+          pageId,
+          condition: {
+            type: "element",
+            target: { locator: { kind: "role", role: "button", name: "Remove me", exact: true } },
+            state: { attached: false },
+          },
+          timeoutMs: 1_000,
+        });
         const wrongTargetedTextWait = await client.call("page.wait", {
           pageId,
           condition: {
@@ -162,16 +256,33 @@ function semanticScenarios(pageId) {
         const notifications = snapshot.nodes.find((node) => node.attributes?.id === "notifications");
         const passed = filled.verified && filled.proof?.name === "Full name" && filled.proof.value === "Ada"
           && checked.verified && checked.proof?.value === "true"
-          && valueWait.satisfied && checkedWait.satisfied
+          && initialFormStateWait.satisfied && valueWait.satisfied && validWait.satisfied
+          && checkedWait.satisfied && disabledWait.satisfied && pressedWait.satisfied
+          && selectedWait.satisfied && readOnlyWait.satisfied && collapsedWait.satisfied
+          && expandedAction.verified && expandedWait.satisfied
+          && removedAction.verified && detachedWait.satisfied
           && wrongTargetedTextWait.satisfied === false
           && fullName?.state?.value === "Ada" && fullName.state.invalid === undefined
           && notifications?.state?.checked === true;
         return {
           passed,
           metrics: {
-            verifiedActions: 2,
-            stateUpdates: passed ? 2 : 0,
-            elementWaits: Number(valueWait.satisfied) + Number(checkedWait.satisfied),
+            verifiedActions: 4,
+            stateUpdates: passed ? 4 : 0,
+            elementWaits: [
+              initialFormStateWait,
+              valueWait,
+              validWait,
+              checkedWait,
+              disabledWait,
+              pressedWait,
+              selectedWait,
+              readOnlyWait,
+              collapsedWait,
+              expandedWait,
+              detachedWait,
+            ].filter((wait) => wait.satisfied).length,
+            attachedWaits: Number(initialFormStateWait.satisfied) + Number(detachedWait.satisfied),
             targetedTextWaits: Number(wrongTargetedTextWait.satisfied === false),
           },
         };

@@ -120,6 +120,19 @@ test("runs the deterministic agent control contract", async () => {
   ));
   assert.equal(hiddenWait.satisfied, true);
 
+  const absentWait = result<{ satisfied: boolean }>(await router.handle(
+    request("page.wait", {
+      pageId: FIXTURE_PAGE_ID,
+      condition: {
+        type: "element",
+        target: { locator: { kind: "role", role: "status", name: "Ready", exact: true } },
+        state: { attached: false },
+      },
+    }),
+    context,
+  ));
+  assert.equal(absentWait.satisfied, true);
+
   const wrongTargetedTextWait = result<{ satisfied: boolean }>(await router.handle(
     request("page.wait", {
       pageId: FIXTURE_PAGE_ID,
@@ -273,7 +286,7 @@ test("runs the deterministic agent control contract", async () => {
       condition: {
         type: "element",
         target: { locator: { kind: "role", role: "status", name: "Ready", exact: true } },
-        state: { text: "Ready" },
+        state: { attached: true, text: "Ready" },
       },
     }),
     context,

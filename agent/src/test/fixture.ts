@@ -460,7 +460,15 @@ class FixturePageBackend implements PageBackend {
         try {
           const target = this.resolver.resolve(condition.target, snapshot, { includeHidden: true });
           satisfied = matchesWaitElementState(target.node, condition.state);
-        } catch {}
+        } catch (error) {
+          if (
+            error instanceof AgentError &&
+            error.code === "TARGET_NOT_FOUND" &&
+            condition.state?.attached === false &&
+            !snapshot.truncated
+          ) satisfied = true;
+          else if (!(error instanceof AgentError) || error.code !== "TARGET_NOT_FOUND") throw error;
+        }
       } else {
         if (stableRevision !== identity.revision) {
           stableRevision = identity.revision;
