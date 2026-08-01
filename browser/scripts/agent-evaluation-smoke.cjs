@@ -707,6 +707,31 @@ function crossOriginScenarios(pageId) {
           frameId: frameButton?.frameId,
         },
       });
+      const childCacheSeed = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "Frame action", exact: true },
+        options: { frameId: frameButton.frameId, limit: 1, diagnostics: "summary" },
+      });
+      const globalCacheSeed = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "Frame action", exact: true },
+        options: { limit: 1, diagnostics: "summary" },
+      });
+      const parentMutation = await client.call("page.act", {
+        pageId,
+        action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Parent action", exact: true } } },
+        expect: { title: "Cross-origin updated", timeoutMs: 1_000 },
+      });
+      const childCacheAfterParentMutation = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "Frame action", exact: true },
+        options: { frameId: frameButton.frameId, limit: 1, diagnostics: "summary" },
+      });
+      const globalCacheAfterParentMutation = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "Frame action", exact: true },
+        options: { limit: 1, diagnostics: "summary" },
+      });
       const hovered = await client.call("page.act", {
         pageId,
         action: { type: "hover", target: { locator: { kind: "css", value: 'button[aria-label="Frame action"]' } } },
@@ -785,6 +810,12 @@ function crossOriginScenarios(pageId) {
         const passed = Boolean(childFrame && frameButton?.frameId && frameButton.frameId !== "main")
           && frameTextbox?.frameId === frameButton.frameId && frameButton.box?.width > 0
           && frameScopedRead.node.ref === frameButton.ref
+          && childCacheSeed.diagnostics?.queries[0]?.cacheHit === false
+          && parentMutation.verified
+          && childCacheAfterParentMutation.diagnostics?.queries[0]?.cacheHit === true
+          && childCacheAfterParentMutation.diagnostics.queries[0].elementsEvaluated === 0
+          && globalCacheSeed.diagnostics?.queries[0]?.cacheHit === false
+          && globalCacheAfterParentMutation.diagnostics?.queries[0]?.cacheHit === false
           && hovered.verified && scrolled.verified && selected.proof?.value === "two"
           && checked.proof?.value === "true" && filled.verified && typed.proof?.value === "Ada Lovelace"
           && clicked.verified && clicked.proof?.frameId === frameButton.frameId
@@ -796,6 +827,12 @@ function crossOriginScenarios(pageId) {
           metrics: {
             crossOriginControls: [frameButton, frameTextbox].filter(Boolean).length,
             frameScopedIndexedRead: Number(frameScopedRead.node.ref === frameButton?.ref),
+            frameScopedCachePreserved: Number(
+              childCacheSeed.diagnostics?.queries[0]?.cacheHit === false
+                && parentMutation.verified
+                && childCacheAfterParentMutation.diagnostics?.queries[0]?.cacheHit === true,
+            ),
+            globalCacheInvalidation: Number(globalCacheAfterParentMutation.diagnostics?.queries[0]?.cacheHit === false),
             frameActionProof: Number(clicked.proof?.frameId === frameButton?.frameId),
             verifiedActions: [hovered, scrolled, selected, checked, filled, typed, clicked].filter((action) => action.verified).length,
             replayedActions: retry.replayed === true ? 1 : 0,
@@ -1139,7 +1176,7 @@ async function run() {
   let failurePort;
   try {
     childServer = await serve(crossOriginChildHtml);
-    parentServer = await serve(`<!doctype html><meta charset="utf-8"><title>Cross-origin evaluation fixture</title><button aria-label="Navigate frame" onclick="document.querySelector('iframe').src='http://127.0.0.1:${childServer.port}/frame-next.html'">Navigate frame</button><button aria-label="Remove frame" onclick="document.querySelector('iframe').remove()">Remove frame</button><button aria-label="Add frame" onclick="const frame=document.createElement('iframe');frame.title='Control frame';frame.src='http://127.0.0.1:${childServer.port}/frame-restored.html';document.body.append(frame)">Add frame</button><iframe title="Control frame" src="http://127.0.0.1:${childServer.port}/frame.html"></iframe>`);
+    parentServer = await serve(`<!doctype html><meta charset="utf-8"><title>Cross-origin evaluation fixture</title><button aria-label="Navigate frame" onclick="document.querySelector('iframe').src='http://127.0.0.1:${childServer.port}/frame-next.html'">Navigate frame</button><button aria-label="Remove frame" onclick="document.querySelector('iframe').remove()">Remove frame</button><button aria-label="Add frame" onclick="const frame=document.createElement('iframe');frame.title='Control frame';frame.src='http://127.0.0.1:${childServer.port}/frame-restored.html';document.body.append(frame)">Add frame</button><button aria-label="Parent action" onclick="document.title='Cross-origin updated'">Parent action</button><iframe title="Control frame" src="http://127.0.0.1:${childServer.port}/frame.html"></iframe>`);
     navigationServer = await serveRoutes({ "/start.html": navigationStartHtml, "/next.html": navigationNextHtml });
     downloadServer = await serveDownload();
     largeServer = await serve(largeWindowHtml);

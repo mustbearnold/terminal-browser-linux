@@ -9,7 +9,7 @@ const child = `<!doctype html><style>body{font:16px sans-serif;margin:18px}butto
 
 async function run() {
   const childServer = await serve(child);
-  const parent = `<!doctype html><meta charset="utf-8"><title>Cross-origin frame control fixture</title><style>body{font:16px sans-serif;margin:24px}button{font:16px sans-serif;margin:8px;padding:8px}iframe{display:block;width:460px;height:220px;border:4px solid #888}</style><button aria-label="Parent action">Parent action</button><iframe title="Control frame" src="http://127.0.0.1:${childServer.port}/frame.html"></iframe><script>window.addEventListener('message',event=>{if(!event.data||event.data.type!=='remove-frame')return;const frame=document.querySelector('iframe');if(frame)frame.remove();setTimeout(()=>{const restored=document.createElement('iframe');restored.title='Control frame';restored.src='http://127.0.0.1:${childServer.port}/frame-restored.html';document.body.append(restored)},50)})</script>`;
+  const parent = `<!doctype html><meta charset="utf-8"><title>Cross-origin frame control fixture</title><style>body{font:16px sans-serif;margin:24px}button{font:16px sans-serif;margin:8px;padding:8px}iframe{display:block;width:460px;height:220px;border:4px solid #888}</style><button aria-label="Parent action" onclick="document.title='Cross-origin updated'">Parent action</button><iframe title="Control frame" src="http://127.0.0.1:${childServer.port}/frame.html"></iframe><script>window.addEventListener('message',event=>{if(!event.data||event.data.type!=='remove-frame')return;const frame=document.querySelector('iframe');if(frame)frame.remove();setTimeout(()=>{const restored=document.createElement('iframe');restored.title='Control frame';restored.src='http://127.0.0.1:${childServer.port}/frame-restored.html';document.body.append(restored)},50)})</script>`;
   const parentServer = await serve(parent);
   const existing = new Set(listSockets());
   const { host, output } = launchHost();
@@ -147,6 +147,31 @@ async function run() {
         (error) => error?.code === "INVALID_REQUEST",
         "invalid CSS locator was not rejected",
       );
+      const globalCacheSeed = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "Frame action", exact: true },
+        options: { limit: 1, diagnostics: "summary" },
+      });
+      const parentMutation = await client.call("page.act", {
+        pageId,
+        action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Parent action", exact: true } } },
+        expect: { title: "Cross-origin updated", timeoutMs: 1_000 },
+      });
+      const preservedFrameCacheQuery = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "Frame action", exact: true },
+        options: { frameId: frameButton.frameId, limit: 1, diagnostics: "summary" },
+      });
+      const globalCacheAfterParentMutation = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "Frame action", exact: true },
+        options: { limit: 1, diagnostics: "summary" },
+      });
+      assert.equal(parentMutation.verified, true);
+      assert.equal(preservedFrameCacheQuery.diagnostics?.queries[0]?.cacheHit, true);
+      assert.equal(preservedFrameCacheQuery.diagnostics?.queries[0]?.elementsEvaluated, 0);
+      assert.equal(globalCacheSeed.diagnostics?.queries[0]?.cacheHit, false);
+      assert.equal(globalCacheAfterParentMutation.diagnostics?.queries[0]?.cacheHit, false);
 
       await client.call("page.act", {
         pageId,
@@ -369,6 +394,9 @@ async function run() {
         queryCacheVerified: cachedDiagnosticQuery.diagnostics?.queries[0]?.cacheHit === true
           && cachedDiagnosticQuery.diagnostics.queries[0].elementsEvaluated === 0,
         queryCacheInvalidationVerified: postMutationQuery.diagnostics?.queries[0]?.cacheHit === false,
+        frameScopedCachePreservedVerified: parentMutation.verified
+          && preservedFrameCacheQuery.diagnostics?.queries[0]?.cacheHit === true,
+        globalCacheInvalidationVerified: globalCacheAfterParentMutation.diagnostics?.queries[0]?.cacheHit === false,
         queryPlanVerified: (plannedBatch.diagnostics?.planCacheHits ?? 0) > 0,
         stateLocatorVerified: queryBatch.queries[2].nodes[0]?.state?.checked === false,
         mixedFrameBatchVerified: queryBatch.queries[3].nodes[0]?.frameId === "main",

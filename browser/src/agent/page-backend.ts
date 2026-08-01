@@ -161,6 +161,7 @@ type LiveLocatorEvaluation = {
 type LiveLocatorCacheEntry = {
   epoch: number;
   frameSignature: string;
+  frameEpochs: ReadonlyMap<string, number>;
   result: LiveLocatorResult;
 };
 type LiveTextResult = { ok: boolean; matches?: boolean };
@@ -184,8 +185,9 @@ export class ElectronPageBackend implements PageBackend {
   private readonly agentKey = AGENT_STATE_KEY;
   private sequence = 0;
   private remoteRevision = 0;
-  private observedPageState: { documentId: string; revision: number } | null = null;
+  private observedPageState: { documentId: string; revision: number; mainRevision: number } | null = null;
   private liveQueryEpoch = 0;
+  private readonly liveFrameEpochs = new Map<string, number>();
   private readonly liveLocatorCache = new Map<string, LiveLocatorCacheEntry>();
   private readonly snapshotCache = new Map<string, CapturedSnapshot>();
   private readonly snapshotFrameStates = new Map<string, Map<string, FrameSnapshotState>>();
@@ -216,7 +218,7 @@ export class ElectronPageBackend implements PageBackend {
     const scriptState = await this.readScriptState(signal);
     throwIfAborted(signal);
     const revision = this.effectiveRevision(scriptState);
-    this.observePageState(scriptState.documentId, revision);
+    this.observePageState(scriptState.documentId, revision, scriptState.revision);
     return {
       pageId: this.pageId,
       documentId: asDocumentId(scriptState.documentId),
@@ -380,11 +382,14 @@ export class ElectronPageBackend implements PageBackend {
     });
     const cacheEpoch = this.liveQueryEpoch;
     const frameSignature = liveFrameSignature(frames);
+    const frameEpochs = this.liveFrameEpochSnapshot(frames);
     const aggregate = queries.map(() => emptyLiveLocatorResult());
     const cacheHits = queries.map((query) => {
       const entry = this.liveLocatorCache.get(liveLocatorCacheKey(query));
-      if (!entry || entry.epoch !== cacheEpoch || entry.frameSignature !== frameSignature) return false;
-      return true;
+      return entry !== undefined
+        && entry.epoch === cacheEpoch
+        && entry.frameSignature === frameSignature
+        && this.liveLocatorCacheEntryIsFresh(entry, query, frames);
     });
     for (const [index, cacheHit] of cacheHits.entries()) {
       if (!cacheHit) continue;
@@ -493,13 +498,15 @@ export class ElectronPageBackend implements PageBackend {
           cacheHits[index] ||
           expectedFrames[index] === 0 ||
           evaluatedFrames[index] !== expectedFrames[index] ||
-          result.invalid === true
+          result.invalid === true ||
+          !this.liveLocatorFrameEpochsMatch(queries[index], frames, frameEpochs)
         ) continue;
         const key = liveLocatorCacheKey(queries[index]);
         this.liveLocatorCache.delete(key);
         this.liveLocatorCache.set(key, {
           epoch: cacheEpoch,
           frameSignature,
+          frameEpochs,
           result: cacheableLiveLocatorResult(result),
         });
       }
@@ -1036,7 +1043,7 @@ export class ElectronPageBackend implements PageBackend {
         throw new AgentError("ACTION_UNVERIFIED", "frame click did not activate the target", { retryable: true });
       }
     }
-    this.invalidateSnapshots();
+    this.invalidateFrameSnapshots(frameId);
     const outcome = await this.waitForOutcome(before, expect, signal);
 
     const after = outcome.identity;
@@ -1084,7 +1091,7 @@ export class ElectronPageBackend implements PageBackend {
         retryable: true,
       });
     }
-    this.invalidateSnapshots();
+    this.invalidateFrameSnapshots(frameId);
     const outcome = await this.waitForOutcome(before, expect, signal);
     const after = outcome.identity;
     const effects = this.transitionEffects(before, after);
@@ -1132,7 +1139,7 @@ export class ElectronPageBackend implements PageBackend {
     this.controller.focusContent();
     throwIfAborted(signal);
     await this.controller.cdp("Input.insertText", { text: action.text });
-    this.invalidateSnapshots();
+    this.invalidateFrameSnapshots(target?.node.frameId ? String(target.node.frameId) : activeBefore.frameId ?? "main");
     const outcome = await this.waitForOutcome(before, expect, signal);
     const activeAfter = await this.activeElement(signal).catch((error) => {
       if (signal?.aborted) throw error;
@@ -1190,7 +1197,7 @@ export class ElectronPageBackend implements PageBackend {
         retryable: true,
       });
     }
-    this.invalidateSnapshots();
+    this.invalidateFrameSnapshots(frameId);
     const outcome = await this.waitForOutcome(before, expect, signal);
     const after = outcome.identity;
     const effects = this.transitionEffects(before, after);
@@ -1241,7 +1248,7 @@ export class ElectronPageBackend implements PageBackend {
         retryable: true,
       });
     }
-    this.invalidateSnapshots();
+    this.invalidateFrameSnapshots(frameId);
     const outcome = await this.waitForOutcome(before, expect, signal);
     const after = outcome.identity;
     const effects = this.transitionEffects(before, after);
@@ -1366,7 +1373,7 @@ export class ElectronPageBackend implements PageBackend {
       x: inspection.x,
       y: inspection.y,
     });
-    this.invalidateSnapshots();
+    this.invalidateFrameSnapshots(frameId);
     const outcome = hasExpectation(expect)
       ? await this.waitForOutcome(before, expect, signal)
       : { identity: await this.identity(signal), changed: false, satisfied: true };
@@ -1415,7 +1422,7 @@ export class ElectronPageBackend implements PageBackend {
     if (!isScrollResult(raw) || !raw.ok) {
       throw new AgentError("ACTION_UNVERIFIED", "scroll position could not be read after scrolling", { retryable: true });
     }
-    this.invalidateSnapshots();
+    this.invalidateFrameSnapshots(frameId);
     const outcome = hasExpectation(expect)
       ? await this.waitForOutcome(before, expect, signal)
       : { identity: await this.identity(signal), changed: false, satisfied: true };
@@ -1478,7 +1485,7 @@ export class ElectronPageBackend implements PageBackend {
     }
     throwIfAborted(signal);
     await this.controller.cdp("Input.dispatchKeyEvent", { type: "keyUp", ...base });
-    this.invalidateSnapshots();
+    this.invalidateFrameSnapshots(target?.node.frameId ? String(target.node.frameId) : focused.frameId ?? "main");
     const outcome = await this.waitForOutcome(before, expect, signal);
     const active = await this.activeElement(signal).catch((error) => {
       if (signal?.aborted) throw error;
@@ -1766,14 +1773,13 @@ export class ElectronPageBackend implements PageBackend {
     return state.revision + this.remoteRevision;
   }
 
-  private observePageState(documentId: string, revision: number): void {
-    if (
-      this.observedPageState !== null &&
-      (this.observedPageState.documentId !== documentId || this.observedPageState.revision !== revision)
-    ) {
+  private observePageState(documentId: string, revision: number, mainRevision: number): void {
+    if (this.observedPageState?.documentId !== undefined && this.observedPageState.documentId !== documentId) {
       this.invalidateSnapshots();
+    } else if (this.observedPageState?.mainRevision !== undefined && this.observedPageState.mainRevision !== mainRevision) {
+      this.invalidateFrameSnapshots("main");
     }
-    this.observedPageState = { documentId, revision };
+    this.observedPageState = { documentId, revision, mainRevision };
   }
 
   private async inspect(ref: string, frameId: string, signal?: AbortSignal): Promise<ElementInspection> {
@@ -1867,7 +1873,41 @@ export class ElectronPageBackend implements PageBackend {
   private invalidateSnapshots(): void {
     this.lastSnapshotInvalidated = true;
     this.liveQueryEpoch += 1;
+    this.liveFrameEpochs.clear();
     this.liveLocatorCache.clear();
+  }
+
+  private invalidateFrameSnapshots(frameId: string): void {
+    this.lastSnapshotInvalidated = true;
+    this.liveFrameEpochs.set(frameId, (this.liveFrameEpochs.get(frameId) ?? 0) + 1);
+  }
+
+  private liveFrameEpochSnapshot(frames: readonly BrowserAgentFrame[]): ReadonlyMap<string, number> {
+    return new Map(frames.map((frame) => {
+      const key = frameKey(frame);
+      return [key, this.liveFrameEpochs.get(key) ?? 0] as const;
+    }));
+  }
+
+  private liveLocatorCacheEntryIsFresh(
+    entry: LiveLocatorCacheEntry,
+    query: LiveLocatorRequest,
+    frames: readonly BrowserAgentFrame[],
+  ): boolean {
+    return this.liveLocatorFrameEpochsMatch(query, frames, entry.frameEpochs);
+  }
+
+  private liveLocatorFrameEpochsMatch(
+    query: LiveLocatorRequest,
+    frames: readonly BrowserAgentFrame[],
+    epochs: ReadonlyMap<string, number>,
+  ): boolean {
+    return frames
+      .filter((frame) => query.frameId === undefined || String(query.frameId) === frameKey(frame))
+      .every((frame) => {
+        const key = frameKey(frame);
+        return epochs.get(key) === (this.liveFrameEpochs.get(key) ?? 0);
+      });
   }
 
   private transitionEffects(before: PageIdentity, after: PageIdentity): ActionEffect[] {
@@ -1891,8 +1931,10 @@ export class ElectronPageBackend implements PageBackend {
     const data = event.data && typeof event.data === "object"
       ? event.data as Record<string, unknown>
       : null;
-    if (data?.frameId && data.frameId !== "main") this.remoteRevision += 1;
-    this.invalidateSnapshots();
+    const frameId = typeof data?.frameId === "string" ? data.frameId : undefined;
+    if (frameId && frameId !== "main") this.remoteRevision += 1;
+    if (frameId) this.invalidateFrameSnapshots(frameId);
+    else this.invalidateSnapshots();
     this.emit("dom.changed", event.data);
   }
 
