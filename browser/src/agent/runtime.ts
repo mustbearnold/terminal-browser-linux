@@ -39,6 +39,13 @@ export class BrowserAgentRuntime implements AgentRuntime {
       "page.frames",
       "page.read",
       "page.act",
+      "page.act.click",
+      "page.act.fill",
+      "page.act.type",
+      "page.act.press",
+      "page.act.select",
+      "page.act.check",
+      "page.act.navigate",
       "page.wait",
       "page.observe",
     ];

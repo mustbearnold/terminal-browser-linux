@@ -5,7 +5,7 @@ const http = require("node:http");
 const { AgentClient } = require("../../agent/dist");
 const { launchHost, listSockets, stopHost, waitForSocket } = require("./agent-smoke-support.cjs");
 
-const child = `<!doctype html><style>body{font:16px sans-serif;margin:18px}button,input{font:16px sans-serif;margin:8px;padding:8px}</style><label>Frame name <input aria-label="Frame name"></label><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
+const child = `<!doctype html><style>body{font:16px sans-serif;margin:18px}button,input,select{font:16px sans-serif;margin:8px;padding:8px}</style><label>Frame name <input aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input type="checkbox" aria-label="Frame enabled">Frame enabled</label><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
 
 async function run() {
   const childServer = await serve(child);
@@ -50,6 +50,23 @@ async function run() {
       assert.equal(frameButton.frameId, frameTextbox.frameId);
       assert.ok(frameButton.box && frameButton.box.x > 0 && frameButton.box.y > 0);
 
+      const selected = await client.call("page.act", {
+        pageId,
+        action: {
+          type: "select",
+          target: { locator: { kind: "role", role: "combobox", name: "Frame choice", exact: true } },
+          values: ["two"],
+        },
+      });
+      const checked = await client.call("page.act", {
+        pageId,
+        action: {
+          type: "check",
+          target: { locator: { kind: "role", role: "checkbox", name: "Frame enabled", exact: true } },
+          checked: true,
+        },
+      });
+
       const filled = await client.call("page.act", {
         pageId,
         action: {
@@ -76,6 +93,10 @@ async function run() {
       });
       const dynamicButton = after.nodes.find((node) => node.name === "Frame dynamic");
       assert.equal(filled.verified, true);
+      assert.equal(selected.verified, true);
+      assert.equal(selected.proof?.value, "two");
+      assert.equal(checked.verified, true);
+      assert.equal(checked.proof?.value, "true");
       assert.equal(typed.proof?.value, "Ada Lovelace");
       assert.equal(clicked.verified, true);
       assert.ok(dynamicButton, "cross-origin frame mutation was not exposed in the next snapshot");
@@ -136,6 +157,13 @@ async function run() {
       assert.equal(restoredFrame?.url, `http://127.0.0.1:${childServer.port}/frame-restored.html`);
       assert.ok(restoredFrameTree.revision >= detachedFrameTree.revision);
 
+      const navigatedPage = await client.call("page.act", {
+        pageId,
+        action: { type: "navigate", url: `http://127.0.0.1:${parentServer.port}/navigated.html` },
+        expect: { url: `http://127.0.0.1:${parentServer.port}/navigated.html`, timeoutMs: 5_000 },
+      });
+      assert.equal(navigatedPage.verified, true);
+
       console.log(JSON.stringify({
         parentPort: parentServer.port,
         childPort: childServer.port,
@@ -146,6 +174,7 @@ async function run() {
         revisionDelta: after.revision - initial.revision,
         domEvents: events.filter((event) => event.event === "dom.changed").length,
         frameLifecycleEvents: events.filter((event) => event.event === "frame.lifecycle").length,
+        navigationVerified: navigatedPage.verified,
       }));
     } finally {
       unsubscribe();

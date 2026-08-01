@@ -68,7 +68,17 @@ function page(): PageSession {
 
 function runtime(): AgentRuntime {
   return {
-    capabilities: () => ["pages.list", "snapshot.read", "page.frames", "page.act", "page.wait"],
+    capabilities: () => [
+      "pages.list",
+      "snapshot.read",
+      "page.frames",
+      "page.act",
+      "page.act.click",
+      "page.act.fill",
+      "page.act.type",
+      "page.act.press",
+      "page.wait",
+    ],
     listPages: async () => [identity],
     getPage: (candidate) => (candidate === pageId ? page() : undefined),
     openPage: async () => identity,

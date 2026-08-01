@@ -51,8 +51,12 @@ type ElementInspection = {
   role?: string;
   name?: string;
   value?: string;
+  checked?: boolean;
+  selected?: boolean;
 };
 type ClickResult = { ok: boolean };
+type SelectResult = { ok: boolean; values?: string[] };
+type CheckResult = { ok: boolean; checked?: boolean };
 type ActiveElementInfo = {
   ok: boolean;
   frameId?: string;
@@ -197,10 +201,16 @@ export class ElectronPageBackend implements PageBackend {
         return this.click(action, token, expect, signal);
       case "fill":
         return this.fill(action, token, expect, signal);
+      case "select":
+        return this.select(action, token, expect, signal);
+      case "check":
+        return this.check(action, token, expect, signal);
       case "type":
         return this.typeText(action.text, token, expect, signal);
       case "press":
         return this.press(action.key, token, expect, signal);
+      case "navigate":
+        return this.navigate(action, token, expect, signal);
       default:
         throw new AgentError("INVALID_REQUEST", `live adapter does not support ${action.type} yet`);
     }
@@ -353,6 +363,123 @@ export class ElectronPageBackend implements PageBackend {
       ? outcome.satisfied
       : text === "" || activeAfter.value !== activeBefore.value;
     return { verified, effects, proof };
+  }
+
+  private async select(
+    action: Extract<AgentAction, { type: "select" }>,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+    signal?: AbortSignal,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    const before = await this.identity(signal);
+    const snapshot = await this.snapshot(undefined, signal);
+    this.assertToken(token, snapshot.documentId, snapshot.revision);
+    const target = this.resolver.resolve(action.target, snapshot);
+    const frameId = String(target.node.frameId);
+    const inspection = await this.inspect(target.ref, frameId, signal);
+    if (
+      !inspection.ok ||
+      !inspection.visible ||
+      !inspection.enabled ||
+      (inspection.role !== "combobox" && inspection.role !== "select")
+    ) {
+      throw new AgentError("NOT_INTERACTABLE", "target is not a selectable control", { retryable: true });
+    }
+
+    this.controller.focusContent();
+    throwIfAborted(signal);
+    const source = selectScript(this.agentKey, target.ref, action.values);
+    const raw = frameId === "main"
+      ? await this.controller.runJs(source)
+      : await this.controller.runJsInFrame(frameId, source);
+    throwIfAborted(signal);
+    if (!isSelectResult(raw) || !raw.ok || !sameStringSet(raw.values, action.values)) {
+      throw new AgentError("ACTION_UNVERIFIED", "selected values did not match the requested values", {
+        retryable: true,
+      });
+    }
+    this.invalidateSnapshots();
+    const outcome = await this.waitForOutcome(before, expect, signal);
+    const after = outcome.identity;
+    const effects = this.transitionEffects(before, after);
+    effects.push({ type: "value.changed", data: { values: raw.values } });
+    const proof: ActionProof = {
+      target: target.ref,
+      role: inspection.role,
+      name: inspection.name,
+      value: raw.values.join(","),
+      url: after.url,
+      title: after.title,
+    };
+    return { verified: hasExpectation(expect) ? outcome.satisfied : true, effects, proof };
+  }
+
+  private async check(
+    action: Extract<AgentAction, { type: "check" }>,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+    signal?: AbortSignal,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    const before = await this.identity(signal);
+    const snapshot = await this.snapshot(undefined, signal);
+    this.assertToken(token, snapshot.documentId, snapshot.revision);
+    const target = this.resolver.resolve(action.target, snapshot);
+    const frameId = String(target.node.frameId);
+    const inspection = await this.inspect(target.ref, frameId, signal);
+    if (
+      !inspection.ok ||
+      !inspection.visible ||
+      !inspection.enabled ||
+      typeof inspection.checked !== "boolean"
+    ) {
+      throw new AgentError("NOT_INTERACTABLE", "target is not a checkable control", { retryable: true });
+    }
+
+    this.controller.focusContent();
+    throwIfAborted(signal);
+    const source = checkScript(this.agentKey, target.ref, action.checked);
+    const raw = frameId === "main"
+      ? await this.controller.runJs(source)
+      : await this.controller.runJsInFrame(frameId, source);
+    throwIfAborted(signal);
+    if (!isCheckResult(raw) || !raw.ok || raw.checked !== action.checked) {
+      throw new AgentError("ACTION_UNVERIFIED", "checked state did not match the requested state", {
+        retryable: true,
+      });
+    }
+    this.invalidateSnapshots();
+    const outcome = await this.waitForOutcome(before, expect, signal);
+    const after = outcome.identity;
+    const effects = this.transitionEffects(before, after);
+    effects.push({ type: "value.changed", data: { checked: raw.checked } });
+    const proof: ActionProof = {
+      target: target.ref,
+      role: inspection.role,
+      name: inspection.name,
+      value: String(raw.checked),
+      url: after.url,
+      title: after.title,
+    };
+    return { verified: hasExpectation(expect) ? outcome.satisfied : true, effects, proof };
+  }
+
+  private async navigate(
+    action: Extract<AgentAction, { type: "navigate" }>,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+    signal?: AbortSignal,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    const before = await this.identity(signal);
+    this.assertToken(token ?? undefined, before.documentId, before.revision);
+    throwIfAborted(signal);
+    this.controller.navigate(action.url);
+    this.invalidateSnapshots();
+    const navigationExpectation = expect ?? { url: action.url, timeoutMs: 10_000 };
+    const outcome = await this.waitForOutcome(before, navigationExpectation, signal);
+    const after = outcome.identity;
+    const effects = this.transitionEffects(before, after);
+    const proof: ActionProof = { url: after.url, title: after.title };
+    return { verified: outcome.satisfied, effects, proof };
   }
 
   private async press(
@@ -844,6 +971,7 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined, frame
       return Object.keys(attrs).length ? attrs : undefined;
     };
     const visit = (el, parent, parentVisible) => {
+      if (!el) return;
       if (nodes.length >= maxNodes) { truncated = true; return; }
       const role = roleFor(el);
       const visible = parentVisible && visibleFor(el);
@@ -1004,6 +1132,8 @@ function inspectScript(key: string, ref: string, frameId: string): string {
       role: el.getAttribute("role") || el.tagName.toLowerCase(),
       name: el.getAttribute("aria-label") || el.innerText || el.value || "",
       value: "value" in el && typeof el.value === "string" ? el.value : undefined,
+      checked: "checked" in el && typeof el.checked === "boolean" ? el.checked : undefined,
+      selected: "selected" in el && typeof el.selected === "boolean" ? el.selected : undefined,
     };
   })()`;
 }
@@ -1048,6 +1178,41 @@ function fillScript(key: string, ref: string, value: string): string {
       name,
       value: "value" in el ? String(el.value ?? "") : String(el.innerText ?? ""),
     };
+  })()`;
+}
+
+function selectScript(key: string, ref: string, values: readonly string[]): string {
+  return `(() => {
+    const state = window[${JSON.stringify(key)}];
+    const el = state && state.refs && state.refs.get(${JSON.stringify(ref)});
+    if (!el || !el.isConnected || el.tagName !== "SELECT" || el.disabled || el.getAttribute("aria-disabled") === "true") {
+      return { ok: false };
+    }
+    const wanted = new Set(${JSON.stringify(values)});
+    const options = Array.from(el.options);
+    if (!el.multiple && wanted.size > 1) return { ok: false };
+    if (Array.from(wanted).some((value) => !options.some((option) => option.value === value))) return { ok: false };
+    el.focus();
+    for (const option of options) option.selected = wanted.has(option.value);
+    const view = el.ownerDocument.defaultView || window;
+    const EventCtor = view.Event || Event;
+    el.dispatchEvent(new EventCtor("input", { bubbles: true }));
+    el.dispatchEvent(new EventCtor("change", { bubbles: true }));
+    return { ok: true, values: Array.from(el.selectedOptions).map((option) => option.value) };
+  })()`;
+}
+
+function checkScript(key: string, ref: string, checked: boolean): string {
+  return `(() => {
+    const state = window[${JSON.stringify(key)}];
+    const el = state && state.refs && state.refs.get(${JSON.stringify(ref)});
+    const type = el && String(el.type || "").toLowerCase();
+    if (!el || !el.isConnected || (type !== "checkbox" && type !== "radio") || el.disabled || el.getAttribute("aria-disabled") === "true") {
+      return { ok: false };
+    }
+    if (type === "radio" && !${checked} && el.checked) return { ok: false, checked: true };
+    if (el.checked !== ${checked}) el.click();
+    return { ok: true, checked: !!el.checked };
   })()`;
 }
 
@@ -1107,12 +1272,28 @@ function isClickResult(value: unknown): value is ClickResult {
   return !!value && typeof value === "object" && typeof (value as Record<string, unknown>).ok === "boolean";
 }
 
+function isSelectResult(value: unknown): value is SelectResult & { values: string[] } {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Record<string, unknown>;
+  return result.ok === true && Array.isArray(result.values) && result.values.every((item) => typeof item === "string");
+}
+
+function isCheckResult(value: unknown): value is CheckResult & { checked: boolean } {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Record<string, unknown>;
+  return typeof result.ok === "boolean" && typeof result.checked === "boolean";
+}
+
 function isActiveElementInfo(value: unknown): value is ActiveElementInfo {
   return !!value && typeof value === "object" && typeof (value as Record<string, unknown>).ok === "boolean";
 }
 
 function hasExpectation(expect: ActionExpectation | undefined): boolean {
   return !!expect && (expect.url !== undefined || expect.title !== undefined || expect.text !== undefined);
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && new Set(left).size === left.length && left.every((value) => right.includes(value));
 }
 
 const MODIFIER_ALT = 1;

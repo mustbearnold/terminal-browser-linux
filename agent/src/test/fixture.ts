@@ -48,6 +48,10 @@ export class FixtureRuntime implements AgentRuntime {
       "page.frames",
       "page.read",
       "page.act",
+      "page.act.click",
+      "page.act.fill",
+      "page.act.type",
+      "page.act.press",
       "page.wait",
       "page.observe",
     ];

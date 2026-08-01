@@ -30,6 +30,9 @@ test("runs the deterministic agent control contract", async () => {
     await router.handle(request("hello", { clientId: "fixture-e2e" }), context),
   );
   assert.equal(hello.capabilities.includes("page.act"), true);
+  assert.equal(hello.capabilities.includes("page.act.click"), true);
+  assert.equal(hello.capabilities.includes("page.act.fill"), true);
+  assert.equal(hello.capabilities.includes("page.act.select"), false);
 
   const pages = result<{ pages: PageIdentity[] }>(await router.handle(request("pages.list"), context));
   assert.equal(pages.pages[0].pageId, FIXTURE_PAGE_ID);
