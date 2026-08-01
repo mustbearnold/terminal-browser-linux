@@ -220,6 +220,10 @@ export interface ActionExpectation {
   url?: string;
   title?: string;
   text?: string;
+  element?: {
+    target: Target;
+    state?: WaitElementState;
+  };
   timeoutMs?: number;
   quietMs?: number;
 }

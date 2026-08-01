@@ -225,6 +225,13 @@ function semanticScenarios(pageId) {
         const expandedAction = await client.call("page.act", {
           pageId,
           action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Expand", exact: true } } },
+          expect: {
+            element: {
+              target: { locator: { kind: "role", role: "button", name: "Expand", exact: true } },
+              state: { expanded: true },
+            },
+            timeoutMs: 1_000,
+          },
         });
         const expandedWait = await client.call("page.wait", {
           pageId,
@@ -238,6 +245,13 @@ function semanticScenarios(pageId) {
         const removedAction = await client.call("page.act", {
           pageId,
           action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Remove me", exact: true } } },
+          expect: {
+            element: {
+              target: { locator: { kind: "role", role: "button", name: "Remove me", exact: true } },
+              state: { attached: false },
+            },
+            timeoutMs: 1_000,
+          },
         });
         const detachedWait = await client.call("page.wait", {
           pageId,
@@ -294,6 +308,7 @@ function semanticScenarios(pageId) {
             attachedWaits: Number(initialFormStateWait.satisfied) + Number(detachedWait.satisfied),
             targetedTextWaits: Number(wrongTargetedTextWait.satisfied === false),
             compactActionOutputs: Number(filled.snapshot === undefined && checked.snapshotDelta !== undefined),
+            targetedElementExpectations: Number(expandedAction.verified && removedAction.verified),
           },
         };
       },

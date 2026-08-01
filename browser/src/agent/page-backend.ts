@@ -1326,7 +1326,12 @@ export class ElectronPageBackend implements PageBackend {
     expect?: ActionExpectation,
     signal?: AbortSignal,
   ): Promise<{ identity: PageIdentity; changed: boolean; satisfied: boolean }> {
-    const hasExpectation = !!expect && (expect.url !== undefined || expect.title !== undefined || expect.text !== undefined);
+    const hasExpectation = !!expect && (
+      expect.url !== undefined ||
+      expect.title !== undefined ||
+      expect.text !== undefined ||
+      expect.element !== undefined
+    );
     const timeoutMs = hasExpectation ? expect?.timeoutMs ?? 2_000 : 250;
     const deadline = Date.now() + Math.max(0, timeoutMs);
     let last = { identity: before, changed: false, satisfied: false };
@@ -1359,6 +1364,20 @@ export class ElectronPageBackend implements PageBackend {
         )
       ) {
         return false;
+      }
+    }
+    if (expect.element !== undefined) {
+      const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
+      try {
+        const target = await this.resolve(expect.element.target, snapshot, signal, { includeHidden: true });
+        if (!matchesWaitElementState(target.node, expect.element.state)) return false;
+      } catch (error) {
+        if (
+          !(error instanceof AgentError) ||
+          error.code !== "TARGET_NOT_FOUND" ||
+          expect.element.state?.attached !== false ||
+          snapshot.truncated
+        ) return false;
       }
     }
     return true;

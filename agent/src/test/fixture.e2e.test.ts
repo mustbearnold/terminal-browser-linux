@@ -193,7 +193,12 @@ test("runs the deterministic agent control contract", async () => {
         pageId: FIXTURE_PAGE_ID,
         token: token(typed.snapshot!),
         action: { type: "press", key: "Enter" },
-        expect: { text: "Ready" },
+        expect: {
+          element: {
+            target: { locator: { kind: "role", role: "status", name: "Ready", exact: true } },
+            state: { attached: true, text: "Ready" },
+          },
+        },
       }),
       context,
     ),

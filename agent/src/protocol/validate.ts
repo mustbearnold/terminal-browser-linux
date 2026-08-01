@@ -191,6 +191,11 @@ function validateExpectation(value: unknown): void {
   optionalString(expect, "url", "expect.url");
   optionalString(expect, "title", "expect.title");
   optionalString(expect, "text", "expect.text");
+  if (expect.element !== undefined) {
+    const element = requireObject(expect.element, "expect.element");
+    validateTarget(element.target, "expect.element.target");
+    if (element.state !== undefined) validateWaitElementState(element.state);
+  }
   optionalNonNegativeInteger(expect, "timeoutMs", "expect.timeoutMs");
   optionalNonNegativeInteger(expect, "quietMs", "expect.quietMs");
 }

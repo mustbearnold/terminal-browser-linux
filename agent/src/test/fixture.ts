@@ -500,6 +500,20 @@ class FixturePageBackend implements PageBackend {
       const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
       if (!snapshot.nodes.some((node) => `${node.name} ${node.text ?? ""}`.includes(expect.text!))) return false;
     }
+    if (expect.element !== undefined) {
+      const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
+      try {
+        const target = this.resolver.resolve(expect.element.target, snapshot, { includeHidden: true });
+        if (!matchesWaitElementState(target.node, expect.element.state)) return false;
+      } catch (error) {
+        if (
+          !(error instanceof AgentError) ||
+          error.code !== "TARGET_NOT_FOUND" ||
+          expect.element.state?.attached !== false ||
+          snapshot.truncated
+        ) return false;
+      }
+    }
     return true;
   }
 

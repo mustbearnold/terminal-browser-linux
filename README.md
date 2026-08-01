@@ -32,6 +32,8 @@ targeted `text` condition checks the matched node's text rather than presence al
 Actions return a full post-action snapshot by default. Set `output.snapshot` to
 `none` to keep only the verified action result, or to `delta` with an
 `output.base` snapshot token to receive only the changes from that snapshot.
+Use `expect.element` for target-specific post-action verification; its optional
+state uses the same semantic fields as `page.wait`.
 
 The default agent runtime keeps action deduplication and event history in
 memory. Set `TERMINAL_BROWSER_AGENT_JOURNAL=/absolute/path/to/journal` to opt

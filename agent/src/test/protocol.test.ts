@@ -116,7 +116,15 @@ test("validates nested agent request shapes at the wire boundary", () => {
       clickCount: 2,
     },
     token: { pageId: "page-1", documentId: "document-1", revision: 3, snapshotId: "snapshot-1" },
-    expect: { url: "https://example.com", timeoutMs: 500, quietMs: 20 },
+    expect: {
+      url: "https://example.com",
+      element: {
+        target: { locator: { kind: "role", role: "status", name: "Ready", exact: true } },
+        state: { attached: true, text: "Ready" },
+      },
+      timeoutMs: 500,
+      quietMs: 20,
+    },
     output: {
       snapshot: "delta",
       base: { pageId: "page-1", documentId: "document-1", revision: 3, snapshotId: "snapshot-1" },
@@ -196,6 +204,8 @@ test("validates nested agent request shapes at the wire boundary", () => {
   invalid({ op: "page.act", pageId: "page-1", action: { type: "reload", bypassCache: "yes" } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "history", direction: "sideways" } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, expect: { timeoutMs: -1 } });
+  invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, expect: { element: { target: { ref: "r1" }, state: { visible: "yes" } } } });
+  invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, expect: { element: { target: { ref: "r1", locator: { kind: "css", value: "button" } } } } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, output: { snapshot: "compressed" } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, output: { snapshot: "delta" } });
   invalid({
