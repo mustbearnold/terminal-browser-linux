@@ -195,6 +195,18 @@ function validateExpectation(value: unknown): void {
   optionalNonNegativeInteger(expect, "quietMs", "expect.quietMs");
 }
 
+function validateActionOutput(value: unknown): void {
+  const output = requireObject(value, "output");
+  if (output.snapshot !== undefined) requireOneOf(output.snapshot, "output.snapshot", ["full", "delta", "none"]);
+  if (output.base !== undefined) validateSnapshotToken(output.base, "output.base");
+  if (output.snapshot === "delta" && output.base === undefined) {
+    throw new AgentError("INVALID_MESSAGE", "output.base is required when output.snapshot is delta");
+  }
+  if (output.base !== undefined && output.snapshot !== "delta") {
+    throw new AgentError("INVALID_MESSAGE", "output.base is only valid when output.snapshot is delta");
+  }
+}
+
 function validateWaitCondition(value: unknown): void {
   const condition = requireObject(value, "condition");
   const type = requireString(condition.type, "condition.type");
@@ -303,6 +315,7 @@ function validateRequest(message: Record<string, unknown>): void {
     validateAction(message.action);
     if (message.token !== undefined) validateSnapshotToken(message.token, "token");
     if (message.expect !== undefined) validateExpectation(message.expect);
+    if (message.output !== undefined) validateActionOutput(message.output);
     if (message.idempotencyKey !== undefined) {
       const key = requireString(message.idempotencyKey, "idempotencyKey");
       if (key.length > 256) throw new AgentError("INVALID_MESSAGE", "idempotencyKey must be at most 256 characters");

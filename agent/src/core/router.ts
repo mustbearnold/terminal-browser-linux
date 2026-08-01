@@ -157,6 +157,7 @@ export class AgentRequestRouter {
           action: request.action,
           token: request.token,
           expect: request.expect,
+          output: request.output,
         });
         const outcome = await this.actionJournal.execute(key, fingerprint, execute);
         return outcome.replayed ? { ...outcome.result, replayed: true } : outcome.result;
@@ -213,7 +214,7 @@ export class AgentRequestRouter {
     const capabilities = new Set(this.runtime.capabilities());
     requireCapability(capabilities, "page.act");
     requireCapability(capabilities, actionCapability(request.action));
-    return this.page(request.pageId).act(request.action, request.token, request.expect, signal);
+    return this.page(request.pageId).act(request.action, request.token, request.expect, signal, request.output);
   }
 
   private async authorize(

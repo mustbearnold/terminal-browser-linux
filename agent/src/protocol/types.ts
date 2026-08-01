@@ -224,6 +224,13 @@ export interface ActionExpectation {
   quietMs?: number;
 }
 
+export type ActionSnapshotMode = "full" | "delta" | "none";
+
+export interface ActionOutputOptions {
+  snapshot?: ActionSnapshotMode;
+  base?: SnapshotToken;
+}
+
 export interface ActionEffect {
   type: "navigation" | "dom.changed" | "focus.changed" | "value.changed" | "scroll.changed";
   data?: JsonValue;
@@ -244,6 +251,7 @@ export interface ActionResult {
   effects: readonly ActionEffect[];
   proof?: ActionProof;
   snapshot?: PageSnapshot;
+  snapshotDelta?: PageSnapshotDelta;
 }
 
 export type WaitCondition =
@@ -311,6 +319,7 @@ export type AgentRequest =
       action: AgentAction;
       token?: SnapshotToken;
       expect?: ActionExpectation;
+      output?: ActionOutputOptions;
       idempotencyKey?: string;
     })
   | (AgentRequestEnvelope & {

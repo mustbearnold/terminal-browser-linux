@@ -7,6 +7,7 @@ import type { EventSubscription, EventSubscriptionOptions } from "./events";
 import type { LocatorResolutionOptions, ResolvedTarget, SnapshotView } from "./locator";
 import type {
   ActionExpectation,
+  ActionOutputOptions,
   ActionResult,
   AgentAction,
   AgentEvent,
@@ -78,7 +79,13 @@ export interface PageSession {
   currentRevision(): { documentId: DocumentId; revision: number };
   advanceRevision(): { documentId: DocumentId; revision: number };
   navigate(documentId: DocumentId): { documentId: DocumentId; revision: number };
-  act(action: AgentAction, token?: SnapshotToken, expect?: ActionExpectation, signal?: AbortSignal): Promise<ActionResult>;
+  act(
+    action: AgentAction,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+    signal?: AbortSignal,
+    output?: ActionOutputOptions,
+  ): Promise<ActionResult>;
   wait(condition: WaitCondition, timeoutMs?: number, signal?: AbortSignal): Promise<WaitResult>;
   dialog?(dialogId: string, action: DialogAction, signal?: AbortSignal): Promise<PageDialogResult>;
   subscribe(
@@ -215,6 +222,7 @@ export class RevisionedPageSession implements PageSession {
     token?: SnapshotToken,
     expect?: ActionExpectation,
     signal?: AbortSignal,
+    output?: ActionOutputOptions,
   ): Promise<ActionResult> {
     return this.enqueueAction(async () => {
       throwIfAborted(signal);
@@ -225,7 +233,7 @@ export class RevisionedPageSession implements PageSession {
       throwIfAborted(signal);
       const after = await this.backend.identity(signal);
       this.ledger.synchronize(after.pageId, after.documentId, after.revision);
-      return { ...result, snapshot: await this.snapshot(undefined, signal) };
+      return { ...result, ...(await this.actionOutput(output, signal)) };
     }, signal);
   }
 
@@ -279,6 +287,21 @@ export class RevisionedPageSession implements PageSession {
       if (oldest === undefined) return;
       this.snapshotHistory.delete(oldest);
     }
+  }
+
+  private async actionOutput(
+    output: ActionOutputOptions | undefined,
+    signal?: AbortSignal,
+  ): Promise<Pick<ActionResult, "snapshot" | "snapshotDelta">> {
+    const mode = output?.snapshot ?? "full";
+    if (mode === "none") return {};
+    if (mode === "delta") {
+      if (!output?.base) {
+        throw new AgentError("INVALID_REQUEST", "action output delta requires a base snapshot");
+      }
+      return { snapshotDelta: await this.snapshotDelta(output.base, undefined, signal) };
+    }
+    return { snapshot: await this.snapshot(undefined, signal) };
   }
 }
 

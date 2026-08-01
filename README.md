@@ -29,6 +29,10 @@ Use `page.wait` with an `element` condition to wait on semantic state such as
 Hidden existing elements remain addressable for visibility transitions, and a
 targeted `text` condition checks the matched node's text rather than presence alone.
 
+Actions return a full post-action snapshot by default. Set `output.snapshot` to
+`none` to keep only the verified action result, or to `delta` with an
+`output.base` snapshot token to receive only the changes from that snapshot.
+
 The default agent runtime keeps action deduplication and event history in
 memory. Set `TERMINAL_BROWSER_AGENT_JOURNAL=/absolute/path/to/journal` to opt
 into durable action outcomes and per-page event history.

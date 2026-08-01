@@ -127,6 +127,10 @@ function semanticScenarios(pageId) {
       id: "semantic-actions-verify-state",
       name: "semantic-actions-verify-state",
       async run(client) {
+        const compactBase = await client.call("page.snapshot", {
+          pageId,
+          options: { interactiveOnly: false, includeGeometry: false },
+        });
         const initialFormStateWait = await client.call("page.wait", {
           pageId,
           condition: {
@@ -139,10 +143,12 @@ function semanticScenarios(pageId) {
         const filled = await client.call("page.act", {
           pageId,
           action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Full name", exact: true } }, value: "Ada" },
+          output: { snapshot: "none" },
         });
         const checked = await client.call("page.act", {
           pageId,
           action: { type: "check", target: { locator: { kind: "role", role: "switch", name: "Notifications", exact: true } }, checked: true },
+          output: { snapshot: "delta", base: snapshotToken(compactBase) },
         });
         const valueWait = await client.call("page.wait", {
           pageId,
@@ -263,7 +269,10 @@ function semanticScenarios(pageId) {
           && removedAction.verified && detachedWait.satisfied
           && wrongTargetedTextWait.satisfied === false
           && fullName?.state?.value === "Ada" && fullName.state.invalid === undefined
-          && notifications?.state?.checked === true;
+          && notifications?.state?.checked === true
+          && filled.snapshot === undefined
+          && checked.snapshot === undefined
+          && checked.snapshotDelta?.base.snapshotId === compactBase.snapshotId;
         return {
           passed,
           metrics: {
@@ -284,6 +293,7 @@ function semanticScenarios(pageId) {
             ].filter((wait) => wait.satisfied).length,
             attachedWaits: Number(initialFormStateWait.satisfied) + Number(detachedWait.satisfied),
             targetedTextWaits: Number(wrongTargetedTextWait.satisfied === false),
+            compactActionOutputs: Number(filled.snapshot === undefined && checked.snapshotDelta !== undefined),
           },
         };
       },

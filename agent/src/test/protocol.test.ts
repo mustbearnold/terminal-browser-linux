@@ -117,6 +117,10 @@ test("validates nested agent request shapes at the wire boundary", () => {
     },
     token: { pageId: "page-1", documentId: "document-1", revision: 3, snapshotId: "snapshot-1" },
     expect: { url: "https://example.com", timeoutMs: 500, quietMs: 20 },
+    output: {
+      snapshot: "delta",
+      base: { pageId: "page-1", documentId: "document-1", revision: 3, snapshotId: "snapshot-1" },
+    },
   });
   assert.equal(valid.kind, "request");
 
@@ -192,6 +196,14 @@ test("validates nested agent request shapes at the wire boundary", () => {
   invalid({ op: "page.act", pageId: "page-1", action: { type: "reload", bypassCache: "yes" } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "history", direction: "sideways" } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, expect: { timeoutMs: -1 } });
+  invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, output: { snapshot: "compressed" } });
+  invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, output: { snapshot: "delta" } });
+  invalid({
+    op: "page.act",
+    pageId: "page-1",
+    action: { type: "click", target: { ref: "r1" } },
+    output: { snapshot: "none", base: { pageId: "page-1", documentId: "document-1", revision: 0, snapshotId: "snapshot-1" } },
+  });
   invalid({ op: "page.dialog", pageId: "page-1", dialogId: "dialog-1", action: { type: "accept", promptText: 1 } });
   invalid({ op: "page.dialog", pageId: "page-1", dialogId: "dialog-1", action: { type: "answer" } });
   invalid({ op: "page.wait", pageId: "page-1", condition: { type: "element", target: { ref: "r1" }, state: { enabled: "yes" } } });
