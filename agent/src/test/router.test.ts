@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
+import { DurableActionJournal } from "../core/journal";
 import { AgentRequestRouter } from "../core/router";
 import { throwIfAborted } from "../core/cancellation";
 import type { PolicyEngine } from "../core/policy";
@@ -226,4 +230,28 @@ test("continues an idempotent action after its connection closes", async () => {
   assert.equal(firstResponse.ok, true);
   assert.equal(retryResponse.ok, true);
   assert.equal((retryResponse.result as { replayed?: boolean }).replayed, true);
+});
+
+test("replays an action through a journal injected into a new router", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-browser-agent-router-"));
+  try {
+    const filePath = path.join(directory, "actions.json");
+    const request = envelope({
+      op: "page.act",
+      pageId,
+      idempotencyKey: "durable-router-action",
+      action: { type: "click", target: { ref: asSnapshotRef("r1") } },
+    });
+    const first = new AgentRequestRouter(runtime(), undefined, undefined, new DurableActionJournal(filePath));
+    const context = { clientId: "durable-router-client", emit: () => {}, addSubscription: () => {} };
+    const firstResponse = await first.handle(request, context);
+    const second = new AgentRequestRouter(runtime(), undefined, undefined, new DurableActionJournal(filePath));
+    const secondResponse = await second.handle({ ...request, requestId: "durable-router-retry" }, context);
+
+    assert.equal(firstResponse.ok, true);
+    assert.equal(secondResponse.ok, true);
+    assert.equal((secondResponse.result as { replayed?: boolean }).replayed, true);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });

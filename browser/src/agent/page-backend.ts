@@ -18,6 +18,7 @@ import type {
   AgentEvent,
   EventSubscription,
   EventSubscriptionOptions,
+  EventHistoryStore,
   PageBackend,
   PageFrame,
   PageFrameSnapshot,
@@ -76,7 +77,7 @@ const MAIN_FRAME_ID = asFrameId("main");
 
 export class ElectronPageBackend implements PageBackend {
   private readonly resolver = new SnapshotLocatorResolver();
-  private readonly events = new AgentEventBus();
+  private readonly events: AgentEventBus;
   private readonly agentKey = AGENT_STATE_KEY;
   private sequence = 0;
   private remoteRevision = 0;
@@ -90,7 +91,10 @@ export class ElectronPageBackend implements PageBackend {
     private readonly controller: BrowserController,
     private readonly state: () => BrowserState,
     private readonly active: () => boolean,
+    eventHistory?: EventHistoryStore,
   ) {
+    this.events = new AgentEventBus(256, eventHistory);
+    this.sequence = this.events.latestSequence;
     this.controller.onEmit(AGENT_EVENT_CHANNEL, (data) => this.handlePageEvent(data));
     this.controller.onLifecycleEvent = (event) => this.handleLifecycleEvent(event);
     this.controller.onFrameLifecycle = (event) => this.handleFrameLifecycle(event);

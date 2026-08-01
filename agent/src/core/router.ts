@@ -15,7 +15,7 @@ import {
 } from "../protocol/types";
 import type { AgentRuntime } from "./runtime";
 import { actionCapability, operationCapability } from "./capabilities";
-import { IdempotencyCache, stableSerialize } from "./idempotency";
+import { IdempotencyCache, stableSerialize, type ActionJournal } from "./idempotency";
 import { SnapshotLocatorResolver } from "./locator";
 import { DefaultPolicy, type PolicyContext, type PolicyEngine } from "./policy";
 import { RequestCancellationRegistry, throwIfAborted, type RequestExecution } from "./cancellation";
@@ -30,7 +30,7 @@ export interface AgentConnectionContext {
 export class AgentRequestRouter {
   private readonly locator = new SnapshotLocatorResolver();
   private readonly requests = new WeakMap<AgentConnectionContext, RequestCancellationRegistry>();
-  private readonly idempotentActions = new IdempotencyCache<ActionResult>();
+  private readonly actionJournal: ActionJournal<ActionResult>;
   private readonly defaultContext = idleContext();
   readonly trace: TraceRecorder;
 
@@ -38,8 +38,10 @@ export class AgentRequestRouter {
     private readonly runtime: AgentRuntime,
     trace = new TraceRecorder(new MemoryTrace()),
     private readonly policy: PolicyEngine = new DefaultPolicy(),
+    actionJournal: ActionJournal<ActionResult> = new IdempotencyCache<ActionResult>(),
   ) {
     this.trace = trace;
+    this.actionJournal = actionJournal;
   }
 
   close(context: AgentConnectionContext): void {
@@ -140,7 +142,7 @@ export class AgentRequestRouter {
           token: request.token,
           expect: request.expect,
         });
-        const outcome = await this.idempotentActions.execute(key, fingerprint, execute);
+        const outcome = await this.actionJournal.execute(key, fingerprint, execute);
         return outcome.replayed ? { ...outcome.result, replayed: true } : outcome.result;
       }
       case "page.wait":

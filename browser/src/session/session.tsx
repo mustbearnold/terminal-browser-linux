@@ -8,6 +8,7 @@ import { detectBackend, reportedPixelUnit } from "pixel-terminals";
 import type { Backend } from "pixel-terminals";
 import {
   AgentRequestRouter,
+  DurableAgentJournal,
   UnixSocketAgentServer,
   attachAgentConnection,
 } from "terminal-browser-agent";
@@ -287,13 +288,16 @@ class Session {
       targets: () => this.tabs.targets(),
     });
     this.registry.setCdpPort(this.ctx.cdpPort);
+    const journalPath = this.ctx.env.TERMINAL_BROWSER_AGENT_JOURNAL;
+    const agentJournal = journalPath ? new DurableAgentJournal(path.resolve(journalPath)) : undefined;
     this.agentRuntime = new BrowserAgentRuntime(this.ctx.key, this.tabs, (url) =>
       this.tabs.create(normalizeUrl(url, this.ctx.cwd), true),
+      agentJournal,
     );
     const agentServer = new UnixSocketAgentServer(
       path.join(INSTANCES_DIR, `${this.ctx.key}.agent.sock`),
     );
-    const agentRouter = new AgentRequestRouter(this.agentRuntime);
+    const agentRouter = new AgentRequestRouter(this.agentRuntime, undefined, undefined, agentJournal?.actions);
     agentServer.accept((transport) => attachAgentConnection(transport, agentRouter));
     await agentServer.listen();
     this.agentServer = agentServer;

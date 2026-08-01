@@ -5,13 +5,21 @@ export interface IdempotentResult<Result> {
   replayed: boolean;
 }
 
+export interface ActionJournal<Result> {
+  execute(
+    key: string,
+    fingerprint: string,
+    operation: () => Promise<Result>,
+  ): Promise<IdempotentResult<Result>>;
+}
+
 interface Entry<Result> {
   fingerprint: string;
   promise: Promise<Result>;
   settled: boolean;
 }
 
-export class IdempotencyCache<Result> {
+export class IdempotencyCache<Result> implements ActionJournal<Result> {
   private readonly entries = new Map<string, Entry<Result>>();
 
   constructor(private readonly limit = 256) {

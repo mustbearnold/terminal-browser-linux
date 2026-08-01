@@ -7,6 +7,7 @@ import {
 import type {
   AgentCapability,
   AgentRuntime,
+  AgentJournal,
   PageBackend,
   PageIdentity,
   PageSession,
@@ -28,6 +29,7 @@ export class BrowserAgentRuntime implements AgentRuntime {
     private readonly key: string,
     private readonly tabs: TabManager,
     private readonly openTab: (url: string) => Tab,
+    private readonly journal?: AgentJournal,
   ) {}
 
   capabilities(): readonly AgentCapability[] {
@@ -83,6 +85,7 @@ export class BrowserAgentRuntime implements AgentRuntime {
       tab.controller,
       () => tab.state,
       () => this.tabs.active?.id === tab.id,
+      this.journal?.eventHistory(pageId),
     );
     const session = new RevisionedPageSession(backend, new RevisionLedger());
     const entry = { tab, backend, session };

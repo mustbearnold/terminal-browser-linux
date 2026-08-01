@@ -13,15 +13,31 @@ export interface EventSubscription {
   unsubscribe(): void;
 }
 
+export interface EventHistoryStore {
+  load(): readonly AgentEvent[];
+  append(event: AgentEvent): void;
+}
+
 export class AgentEventBus {
   private readonly listeners = new Set<AgentEventListener>();
-  private readonly history: AgentEvent[] = [];
+  private readonly history: AgentEvent[];
   private latest = 0;
 
-  constructor(private readonly historyLimit = 256) {
+  constructor(
+    private readonly historyLimit = 256,
+    private readonly store?: EventHistoryStore,
+  ) {
     if (!Number.isSafeInteger(historyLimit) || historyLimit < 1) {
       throw new AgentError("INVALID_REQUEST", "event history limit must be a positive safe integer");
     }
+    const persisted = store?.load() ?? [];
+    for (let index = 1; index < persisted.length; index += 1) {
+      if (persisted[index].sequence <= persisted[index - 1].sequence) {
+        throw new AgentError("INTERNAL_ERROR", "event history sequences must be strictly increasing");
+      }
+    }
+    this.history = persisted.slice(-historyLimit);
+    this.latest = this.history.at(-1)?.sequence ?? 0;
   }
 
   get size(): number {
@@ -52,6 +68,7 @@ export class AgentEventBus {
     if (event.sequence <= this.latest) {
       throw new AgentError("INVALID_REQUEST", "event sequence must be strictly increasing");
     }
+    this.store?.append(event);
     this.latest = event.sequence;
     this.history.push(event);
     if (this.history.length > this.historyLimit) this.history.shift();
