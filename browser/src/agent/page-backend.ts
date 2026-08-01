@@ -35,6 +35,8 @@ import type {
   PageId,
   PageIdentity,
   PageQueryOptions,
+  PageQueryBatchResult,
+  PageQuerySpec,
   PageQueryResult,
   PageSnapshot,
   PageSnapshotWindow,
@@ -432,6 +434,48 @@ export class ElectronPageBackend implements PageBackend {
       hiddenMatchCount: matches.hiddenCandidateCount ?? 0,
       truncated: matches.candidatesTruncated === true,
       hiddenTruncated: matches.hiddenCandidatesTruncated === true,
+    };
+  }
+
+  async queryBatch(
+    queries: readonly PageQuerySpec[],
+    signal?: AbortSignal,
+  ): Promise<Omit<PageQueryBatchResult, "snapshotId">> {
+    throwIfAborted(signal);
+    const before = await this.identity(signal);
+    const captured = await Promise.all(queries.map(async ({ locator, options }) => {
+      const matches = await this.liveLocatorMatches(
+        locator,
+        { includeHidden: options?.includeHidden === true },
+        signal,
+        options?.limit ?? LIVE_LOCATOR_MAX_CANDIDATES,
+      );
+      if (matches.invalid) throw new AgentError("INVALID_REQUEST", "invalid CSS locator");
+      return { locator, matches };
+    }));
+    throwIfAborted(signal);
+    const after = await this.identity(signal);
+    if (before.documentId !== after.documentId || before.revision !== after.revision) {
+      throw new AgentError("STALE_SNAPSHOT", "page changed while the live query batch was being read", {
+        retryable: true,
+      });
+    }
+    return {
+      pageId: this.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
+      url: after.url,
+      title: after.title,
+      rootFrameId: MAIN_FRAME_ID,
+      queries: captured.map(({ locator, matches }) => ({
+        locator,
+        nodes: matches.candidates ?? [],
+        matchCount: matches.candidateCount ?? 0,
+        hiddenNodes: matches.hiddenCandidates ?? [],
+        hiddenMatchCount: matches.hiddenCandidateCount ?? 0,
+        truncated: matches.candidatesTruncated === true,
+        hiddenTruncated: matches.hiddenCandidatesTruncated === true,
+      })),
     };
   }
 

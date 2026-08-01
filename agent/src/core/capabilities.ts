@@ -43,6 +43,8 @@ export function operationCapability(request: AgentRequest): AgentCapability | un
       return "page.frames";
     case "page.query":
       return "page.query";
+    case "page.query.batch":
+      return "page.query.batch";
     case "page.snapshot":
       return "snapshot.read";
     case "page.snapshot.window":

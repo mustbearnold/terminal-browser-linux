@@ -24,6 +24,8 @@ import type {
   PageFrameSnapshot,
   PageReadResult,
   PageQueryOptions,
+  PageQueryBatchResult,
+  PageQuerySpec,
   PageQueryResult,
   PageSnapshot,
   PageSnapshotWindow,
@@ -39,7 +41,7 @@ import type {
   WaitOutputOptions,
   WaitResult,
 } from "../protocol/types";
-import { asSnapshotId } from "../protocol/types";
+import { asSnapshotId, MAX_PAGE_QUERY_BATCH } from "../protocol/types";
 import type { PageId } from "../protocol/types";
 
 export interface PageBackend {
@@ -73,6 +75,10 @@ export interface PageBackend {
     options?: PageQueryOptions,
     signal?: AbortSignal,
   ): Promise<Omit<PageQueryResult, "snapshotId">>;
+  queryBatch?(
+    queries: readonly PageQuerySpec[],
+    signal?: AbortSignal,
+  ): Promise<Omit<PageQueryBatchResult, "snapshotId">>;
   capture?(options?: CaptureOptions, signal?: AbortSignal): Promise<PageCapture>;
   act(
     action: AgentAction,
@@ -111,6 +117,10 @@ export interface PageSession {
     options?: PageQueryOptions,
     signal?: AbortSignal,
   ): Promise<PageQueryResult>;
+  queryBatch(
+    queries: readonly PageQuerySpec[],
+    signal?: AbortSignal,
+  ): Promise<PageQueryBatchResult>;
   read(target: Target, token?: SnapshotToken, signal?: AbortSignal): Promise<PageReadResult>;
   snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<PageSnapshot>;
   snapshotWindow?(
@@ -237,6 +247,41 @@ export class RevisionedPageSession implements PageSession {
     };
   }
 
+  async queryBatch(
+    queries: readonly PageQuerySpec[],
+    signal?: AbortSignal,
+  ): Promise<PageQueryBatchResult> {
+    throwIfAborted(signal);
+    const normalizedQueries = normalizePageQueryBatch(queries);
+    const captured = this.backend.queryBatch
+      ? await this.backend.queryBatch(normalizedQueries, signal)
+      : await this.queryBatchFromSnapshot(normalizedQueries, signal);
+    throwIfAborted(signal);
+    const state = this.ledger.synchronize(captured.pageId, captured.documentId, captured.revision);
+    if (
+      captured.pageId !== this.pageId ||
+      captured.queries.length !== normalizedQueries.length ||
+      captured.queries.some((entry, index) => {
+        const limit = normalizedQueries[index].options.limit;
+        return (
+          entry.nodes.length > limit ||
+          entry.hiddenNodes.length > limit ||
+          entry.matchCount < entry.nodes.length ||
+          entry.hiddenMatchCount < entry.hiddenNodes.length
+        );
+      })
+    ) {
+      throw new AgentError("INTERNAL_ERROR", "query batch backend returned an invalid result");
+    }
+    return {
+      ...captured,
+      pageId: this.pageId,
+      documentId: state.documentId,
+      revision: state.revision,
+      snapshotId: asSnapshotId(`${this.pageId}:query-batch:${++this.snapshotSequence}`),
+    };
+  }
+
   async read(target: Target, token?: SnapshotToken, signal?: AbortSignal): Promise<PageReadResult> {
     throwIfAborted(signal);
     const before = await this.backend.identity(signal);
@@ -308,6 +353,33 @@ export class RevisionedPageSession implements PageSession {
       hiddenMatchCount: matches.hiddenCandidateCount,
       truncated: matches.candidatesTruncated,
       hiddenTruncated: matches.hiddenCandidatesTruncated,
+    };
+  }
+
+  private async queryBatchFromSnapshot(
+    queries: readonly NormalizedPageQuerySpec[],
+    signal?: AbortSignal,
+  ): Promise<Omit<PageQueryBatchResult, "snapshotId">> {
+    const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
+    return {
+      pageId: snapshot.pageId,
+      documentId: snapshot.documentId,
+      revision: snapshot.revision,
+      url: snapshot.url,
+      title: snapshot.title,
+      rootFrameId: snapshot.rootFrameId,
+      queries: queries.map(({ locator, options }) => {
+        const matches = querySnapshot(locator, snapshot, options);
+        return {
+          locator,
+          nodes: matches.candidates,
+          matchCount: matches.candidateCount,
+          hiddenNodes: matches.hiddenCandidates,
+          hiddenMatchCount: matches.hiddenCandidateCount,
+          truncated: matches.candidatesTruncated,
+          hiddenTruncated: matches.hiddenCandidatesTruncated,
+        };
+      }),
     };
   }
 
@@ -710,6 +782,11 @@ const MAX_SNAPSHOT_WINDOW_LIMIT = 1000;
 const DEFAULT_PAGE_QUERY_LIMIT = 32;
 const MAX_PAGE_QUERY_LIMIT = 256;
 
+type NormalizedPageQuerySpec = {
+  locator: Locator;
+  options: PageQueryOptions & { limit: number };
+};
+
 function normalizePageQueryOptions(options?: PageQueryOptions): PageQueryOptions & { limit: number } {
   const limit = options?.limit ?? DEFAULT_PAGE_QUERY_LIMIT;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_PAGE_QUERY_LIMIT) {
@@ -719,6 +796,16 @@ function normalizePageQueryOptions(options?: PageQueryOptions): PageQueryOptions
     includeHidden: options?.includeHidden === true,
     limit,
   };
+}
+
+function normalizePageQueryBatch(queries: readonly PageQuerySpec[]): readonly NormalizedPageQuerySpec[] {
+  if (!Array.isArray(queries) || queries.length < 1 || queries.length > MAX_PAGE_QUERY_BATCH) {
+    throw new AgentError("INVALID_REQUEST", `page query batch must contain between 1 and ${MAX_PAGE_QUERY_BATCH} locators`);
+  }
+  return queries.map((query) => ({
+    locator: query.locator,
+    options: normalizePageQueryOptions(query.options),
+  }));
 }
 
 function snapshotOptionsKey(options?: SnapshotOptions): string {

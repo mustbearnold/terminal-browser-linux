@@ -58,6 +58,17 @@ async function run() {
       assert.notEqual(frameButton.frameId, "main");
       assert.equal(frameButton.frameId, frameTextbox.frameId);
       assert.ok(frameButton.box && frameButton.box.x > 0 && frameButton.box.y > 0);
+      const queryBatch = await client.call("page.query.batch", {
+        pageId,
+        queries: [
+          { locator: { kind: "role", role: "button", name: "Frame action", exact: true }, options: { limit: 1 } },
+          { locator: { kind: "role", role: "textbox", name: "Frame name", exact: true }, options: { limit: 1 } },
+        ],
+      });
+      assert.equal(queryBatch.revision, initial.revision);
+      assert.equal(queryBatch.queries[0].nodes[0]?.ref, frameButton.ref);
+      assert.equal(queryBatch.queries[1].nodes[0]?.ref, frameTextbox.ref);
+      assert.equal(queryBatch.queries[0].nodes[0]?.frameId, queryBatch.queries[1].nodes[0]?.frameId);
       const cssRead = await client.call("page.read", {
         pageId,
         target: { locator: { kind: "css", value: 'button[aria-label="Frame action"]' } },

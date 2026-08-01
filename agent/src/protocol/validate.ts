@@ -3,6 +3,7 @@ import {
   AGENT_PROTOCOL,
   AGENT_PROTOCOL_VERSION,
   MAX_LOCATOR_DEPTH,
+  MAX_PAGE_QUERY_BATCH,
   MAX_TARGET_INDEX,
   type AgentMessage,
 } from "./types";
@@ -92,6 +93,17 @@ function validatePageQueryOptions(value: unknown): void {
     if (Number(options.limit) > 256) {
       throw new AgentError("INVALID_MESSAGE", "options.limit must be at most 256");
     }
+  }
+}
+
+function validatePageQueryBatch(value: unknown): void {
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_PAGE_QUERY_BATCH) {
+    throw new AgentError("INVALID_MESSAGE", `queries must contain between 1 and ${MAX_PAGE_QUERY_BATCH} locators`);
+  }
+  for (const [index, rawQuery] of value.entries()) {
+    const query = requireObject(rawQuery, `queries[${index}]`);
+    validateLocator(query.locator, `queries[${index}].locator`);
+    if (query.options !== undefined) validatePageQueryOptions(query.options);
   }
 }
 
@@ -346,6 +358,7 @@ function validateRequest(message: Record<string, unknown>): void {
     case "pages.close":
     case "page.frames":
     case "page.query":
+    case "page.query.batch":
     case "page.snapshot":
     case "page.snapshot.window":
     case "page.snapshot.delta":
@@ -368,6 +381,7 @@ function validateRequest(message: Record<string, unknown>): void {
     validateLocator(message.locator, "locator");
     if (message.options !== undefined) validatePageQueryOptions(message.options);
   }
+  if (op === "page.query.batch") validatePageQueryBatch(message.queries);
   if (op === "page.snapshot.window") {
     if (message.options !== undefined) validateSnapshotWindowOptions(message.options);
     if (message.cursor !== undefined) validateSnapshotWindowCursor(message.cursor, "cursor");

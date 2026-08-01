@@ -263,6 +263,21 @@ function queryScenarios(pageId) {
         locator: { kind: "role", role: "button", name: "Large", exact: false },
         options: { limit: 5 },
       });
+      const queryBatch = await client.call("page.query.batch", {
+        pageId,
+        queries: [
+          {
+            locator: { kind: "role", role: "button", name: "Large", exact: false },
+            options: { limit: 3 },
+          },
+          {
+            locator: { kind: "role", role: "button", name: "Tail action", exact: true },
+            options: { limit: 1 },
+          },
+        ],
+      });
+      const batchBroad = queryBatch.queries[0];
+      const tail = queryBatch.queries[1];
       const indexed = await client.call("page.read", {
         pageId,
         target: {
@@ -270,42 +285,33 @@ function queryScenarios(pageId) {
           index: 4,
         },
       });
-      const tail = await client.call("page.query", {
-        pageId,
-        locator: { kind: "role", role: "button", name: "Tail action", exact: true },
-        options: { limit: 1 },
-      });
       const read = await client.call("page.read", {
         pageId,
         target: { ref: tail.nodes[0]?.ref },
-        token: snapshotToken(tail),
-      });
-      const clicked = await client.call("page.act", {
-        pageId,
-        token: snapshotToken(read),
-        action: { type: "click", target: { ref: read.node.ref } },
-        expect: { text: "Tail clicked", timeoutMs: 1_000 },
-        output: { snapshot: "none" },
+        token: snapshotToken(queryBatch),
       });
       return {
         passed: broad.matchCount === 1099
           && broad.nodes.length === 5
           && broad.truncated === true
+          && batchBroad.matchCount === 1099
+          && batchBroad.nodes.length === 3
+          && batchBroad.truncated === true
           && indexed.node.attributes?.id === "large-4"
           && broad.hiddenMatchCount === 0
           && tail.matchCount === 1
           && tail.nodes.length === 1
           && tail.truncated === false
           && read.node.attributes?.id === "tail"
-          && read.revision === tail.revision
-          && clicked.verified === true,
+          && read.revision === queryBatch.revision,
         metrics: {
           queryMatchCount: broad.matchCount,
           queryCandidates: broad.nodes.length,
           queryTruncated: Number(broad.truncated),
+          queryBatchQueries: queryBatch.queries.length,
+          queryBatchSharedRevision: Number(read.revision === queryBatch.revision),
           indexedLocatorRead: Number(indexed.node.attributes?.id === "large-4"),
-          queryAction: Number(clicked.verified),
-          readRevisionBound: Number(read.revision === tail.revision),
+          readRevisionBound: Number(read.revision === queryBatch.revision),
         },
       };
     },

@@ -23,6 +23,8 @@ import {
   type PageFrameSnapshot,
   type PageReadResult,
   type PageQueryOptions,
+  type PageQueryBatchResult,
+  type PageQuerySpec,
   type PageQueryResult,
   type PageSnapshot,
   type PageSnapshotWindow,
@@ -77,6 +79,7 @@ export interface AgentOperationResults {
   "pages.close": { pageId: PageId };
   "page.frames": PageFrameSnapshot;
   "page.query": PageQueryResult;
+  "page.query.batch": PageQueryBatchResult;
   "page.snapshot": PageSnapshot;
   "page.snapshot.window": PageSnapshotWindow;
   "page.snapshot.delta": PageSnapshotDelta;
@@ -172,6 +175,14 @@ export class AgentClient {
       locator,
       ...(queryOptions === undefined ? {} : { options: queryOptions }),
     }, options);
+  }
+
+  queryBatch(
+    pageId: PageId,
+    queries: readonly PageQuerySpec[],
+    options?: AgentCallOptions,
+  ): Promise<PageQueryBatchResult> {
+    return this.call("page.query.batch", { pageId, queries }, options);
   }
 
   read(

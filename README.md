@@ -68,6 +68,11 @@ the live DOM at one revision, returns a bounded candidate set plus total and
 hidden-match counts, and gives each returned ref a token that can be passed to
 the next action.
 
+Use `page.query.batch` when several locator result sets are needed. It evaluates
+up to 32 bounded queries against one revision and returns one shared token, so
+an agent can inspect related controls without separate round trips or mixed
+page state.
+
 Use `page.read` when one control is expected. The result contains the node plus
 the document, revision, and read token that prove which page state was observed;
 that token can be passed to the next action to reject a changed page.

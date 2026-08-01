@@ -52,6 +52,24 @@ test("validates and dispatches structured calls through the typed client", async
   assert.equal(query.matchCount, 1);
   assert.equal(query.nodes.length, 1);
 
+  const queryBatch = await tools.callTool("terminal_browser_page_query_batch", {
+    pageId: String(FIXTURE_PAGE_ID),
+    queries: [
+      {
+        locator: { kind: "role", role: "textbox", name: "Name", exact: true },
+        options: { limit: 1 },
+      },
+      {
+        locator: { kind: "role", role: "button", name: "Continue", exact: true },
+        options: { limit: 1 },
+      },
+    ],
+  });
+  assert.equal(queryBatch.queries.length, 2);
+  assert.equal(queryBatch.queries[0].nodes[0].name, "Name");
+  assert.equal(queryBatch.queries[1].nodes[0].name, "Continue");
+  assert.equal(queryBatch.queries[0].nodes[0].frameId, queryBatch.queries[1].nodes[0].frameId);
+
   const read = await tools.callTool("terminal_browser_page_read", {
     pageId: String(FIXTURE_PAGE_ID),
     target: {

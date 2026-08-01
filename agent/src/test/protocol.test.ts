@@ -181,6 +181,17 @@ test("validates nested agent request shapes at the wire boundary", () => {
   });
   assert.equal(query.kind, "request");
 
+  const queryBatch = parseAgentMessage({
+    ...listRequest(),
+    op: "page.query.batch",
+    pageId: "page-1",
+    queries: [
+      { locator: { kind: "role", role: "button", name: "Continue", exact: true }, options: { limit: 4 } },
+      { locator: { kind: "text", text: "Ready", exact: true } },
+    ],
+  });
+  assert.equal(queryBatch.kind, "request");
+
   assert.throws(
     () => parseAgentMessage({
       ...listRequest(),
@@ -313,6 +324,9 @@ test("validates nested agent request shapes at the wire boundary", () => {
   invalid({ op: "page.act.batch", pageId: "page-1", steps: [{ action: { type: "click" } }] });
   invalid({ op: "page.query", pageId: "page-1" });
   invalid({ op: "page.query", pageId: "page-1", locator: { kind: "role", role: "button" }, options: { limit: 257 } });
+  invalid({ op: "page.query.batch", pageId: "page-1", queries: [] });
+  invalid({ op: "page.query.batch", pageId: "page-1", queries: Array.from({ length: 33 }, () => ({ locator: { kind: "role", role: "button" } })) });
+  invalid({ op: "page.query.batch", pageId: "page-1", queries: [{ locator: { kind: "role", role: "button" }, options: { limit: 257 } }] });
   let deepLocator: unknown = { kind: "role", role: "button" };
   for (let index = 0; index < 8; index += 1) {
     deepLocator = { kind: "role", role: "region", within: deepLocator };

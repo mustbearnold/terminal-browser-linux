@@ -77,6 +77,24 @@ function page(): PageSession {
       truncated: false,
       hiddenTruncated: false,
     }),
+    queryBatch: async (queries) => ({
+      pageId,
+      documentId: identity.documentId,
+      revision: identity.revision,
+      snapshotId: asSnapshotId("query-batch-1"),
+      url: identity.url,
+      title: identity.title,
+      rootFrameId: asFrameId("main"),
+      queries: queries.map(({ locator }) => ({
+        locator,
+        nodes: pageSnapshot.nodes,
+        matchCount: pageSnapshot.nodes.length,
+        hiddenNodes: [],
+        hiddenMatchCount: 0,
+        truncated: false,
+        hiddenTruncated: false,
+      })),
+    }),
     read: async (target) => ({
       pageId,
       documentId: identity.documentId,
@@ -139,6 +157,7 @@ function runtime(): AgentRuntime {
       "snapshot.delta",
       "page.frames",
       "page.query",
+      "page.query.batch",
       "page.capture",
       "page.read",
       "page.act",
@@ -295,6 +314,51 @@ test("routes bounded page queries through the live page resolver", async () => {
   assert.equal(receivedLocator, "role");
   assert.equal((response.result as { matchCount: number }).matchCount, 4);
   assert.equal((response.result as { nodes: readonly unknown[] }).nodes.length, 1);
+});
+
+test("routes revision-consistent query batches through the live page resolver", async () => {
+  let receivedQueries = 0;
+  const queriedPage: PageSession = {
+    ...page(),
+    queryBatch: async (queries) => {
+      receivedQueries = queries.length;
+      return {
+        pageId,
+        documentId: identity.documentId,
+        revision: identity.revision,
+        snapshotId: asSnapshotId("query-batch-1"),
+        url: identity.url,
+        title: identity.title,
+        rootFrameId: asFrameId("main"),
+        queries: queries.map(({ locator }) => ({
+          locator,
+          nodes: pageSnapshot.nodes.slice(0, 1),
+          matchCount: 1,
+          hiddenNodes: [],
+          hiddenMatchCount: 0,
+          truncated: false,
+          hiddenTruncated: false,
+        })),
+      };
+    },
+  };
+  const queriedRuntime: AgentRuntime = {
+    ...runtime(),
+    getPage: (candidate) => (candidate === pageId ? queriedPage : undefined),
+  };
+  const router = new AgentRequestRouter(queriedRuntime);
+  const response = await router.handle(envelope({
+    op: "page.query.batch",
+    pageId,
+    queries: [
+      { locator: { kind: "role", role: "button", name: "Continue", exact: true }, options: { limit: 1 } },
+      { locator: { kind: "text", text: "Continue", exact: true }, options: { limit: 1 } },
+    ],
+  }));
+
+  assert.equal(response.ok, true);
+  assert.equal(receivedQueries, 2);
+  assert.equal((response.result as { queries: readonly unknown[] }).queries.length, 2);
 });
 
 test("rejects actions that the runtime does not advertise", async () => {

@@ -49,6 +49,7 @@ export interface AgentToolOperationMap {
   terminal_browser_pages_close: "pages.close";
   terminal_browser_page_frames: "page.frames";
   terminal_browser_page_query: "page.query";
+  terminal_browser_page_query_batch: "page.query.batch";
   terminal_browser_page_snapshot: "page.snapshot";
   terminal_browser_page_snapshot_window: "page.snapshot.window";
   terminal_browser_page_snapshot_delta: "page.snapshot.delta";
@@ -105,6 +106,10 @@ export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
     locator: locatorSchema(),
     options: pageQueryOptions(),
   }, ["pageId", "locator"]))),
+  tool("terminal_browser_page_query_batch", "Find several bounded live semantic DOM result sets at one revision.", "page.query.batch", "page.query.batch", withLocatorDefinitions(object({
+    pageId: string("Page identifier."),
+    queries: { type: "array", items: pageQuerySpecSchema() },
+  }, ["pageId", "queries"]))),
   tool("terminal_browser_page_snapshot", "Read a semantic DOM snapshot.", "page.snapshot", "snapshot.read", object({
     pageId: string("Page identifier."),
     options: snapshotOptions(),
@@ -335,6 +340,13 @@ function pageQueryOptions(): AgentToolSchema {
     includeHidden: boolean("Include hidden matches in nodes."),
     limit: number("Maximum matches to return."),
   });
+}
+
+function pageQuerySpecSchema(): AgentToolSchema {
+  return object({
+    locator: locatorSchema(),
+    options: pageQueryOptions(),
+  }, ["locator"]);
 }
 
 function snapshotWindowOptions(): AgentToolSchema {

@@ -2,6 +2,7 @@ export const AGENT_PROTOCOL = "terminal-browser.agent" as const;
 export const AGENT_PROTOCOL_VERSION = 1 as const;
 export const MAX_TARGET_INDEX = 255 as const;
 export const MAX_LOCATOR_DEPTH = 8 as const;
+export const MAX_PAGE_QUERY_BATCH = 32 as const;
 
 type Brand<T, Name extends string> = T & { readonly __brand: Name };
 
@@ -29,6 +30,7 @@ export type AgentCapability =
   | "snapshot.window"
   | "page.frames"
   | "page.query"
+  | "page.query.batch"
   | "page.read"
   | "page.act"
   | "page.act.batch"
@@ -149,6 +151,28 @@ export interface PageQueryResult extends SnapshotToken {
   hiddenMatchCount: number;
   truncated: boolean;
   hiddenTruncated: boolean;
+}
+
+export interface PageQuerySpec {
+  locator: Locator;
+  options?: PageQueryOptions;
+}
+
+export interface PageQueryBatchItem {
+  locator: Locator;
+  nodes: readonly SnapshotNode[];
+  matchCount: number;
+  hiddenNodes: readonly SnapshotNode[];
+  hiddenMatchCount: number;
+  truncated: boolean;
+  hiddenTruncated: boolean;
+}
+
+export interface PageQueryBatchResult extends SnapshotToken {
+  url: string;
+  title: string;
+  rootFrameId: FrameId;
+  queries: readonly PageQueryBatchItem[];
 }
 
 export interface SnapshotToken extends PageRevision {
@@ -408,6 +432,11 @@ export type AgentRequest =
       pageId: PageId;
       locator: Locator;
       options?: PageQueryOptions;
+    })
+  | (AgentRequestEnvelope & {
+      op: "page.query.batch";
+      pageId: PageId;
+      queries: readonly PageQuerySpec[];
     })
   | (AgentRequestEnvelope & { op: "page.snapshot"; pageId: PageId; options?: SnapshotOptions })
   | (AgentRequestEnvelope & {

@@ -55,6 +55,7 @@ export class FixtureRuntime implements AgentRuntime {
       "snapshot.delta",
       "page.frames",
       "page.query",
+      "page.query.batch",
       "page.read",
       "page.act",
       "page.act.batch",

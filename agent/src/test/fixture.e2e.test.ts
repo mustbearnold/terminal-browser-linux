@@ -11,6 +11,7 @@ import type {
   PageSnapshotWindow,
   PageSnapshotDelta,
   PageQueryResult,
+  PageQueryBatchResult,
   PageReadResult,
   SnapshotNode,
   SnapshotToken,
@@ -45,6 +46,7 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(hello.capabilities.includes("page.act.click"), true);
   assert.equal(hello.capabilities.includes("page.act.fill"), true);
   assert.equal(hello.capabilities.includes("page.act.history"), true);
+  assert.equal(hello.capabilities.includes("page.query.batch"), true);
   assert.equal(hello.capabilities.includes("pages.activate"), true);
   assert.equal(hello.capabilities.includes("page.act.select"), false);
 
@@ -140,6 +142,22 @@ test("runs the deterministic agent control contract", async () => {
   ));
   assert.equal(scopedQuery.matchCount, 1);
   assert.equal(scopedQuery.nodes[0].ref, query.nodes[0].ref);
+
+  const queryBatch = result<PageQueryBatchResult>(await router.handle(
+    request("page.query.batch", {
+      pageId: FIXTURE_PAGE_ID,
+      queries: [
+        { locator: { kind: "role", role: "textbox", name: "Name", exact: true }, options: { limit: 1 } },
+        { locator: { kind: "role", role: "button", name: "Continue", exact: true }, options: { limit: 1 } },
+      ],
+    }),
+    context,
+  ));
+  assert.equal(queryBatch.queries.length, 2);
+  assert.equal(queryBatch.queries[0].matchCount, 1);
+  assert.equal(queryBatch.queries[1].nodes[0].name, "Continue");
+  assert.equal(queryBatch.revision, query.revision);
+  assert.notEqual(queryBatch.snapshotId, query.snapshotId);
 
   const firstWindow = result<PageSnapshotWindow>(await router.handle(
     request("page.snapshot.window", {
