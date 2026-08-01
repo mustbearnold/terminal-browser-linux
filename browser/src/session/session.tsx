@@ -6,6 +6,11 @@ import { createRoot } from "pixel-react";
 import type { EngineKeyEvent, PixelRoot, Surface } from "pixel-react";
 import { detectBackend, reportedPixelUnit } from "pixel-terminals";
 import type { Backend } from "pixel-terminals";
+import {
+  AgentRequestRouter,
+  UnixSocketAgentServer,
+  attachAgentConnection,
+} from "terminal-browser-agent";
 
 import { configureBrowserSession } from "../page/browser-session";
 import type { DownloadProgress } from "../page/browser-session";
@@ -15,7 +20,7 @@ import { initialBrowserState } from "../page/types";
 import type { BrowserState, BrowserSurfaceLayout } from "../page/types";
 import { zoomDirection } from "../page/zoom";
 import type { ZoomDirection } from "../page/zoom";
-import { lastUrl, setLastUrl, settings, store } from "pixel-store";
+import { INSTANCES_DIR, lastUrl, setLastUrl, settings, store } from "pixel-store";
 import type { DevtoolsDock, InstanceRow } from "pixel-store";
 
 import { Registry } from "../registry";
@@ -36,6 +41,7 @@ import { clampDevtoolsFraction, computeLayout, deviceSpec, dividerFraction } fro
 import type { DeviceMode, DevtoolsPlacement } from "./layout";
 import { fetchSuggestions } from "./suggest";
 import { TabManager } from "./tabs";
+import { BrowserAgentRuntime } from "../agent/runtime";
 
 export interface SessionContext {
   tty?: string;
@@ -106,6 +112,8 @@ class Session {
   private popupSurface: Surface | null = null;
   private devtoolsSurface: Surface | null = null;
   private registry: Registry | null = null;
+  private agentRuntime: BrowserAgentRuntime | null = null;
+  private agentServer: UnixSocketAgentServer | null = null;
 
   private layout: ChromeLayout | null = null;
   private surfaceLayout: BrowserSurfaceLayout | null = null;
@@ -279,6 +287,16 @@ class Session {
       targets: () => this.tabs.targets(),
     });
     this.registry.setCdpPort(this.ctx.cdpPort);
+    this.agentRuntime = new BrowserAgentRuntime(this.ctx.key, this.tabs, (url) =>
+      this.tabs.create(normalizeUrl(url, this.ctx.cwd), true),
+    );
+    const agentServer = new UnixSocketAgentServer(
+      path.join(INSTANCES_DIR, `${this.ctx.key}.agent.sock`),
+    );
+    const agentRouter = new AgentRequestRouter(this.agentRuntime);
+    agentServer.accept((transport) => attachAgentConnection(transport, agentRouter));
+    await agentServer.listen();
+    this.agentServer = agentServer;
     this.render();
   }
 
@@ -327,6 +345,10 @@ class Session {
     try {
       this.root?.setPointerShape("text");
     } catch { }
+    const agentServer = this.agentServer;
+    this.agentServer = null;
+    void agentServer?.close();
+    this.agentRuntime = null;
     this.registry?.dispose();
     this.registry = null;
     this.tabs.stopAll();

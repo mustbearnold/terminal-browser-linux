@@ -40,6 +40,8 @@ engine/packages/pixel-react/dist/
 engine/packages/pixel-react/native/
 agent/app/dist/
 agent/app/.data/
+agent/dist/
+agent/coverage/
 browser/dist/
 cli/dist/
 terminals/dist/

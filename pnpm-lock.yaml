@@ -12,6 +12,15 @@ importers:
         specifier: ^0.25.0
         version: 0.25.12
 
+  agent:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+
   browser:
     dependencies:
       pixel-react:
@@ -26,6 +35,9 @@ importers:
       react:
         specifier: ^18.3.1
         version: 18.3.1
+      terminal-browser-agent:
+        specifier: workspace:*
+        version: link:../agent
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

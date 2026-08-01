@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "terminal-browser-agent": "workspace:*",
     "pixel-react": "workspace:*",
     "pixel-store": "workspace:*",
     "pixel-terminals": "workspace:*",

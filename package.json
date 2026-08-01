@@ -2,6 +2,9 @@
   "name": "terminal-graphics-engine",
   "private": true,
   "scripts": {
+    "agent:build": "pnpm --filter terminal-browser-agent build",
+    "agent:check": "pnpm --filter terminal-browser-agent check",
+    "agent:test": "pnpm --filter terminal-browser-agent test",
     "browser": "pnpm --filter terminal-browser start",
     "build:dist": "scripts/release.sh \"local-$(git rev-parse --short HEAD)\"",
     "install:dist": "scripts/install-local.sh",

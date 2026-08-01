@@ -15,6 +15,7 @@ import {
 } from "pixel-terminals";
 import type { Backend, Direction } from "pixel-terminals";
 import { actionCommand } from "./action";
+import { agentCommand } from "./agent";
 import { control } from "./control";
 import { setupCommand } from "./editors";
 import { commandHelp, helpTopics, rootHelp } from "./help";
@@ -481,6 +482,11 @@ async function main(): Promise<number> {
     };
     if (own.length > 0) fail(`unexpected ${own[0]} — put agent-browser arguments after --`);
     return actionCommand(detectBackend(), options);
+  }
+  if (command === "agent") {
+    const browserKey = takeFlag(args, "--browser");
+    if (args.length > 0) fail(`unexpected ${args[0]} (agent mode reads JSON lines from stdin)`);
+    return agentCommand(detectBackend(), { browserKey });
   }
   const rest = process.argv.slice(2);
   if (asksForHelp(rest)) {

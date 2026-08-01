@@ -1,4 +1,5 @@
 packages:
+  - agent
   - engine/packages/*
   - engine/examples/*
   - browser

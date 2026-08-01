@@ -67,6 +67,14 @@ export class TabManager {
     return this.tabs.length;
   }
 
+  get(id: number): Tab | null {
+    return this.tabs.find((tab) => tab.id === id) ?? null;
+  }
+
+  all(): readonly Tab[] {
+    return this.tabs.slice();
+  }
+
   
   create(url: string, activate = true): Tab {
     const tab = { id: this.seq++, state: initialBrowserState(url), targetId: null } as Tab;

@@ -65,6 +65,21 @@ Examples:
   terminal-browser action --browser 90107-1 --tab 2 -- fill @e3 "hello"
 `,
   },
+  agent: {
+    summary: "Connect a persistent JSON agent session to the open browser",
+    usage: "terminal-browser agent [options]",
+    body: `
+Connects stdin and stdout to the selected terminal-browser agent socket. Each
+line is one versioned JSON request or response.
+
+Options:
+  --browser <key>     A browser key from terminal-browser ls
+
+Examples:
+  terminal-browser agent --browser 90107-1
+  printf '%s\\n' '{"kind":"request",...}' | terminal-browser agent
+`,
+  },
 };
 
 function block(text: string): string {
