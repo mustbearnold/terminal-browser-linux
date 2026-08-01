@@ -82,6 +82,18 @@ function validateSnapshotOptions(value: unknown): void {
   if (options.maxNodes !== undefined) requirePositiveInteger(options.maxNodes, "options.maxNodes");
 }
 
+function validateCaptureOptions(value: unknown): void {
+  const options = requireObject(value, "options");
+  if (options.format !== undefined) requireOneOf(options.format, "options.format", ["png", "jpeg", "webp"]);
+  if (options.quality !== undefined) {
+    requireNonNegativeInteger(options.quality, "options.quality");
+    if (Number(options.quality) > 100) {
+      throw new AgentError("INVALID_MESSAGE", "options.quality must be between 0 and 100");
+    }
+  }
+  optionalBoolean(options, "fullPage", "options.fullPage");
+}
+
 function validateSnapshotToken(value: unknown, field: string): void {
   const token = requireObject(value, field);
   requireString(token.pageId, `${field}.pageId`);
@@ -235,6 +247,7 @@ function validateRequest(message: Record<string, unknown>): void {
     case "pages.close":
     case "page.frames":
     case "page.snapshot":
+    case "page.capture":
     case "page.read":
     case "page.act":
     case "page.wait":
@@ -246,6 +259,7 @@ function validateRequest(message: Record<string, unknown>): void {
   }
 
   if (op === "page.snapshot" && message.options !== undefined) validateSnapshotOptions(message.options);
+  if (op === "page.capture" && message.options !== undefined) validateCaptureOptions(message.options);
   if (op === "page.read") {
     validateTarget(message.target, "target");
     if (message.token !== undefined) validateSnapshotToken(message.token, "token");

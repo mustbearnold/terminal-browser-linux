@@ -16,12 +16,14 @@ import type {
   ActionProof,
   AgentAction,
   AgentEvent,
+  CaptureOptions,
   EventSubscription,
   EventSubscriptionOptions,
   EventHistoryStore,
   PageBackend,
   PageFrame,
   PageFrameSnapshot,
+  PageCapture,
   PageId,
   PageIdentity,
   PageSnapshot,
@@ -261,6 +263,35 @@ export class ElectronPageBackend implements PageBackend {
     this.lastSnapshot = captured;
     this.lastSnapshotOptions = optionsKey;
     return captured;
+  }
+
+  async capture(options?: CaptureOptions, signal?: AbortSignal): Promise<PageCapture> {
+    throwIfAborted(signal);
+    const before = await this.identity(signal);
+    const format = options?.format ?? "png";
+    await this.controller.attachCdp();
+    const result = await this.controller.cdp("Page.captureScreenshot", {
+      format,
+      fromSurface: true,
+      captureBeyondViewport: options?.fullPage ?? false,
+      ...(format === "png" || options?.quality === undefined ? {} : { quality: options.quality }),
+    });
+    throwIfAborted(signal);
+    const data = result.data;
+    if (typeof data !== "string" || data.length === 0) {
+      throw new AgentError("INTERNAL_ERROR", "page capture returned no image data", { retryable: true });
+    }
+    const after = await this.identity(signal);
+    if (before.documentId !== after.documentId || before.revision !== after.revision) {
+      throw new AgentError("STALE_SNAPSHOT", "page changed while it was being captured", { retryable: true });
+    }
+    return {
+      pageId: this.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
+      format,
+      data,
+    };
   }
 
   async act(

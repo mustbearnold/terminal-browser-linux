@@ -10,6 +10,8 @@ import {
   type AgentRequest,
   type AgentResponse,
   type PageObserveResult,
+  type CaptureOptions,
+  type PageCapture,
   type PageIdentity,
   type PageFrameSnapshot,
   type PageSnapshot,
@@ -54,6 +56,7 @@ export interface AgentOperationResults {
   "pages.close": { pageId: PageId };
   "page.frames": PageFrameSnapshot;
   "page.snapshot": PageSnapshot;
+  "page.capture": PageCapture;
   "page.read": SnapshotNode;
   "page.act": ActionResult;
   "page.wait": WaitResult;
@@ -133,6 +136,13 @@ export class AgentClient {
 
   frames(pageId: PageId, options?: AgentCallOptions): Promise<PageFrameSnapshot> {
     return this.call("page.frames", { pageId }, options);
+  }
+
+  capture(pageId: PageId, captureOptions?: CaptureOptions, options?: AgentCallOptions): Promise<PageCapture> {
+    return this.call("page.capture", {
+      pageId,
+      ...(captureOptions === undefined ? {} : { options: captureOptions }),
+    }, options);
   }
 
   async call<Operation extends AgentOperation>(

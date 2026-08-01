@@ -120,6 +120,15 @@ export class AgentRequestRouter {
         return await this.page(request.pageId).frames(signal);
       case "page.snapshot":
         return await this.page(request.pageId).snapshot(request.options, signal);
+      case "page.capture": {
+        const page = this.page(request.pageId);
+        if (!page.capture) {
+          throw new AgentError("CAPABILITY_UNAVAILABLE", "page capture is unavailable", {
+            details: { capability: "page.capture" },
+          });
+        }
+        return await page.capture(request.options, signal);
+      }
       case "page.read": {
         const page = this.page(request.pageId);
         const snapshot = await page.snapshot(undefined, signal);

@@ -160,6 +160,28 @@ test("validates response errors and event sequences", () => {
   );
 });
 
+test("validates page capture options", () => {
+  const capture = parseAgentMessage({
+    ...listRequest(),
+    op: "page.capture",
+    pageId: "page-1",
+    options: { format: "jpeg", quality: 80, fullPage: true },
+  });
+  assert.equal(capture.kind, "request");
+
+  for (const options of [
+    { format: "gif" },
+    { quality: 101 },
+    { quality: 1.5 },
+    { fullPage: "yes" },
+  ]) {
+    assert.throws(
+      () => parseAgentMessage({ ...listRequest(), op: "page.capture", pageId: "page-1", options }),
+      (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
+    );
+  }
+});
+
 test("rejects incomplete transport frames", () => {
   const decoder = new LineJsonDecoder();
   decoder.push(encodeAgentMessage(listRequest()).trimEnd().slice(0, -1));

@@ -1,6 +1,7 @@
 import { RevisionLedger } from "./revisions";
 import { throwIfAborted } from "./cancellation";
 import { SnapshotLocatorResolver } from "./locator";
+import { AgentError } from "../protocol/errors";
 import type { EventSubscription, EventSubscriptionOptions } from "./events";
 import type { ResolvedTarget, SnapshotView } from "./locator";
 import type {
@@ -8,8 +9,10 @@ import type {
   ActionResult,
   AgentAction,
   AgentEvent,
+  CaptureOptions,
   DocumentId,
   PageIdentity,
+  PageCapture,
   PageFrameSnapshot,
   PageSnapshot,
   SnapshotOptions,
@@ -27,6 +30,7 @@ export interface PageBackend {
   identity(signal?: AbortSignal): Promise<PageIdentity>;
   frames(signal?: AbortSignal): Promise<PageFrameSnapshot>;
   snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<Omit<PageSnapshot, "snapshotId">>;
+  capture?(options?: CaptureOptions, signal?: AbortSignal): Promise<PageCapture>;
   act(
     action: AgentAction,
     token?: SnapshotToken,
@@ -46,6 +50,7 @@ export interface PageSession {
   resolve?(target: Target, snapshot: PageSnapshot, signal?: AbortSignal): Promise<ResolvedTarget>;
   frames(signal?: AbortSignal): Promise<PageFrameSnapshot>;
   snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<PageSnapshot>;
+  capture?(options?: CaptureOptions, signal?: AbortSignal): Promise<PageCapture>;
   assertFresh(token: SnapshotToken): void;
   currentRevision(): { documentId: DocumentId; revision: number };
   advanceRevision(): { documentId: DocumentId; revision: number };
@@ -96,6 +101,18 @@ export class RevisionedPageSession implements PageSession {
       revision: state.revision,
       snapshotId: asSnapshotId(`${this.pageId}:${++this.snapshotSequence}`),
     };
+  }
+
+  async capture(options?: CaptureOptions, signal?: AbortSignal): Promise<PageCapture> {
+    throwIfAborted(signal);
+    if (!this.backend.capture) {
+      throw new AgentError("CAPABILITY_UNAVAILABLE", "page capture is unavailable", {
+        details: { capability: "page.capture" },
+      });
+    }
+    const capture = await this.backend.capture(options, signal);
+    throwIfAborted(signal);
+    return capture;
   }
 
   assertFresh(token: SnapshotToken): void {

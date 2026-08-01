@@ -123,6 +123,22 @@ export interface PageSnapshot extends SnapshotToken {
   truncated: boolean;
 }
 
+export type CaptureFormat = "png" | "jpeg" | "webp";
+
+export interface CaptureOptions {
+  format?: CaptureFormat;
+  quality?: number;
+  fullPage?: boolean;
+}
+
+export interface PageCapture {
+  pageId: PageId;
+  documentId: DocumentId;
+  revision: number;
+  format: CaptureFormat;
+  data: string;
+}
+
 export type Locator =
   | { kind: "role"; role: string; name?: string; exact?: boolean }
   | { kind: "text"; text: string; exact?: boolean }
@@ -211,6 +227,7 @@ export type AgentRequest =
   | (AgentRequestEnvelope & { op: "pages.close"; pageId: PageId })
   | (AgentRequestEnvelope & { op: "page.frames"; pageId: PageId })
   | (AgentRequestEnvelope & { op: "page.snapshot"; pageId: PageId; options?: SnapshotOptions })
+  | (AgentRequestEnvelope & { op: "page.capture"; pageId: PageId; options?: CaptureOptions })
   | (AgentRequestEnvelope & { op: "page.read"; pageId: PageId; target: Target; token?: SnapshotToken })
   | (AgentRequestEnvelope & {
       op: "page.act";

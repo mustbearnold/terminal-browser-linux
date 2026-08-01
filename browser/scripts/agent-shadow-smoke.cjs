@@ -22,6 +22,11 @@ async function run() {
       condition: { type: "text", value: "Shadow action" },
       timeoutMs: 3_000,
     });
+    assert.ok(hello.capabilities.includes("page.capture"), "page capture capability was not advertised");
+    const captured = await client.capture(pageId, { format: "png" });
+    assert.equal(captured.format, "png");
+    assert.equal(captured.pageId, pageId);
+    assert.ok(captured.data.length > 100, "page capture returned too little image data");
 
     const events = [];
     const unsubscribe = client.onEvent((event) => events.push(event));
@@ -76,6 +81,7 @@ async function run() {
         shadowNodes: 2,
         typedValue: typed.proof?.value,
         dynamicNode: dynamicButton.name,
+        captureBytes: captured.data.length,
         revisionDelta: after.revision - initial.revision,
         domEvents: events.filter((event) => event.event === "dom.changed").length,
       }));
