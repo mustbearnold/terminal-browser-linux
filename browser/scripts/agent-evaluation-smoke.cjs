@@ -50,7 +50,7 @@ const frameHtml = `<!doctype html><meta charset="utf-8"><title>Frame evaluation 
 const crossOriginChildHtml = `<!doctype html><label>Frame name <input aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input type="checkbox" aria-label="Frame enabled">Frame enabled</label><div role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
 const navigationStartHtml = `<!doctype html><meta charset="utf-8"><title>Navigation start</title><button aria-label="Start action">Start action</button><output>Navigation start</output>`;
 const navigationNextHtml = `<!doctype html><meta charset="utf-8"><title>Navigation next</title><label>Recovered name <input aria-label="Recovered name"></label><button aria-label="Next action" onclick="document.querySelector('output').textContent='Next clicked'">Next action</button><output>Next ready</output>`;
-const eventHtml = `<!doctype html><meta charset="utf-8"><title>Native event fixture</title><button aria-label="Emit console" onclick="console.warn('agent console probe')">Emit console</button><button aria-label="Emit dialog" onclick="alert('agent dialog probe')">Emit dialog</button><button aria-label="Schedule update" onclick="setTimeout(() => document.querySelector('#async-status').textContent = 'Asynchronous update', 180)">Schedule update</button><span id="async-status">Idle</span>`;
+const eventHtml = `<!doctype html><meta charset="utf-8"><title>Native event fixture</title><button aria-label="Emit console" onclick="console.warn('agent console probe')">Emit console</button><button aria-label="Emit dialog" onclick="alert('agent dialog probe')">Emit dialog</button><button aria-label="Emit confirm" onclick="document.querySelector('#dialog-status').textContent = confirm('agent confirm probe') ? 'Confirmed' : 'Dismissed'">Emit confirm</button><button aria-label="Schedule update" onclick="setTimeout(() => document.querySelector('#async-status').textContent = 'Asynchronous update', 180)">Schedule update</button><span id="dialog-status">Idle</span><span id="async-status">Idle</span>`;
 
 async function expectCode(promise, code) {
   await assert.rejects(promise, (error) => error && error.code === code);
@@ -439,9 +439,24 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
     name: "native-page-events-are-delivered",
     async run(client) {
       const events = [];
+      const dialogResults = [];
+      const dialogCalls = [];
+      const dialogActions = new Map([
+        ["agent dialog probe", { type: "accept" }],
+        ["agent confirm probe", { type: "dismiss" }],
+      ]);
       let downloadedPath;
       const unsubscribe = client.onEvent((event) => {
         if (["console", "dialog", "download", "page.error"].includes(event.event)) events.push(event);
+        if (event.event !== "dialog" || event.data?.handled !== "pending") return;
+        const action = dialogActions.get(event.data.message);
+        if (!action) return;
+        const call = client.dialog(event.pageId, event.data.dialogId, action)
+          .then((result) => {
+            dialogResults.push(result);
+            return result;
+          });
+        dialogCalls.push(call);
       });
       try {
         await client.call("page.wait", { pageId: eventPageId, condition: { type: "text", value: "Emit console" }, timeoutMs: 3_000 });
@@ -463,6 +478,13 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
         const dialogEvent = await waitFor(() => events.find(
           (event) => event.event === "dialog" && event.data?.message === "agent dialog probe",
         ));
+        const dialogResult = await waitFor(() => dialogResults.find(
+          (result) => result.dialogId === dialogEvent?.data?.dialogId,
+        ));
+        await expectCode(
+          client.dialog(eventPageId, dialogResult.dialogId, { type: "accept" }),
+          "DIALOG_NOT_FOUND",
+        );
         const dialogCountBeforeNavigation = events.filter((event) => event.event === "dialog").length;
         await client.call("page.act", {
           pageId: eventPageId,
@@ -476,6 +498,21 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
         const dialogAfterNavigation = await waitFor(() => {
           const dialogs = events.filter((event) => event.event === "dialog");
           return dialogs.length > dialogCountBeforeNavigation ? dialogs[dialogs.length - 1] : undefined;
+        });
+        const dialogAfterNavigationResult = await waitFor(() => dialogResults.find(
+          (result) => result.dialogId === dialogAfterNavigation?.data?.dialogId,
+        ));
+        await client.call("page.act", {
+          pageId: eventPageId,
+          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Emit confirm", exact: true } } },
+        });
+        const confirmResult = await waitFor(() => dialogResults.find(
+          (result) => result.message === "agent confirm probe",
+        ));
+        await client.call("page.wait", {
+          pageId: eventPageId,
+          condition: { type: "text", value: "Dismissed" },
+          timeoutMs: 1_000,
         });
         await client.call("page.act", {
           pageId: eventPageId,
@@ -516,8 +553,11 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
         ));
         const passed = consoleEvent?.data?.level === "warning"
           && dialogEvent?.data?.dialogType === "alert"
-          && dialogEvent?.data?.handled === "dismissed"
-          && dialogAfterNavigation?.data?.handled === "dismissed"
+          && dialogEvent?.data?.handled === "pending"
+          && dialogResult?.handled === "accepted"
+          && dialogAfterNavigation?.data?.handled === "pending"
+          && dialogAfterNavigationResult?.handled === "accepted"
+          && confirmResult?.handled === "dismissed"
           && externalWait.satisfied === true
           && stableWait.satisfied === true
           && timedOutWait.satisfied === false
@@ -540,6 +580,7 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
         };
       } finally {
         unsubscribe();
+        await Promise.allSettled(dialogCalls);
         if (typeof downloadedPath === "string") {
           try { fs.unlinkSync(downloadedPath); } catch {}
         }
@@ -577,6 +618,7 @@ async function run() {
       trace: new TraceRecorder(trace),
     });
     const hello = await client.hello();
+    assert.equal(hello.capabilities.includes("page.dialog"), true);
     const opened = await client.call("pages.open", { url: dataUrl(html) });
     pageId = opened.pageId;
     shadowPageId = (await client.call("pages.open", { url: dataUrl(shadowHtml) })).pageId;

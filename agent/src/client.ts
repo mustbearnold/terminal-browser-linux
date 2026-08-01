@@ -12,7 +12,9 @@ import {
   type AgentResponse,
   type PageObserveResult,
   type CaptureOptions,
+  type DialogAction,
   type PageCapture,
+  type PageDialogResult,
   type PageIdentity,
   type PageFrameSnapshot,
   type PageSnapshot,
@@ -68,6 +70,7 @@ export interface AgentOperationResults {
   "page.act": ActionResult;
   "page.wait": WaitResult;
   "page.observe": PageObserveResult;
+  "page.dialog": PageDialogResult;
 }
 
 export type AgentOperation = AgentRequest["op"];
@@ -141,6 +144,15 @@ export class AgentClient {
       events,
       ...(afterSequence === undefined ? {} : { afterSequence }),
     }, callOptions);
+  }
+
+  dialog(
+    pageId: PageId,
+    dialogId: string,
+    action: DialogAction,
+    options?: AgentCallOptions,
+  ): Promise<PageDialogResult> {
+    return this.call("page.dialog", { pageId, dialogId, action }, options);
   }
 
   frames(pageId: PageId, options?: AgentCallOptions): Promise<PageFrameSnapshot> {

@@ -163,6 +163,15 @@ export class AgentRequestRouter {
       }
       case "page.wait":
         return await this.page(request.pageId).wait(request.condition, request.timeoutMs, signal);
+      case "page.dialog": {
+        const page = this.page(request.pageId);
+        if (!page.dialog) {
+          throw new AgentError("CAPABILITY_UNAVAILABLE", "page dialog control is unavailable", {
+            details: { capability: "page.dialog" },
+          });
+        }
+        return await page.dialog(request.dialogId, request.action, signal);
+      }
       case "page.observe": {
         const page = this.page(request.pageId);
         const wanted = new Set(request.events);

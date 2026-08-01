@@ -40,6 +40,7 @@ export type AgentCapability =
   | "page.act.history"
   | "page.wait"
   | "page.observe"
+  | "page.dialog"
   | "snapshot.delta"
   | "page.capture"
   | "unsafe.eval";
@@ -172,6 +173,21 @@ export interface PageCapture {
   data: string;
 }
 
+export type DialogAction =
+  | { type: "accept"; promptText?: string }
+  | { type: "dismiss" };
+
+export interface PageDialogResult {
+  pageId: PageId;
+  dialogId: string;
+  dialogType: "alert" | "confirm" | "prompt" | "beforeunload";
+  message: string;
+  url: string;
+  defaultPrompt?: string;
+  handled: "accepted" | "dismissed";
+  promptText?: string;
+}
+
 export type Locator =
   | { kind: "role"; role: string; name?: string; exact?: boolean }
   | { kind: "text"; text: string; exact?: boolean }
@@ -290,6 +306,12 @@ export type AgentRequest =
       pageId: PageId;
       events: readonly AgentEventType[];
       afterSequence?: number;
+    })
+  | (AgentRequestEnvelope & {
+      op: "page.dialog";
+      pageId: PageId;
+      dialogId: string;
+      action: DialogAction;
     });
 
 export interface PageObserveResult {

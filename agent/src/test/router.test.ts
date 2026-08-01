@@ -224,6 +224,43 @@ test("rejects actions that the runtime does not advertise", async () => {
   assert.deepEqual(response.error?.details, { capability: "page.act.navigate" });
 });
 
+test("routes explicit dialog responses without treating them as page actions", async () => {
+  let received: { dialogId: string; type: string; promptText?: string } | undefined;
+  const dialogPage: PageSession = {
+    ...page(),
+    dialog: async (dialogId, action) => {
+      received = { dialogId, type: action.type, ...(action.type === "accept" && action.promptText !== undefined ? { promptText: action.promptText } : {}) };
+      return {
+        pageId,
+        dialogId,
+        dialogType: "prompt",
+        message: "Name?",
+        url: identity.url,
+        defaultPrompt: "default",
+        handled: "accepted",
+        ...(action.type === "accept" && action.promptText !== undefined ? { promptText: action.promptText } : {}),
+      };
+    },
+  };
+  const dialogRuntime: AgentRuntime = {
+    ...runtime(),
+    capabilities: () => [...runtime().capabilities(), "page.dialog"],
+    getPage: (candidate) => (candidate === pageId ? dialogPage : undefined),
+  };
+  const router = new AgentRequestRouter(dialogRuntime);
+  const response = await router.handle(envelope({
+    op: "page.dialog",
+    pageId,
+    dialogId: "dialog-1",
+    action: { type: "accept", promptText: "Ada" },
+  }));
+
+  assert.equal(response.ok, true);
+  assert.deepEqual(received, { dialogId: "dialog-1", type: "accept", promptText: "Ada" });
+  assert.equal((response.result as { handled: string; promptText?: string }).handled, "accepted");
+  assert.equal((response.result as { promptText?: string }).promptText, "Ada");
+});
+
 test("enforces operation capabilities before invoking a runtime", async () => {
   const restrictedRuntime: AgentRuntime = {
     ...runtime(),

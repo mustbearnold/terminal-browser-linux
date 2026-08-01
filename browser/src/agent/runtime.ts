@@ -57,6 +57,7 @@ export class BrowserAgentRuntime implements AgentRuntime {
       "page.act.history",
       "page.wait",
       "page.observe",
+      "page.dialog",
     ];
   }
 

@@ -260,6 +260,7 @@ function validateRequest(message: Record<string, unknown>): void {
     case "page.act":
     case "page.wait":
     case "page.observe":
+    case "page.dialog":
       requireString(message.pageId, "pageId");
       break;
     default:
@@ -289,10 +290,28 @@ function validateRequest(message: Record<string, unknown>): void {
     validateWaitCondition(message.condition);
     if (message.timeoutMs !== undefined) requireNonNegativeInteger(message.timeoutMs, "timeoutMs");
   }
+  if (op === "page.dialog") {
+    requireString(message.dialogId, "dialogId");
+    validateDialogAction(message.action);
+  }
   if (op === "page.observe") {
     requireStringArray(message.events, "events");
     for (const [index, event] of (message.events as string[]).entries()) validateEventType(event, `events[${index}]`);
     if (message.afterSequence !== undefined) requireNonNegativeInteger(message.afterSequence, "afterSequence");
+  }
+}
+
+function validateDialogAction(value: unknown): void {
+  const action = requireObject(value, "action");
+  const type = requireString(action.type, "action.type");
+  switch (type) {
+    case "accept":
+      if (action.promptText !== undefined) requireStringValue(action.promptText, "action.promptText");
+      return;
+    case "dismiss":
+      return;
+    default:
+      throw new AgentError("INVALID_MESSAGE", `action.type is unsupported: ${type}`);
   }
 }
 

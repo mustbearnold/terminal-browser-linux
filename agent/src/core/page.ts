@@ -11,9 +11,11 @@ import type {
   AgentAction,
   AgentEvent,
   CaptureOptions,
+  DialogAction,
   DocumentId,
   PageIdentity,
   PageCapture,
+  PageDialogResult,
   PageFrameSnapshot,
   PageSnapshot,
   PageSnapshotDelta,
@@ -45,6 +47,7 @@ export interface PageBackend {
     signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">>;
   wait(condition: WaitCondition, timeoutMs?: number, signal?: AbortSignal): Promise<Omit<WaitResult, "snapshot">>;
+  dialog?(dialogId: string, action: DialogAction, signal?: AbortSignal): Promise<PageDialogResult>;
   subscribe(
     listener: (event: AgentEvent) => void,
     options?: EventSubscriptionOptions,
@@ -67,6 +70,7 @@ export interface PageSession {
   navigate(documentId: DocumentId): { documentId: DocumentId; revision: number };
   act(action: AgentAction, token?: SnapshotToken, expect?: ActionExpectation, signal?: AbortSignal): Promise<ActionResult>;
   wait(condition: WaitCondition, timeoutMs?: number, signal?: AbortSignal): Promise<WaitResult>;
+  dialog?(dialogId: string, action: DialogAction, signal?: AbortSignal): Promise<PageDialogResult>;
   subscribe(
     listener: (event: AgentEvent) => void,
     options?: EventSubscriptionOptions,
@@ -213,6 +217,18 @@ export class RevisionedPageSession implements PageSession {
   async wait(condition: WaitCondition, timeoutMs?: number, signal?: AbortSignal): Promise<WaitResult> {
     const result = await this.backend.wait(condition, timeoutMs, signal);
     return result.satisfied ? { ...result, snapshot: await this.snapshot(undefined, signal) } : result;
+  }
+
+  async dialog(dialogId: string, action: DialogAction, signal?: AbortSignal): Promise<PageDialogResult> {
+    throwIfAborted(signal);
+    if (!this.backend.dialog) {
+      throw new AgentError("CAPABILITY_UNAVAILABLE", "page dialog control is unavailable", {
+        details: { capability: "page.dialog" },
+      });
+    }
+    const result = await this.backend.dialog(dialogId, action, signal);
+    throwIfAborted(signal);
+    return result;
   }
 
   async subscribe(

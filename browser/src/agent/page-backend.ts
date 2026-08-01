@@ -19,6 +19,7 @@ import type {
   AgentAction,
   AgentEvent,
   CaptureOptions,
+  DialogAction,
   EventSubscription,
   EventSubscriptionOptions,
   EventHistoryStore,
@@ -26,6 +27,7 @@ import type {
   PageFrame,
   PageFrameSnapshot,
   PageCapture,
+  PageDialogResult,
   PageId,
   PageIdentity,
   PageSnapshot,
@@ -41,6 +43,7 @@ import type {
 } from "terminal-browser-agent";
 import type {
   BrowserAgentEvent,
+  BrowserAgentDialogAction,
   BrowserAgentFrame,
   BrowserAgentFrameLifecycle,
   BrowserController,
@@ -932,6 +935,40 @@ export class ElectronPageBackend implements PageBackend {
       title: after.title,
     };
     return { verified: hasExpectation(expect) ? outcome.satisfied : true, effects, proof };
+  }
+
+  async dialog(dialogId: string, action: DialogAction, signal?: AbortSignal): Promise<PageDialogResult> {
+    throwIfAborted(signal);
+    const pending = this.controller.agentDialog(dialogId);
+    if (!pending) {
+      throw new AgentError("DIALOG_NOT_FOUND", "dialog is no longer pending", {
+        retryable: true,
+        details: { dialogId },
+      });
+    }
+    if (action.type === "accept" && action.promptText !== undefined && pending.dialogType !== "prompt") {
+      throw new AgentError("INVALID_REQUEST", "promptText is only valid for prompt dialogs", {
+        details: { dialogId, dialogType: pending.dialogType },
+      });
+    }
+    const result = await this.controller.handleAgentDialog(dialogId, action as BrowserAgentDialogAction);
+    throwIfAborted(signal);
+    if (!result) {
+      throw new AgentError("DIALOG_NOT_FOUND", "dialog is no longer pending", {
+        retryable: true,
+        details: { dialogId },
+      });
+    }
+    return {
+      pageId: this.pageId,
+      dialogId: result.dialogId,
+      dialogType: result.dialogType,
+      message: result.message,
+      url: result.url,
+      ...(result.defaultPrompt === undefined ? {} : { defaultPrompt: result.defaultPrompt }),
+      handled: result.handled === "accepted" ? "accepted" : "dismissed",
+      ...(result.promptText === undefined ? {} : { promptText: result.promptText }),
+    };
   }
 
   async wait(condition: WaitCondition, timeoutMs = 10_000, signal?: AbortSignal): Promise<Omit<WaitResult, "snapshot">> {
