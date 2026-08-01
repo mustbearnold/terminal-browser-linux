@@ -894,7 +894,7 @@ export class ElectronPageBackend implements PageBackend {
           } catch {}
         } else {
           satisfied = snapshot.nodes.some((node) =>
-            `${node.name} ${node.text ?? ""}`.toLocaleLowerCase().includes(condition.value.toLocaleLowerCase()),
+            textContains(`${node.name} ${node.text ?? ""}`, condition.value),
           );
         }
       }
@@ -1187,7 +1187,7 @@ export class ElectronPageBackend implements PageBackend {
       const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
       if (
         !snapshot.nodes.some((node) =>
-          `${node.name} ${node.text ?? ""}`.toLocaleLowerCase().includes(expect.text!.toLocaleLowerCase()),
+          textContains(`${node.name} ${node.text ?? ""}`, expect.text!),
         )
       ) {
         return false;
@@ -1217,6 +1217,14 @@ function identityChanged(before: PageIdentity, after: PageIdentity): boolean {
     before.title !== after.title ||
     before.revision !== after.revision
   );
+}
+
+function textContains(value: string, expected: string): boolean {
+  return normalizeAgentText(value).toLocaleLowerCase().includes(normalizeAgentText(expected).toLocaleLowerCase());
+}
+
+function normalizeAgentText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
 }
 
 function originForUrl(url: string): string {

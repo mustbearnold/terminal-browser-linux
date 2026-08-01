@@ -93,6 +93,7 @@ async function run() {
     assert.equal(inertNode?.enabled, false);
     assert.equal(disabledNode?.visible, true);
     assert.equal(disabledNode?.enabled, false);
+    await client.call("page.wait", { pageId, condition: { type: "text", value: "Save\n now" }, timeoutMs: 3_000 });
 
     const filled = await client.call("page.act", {
       pageId,
