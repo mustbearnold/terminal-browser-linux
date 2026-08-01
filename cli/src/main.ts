@@ -16,6 +16,7 @@ import {
 import type { Backend, Direction } from "pixel-terminals";
 import { actionCommand } from "./action";
 import { agentCommand } from "./agent";
+import { agentMcpCommand } from "./agent-mcp";
 import { agentToolsCommand } from "./agent-tools";
 import { control } from "./control";
 import { setupCommand } from "./editors";
@@ -494,6 +495,11 @@ async function main(): Promise<number> {
     const list = takeBoolFlag(args, "--list");
     if (args.length > 0) fail(`unexpected ${args[0]} (tools mode reads JSON lines from stdin)`);
     return agentToolsCommand(detectBackend(), { browserKey, list });
+  }
+  if (command === "mcp") {
+    const browserKey = takeFlag(args, "--browser");
+    if (args.length > 0) fail(`unexpected ${args[0]} (MCP mode reads JSON-RPC lines from stdin)`);
+    return agentMcpCommand(detectBackend(), { browserKey });
   }
   const rest = process.argv.slice(2);
   if (asksForHelp(rest)) {

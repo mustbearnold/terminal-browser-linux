@@ -14,6 +14,11 @@ running browser. The CLI can bridge stdin/stdout to it:
 terminal-browser agent --browser <browser-key>
 ```
 
+For MCP-compatible agent hosts, expose the same negotiated tools over stdio:
+```
+terminal-browser mcp --browser <browser-key>
+```
+
 For the browser-compatible control path:
 ```
 pnpm agent:live-smoke

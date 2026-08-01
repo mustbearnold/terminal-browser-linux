@@ -98,6 +98,18 @@ Request shape:
   {"id":"2","cancelRequestId":"page.wait-3"}
 `,
   },
+  mcp: {
+    summary: "Expose browser tools through an MCP stdio server",
+    usage: "terminal-browser mcp [options]",
+    body: `
+Connects to the selected browser and exposes the negotiated agent operations
+through the Model Context Protocol over stdin/stdout. It supports the MCP
+initialize lifecycle, tools/list, tools/call, cancellation, and agent events.
+
+Options:
+  --browser <key>     A browser key from terminal-browser ls
+`,
+  },
 };
 
 function block(text: string): string {
