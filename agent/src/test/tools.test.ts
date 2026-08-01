@@ -44,11 +44,12 @@ test("validates and dispatches structured calls through the typed client", async
   assert.equal(query.matchCount, 1);
   assert.equal(query.nodes.length, 1);
 
-  const node = await tools.callTool("terminal_browser_page_read", {
+  const read = await tools.callTool("terminal_browser_page_read", {
     pageId: String(FIXTURE_PAGE_ID),
     target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } },
   });
-  assert.equal(node.name, "Name");
+  assert.equal(read.node.name, "Name");
+  assert.equal(read.revision, 0);
 
   const batch = await tools.callTool("terminal_browser_page_act_batch", {
     pageId: String(FIXTURE_PAGE_ID),

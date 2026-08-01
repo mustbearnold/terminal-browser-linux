@@ -17,7 +17,6 @@ import {
 import type { AgentRuntime } from "./runtime";
 import { actionCapability, operationCapability } from "./capabilities";
 import { IdempotencyCache, stableSerialize, type ActionJournal } from "./idempotency";
-import { SnapshotLocatorResolver } from "./locator";
 import { DefaultPolicy, type PolicyContext, type PolicyEngine } from "./policy";
 import { RequestCancellationRegistry, throwIfAborted, type RequestExecution } from "./cancellation";
 import { MemoryTrace, TraceRecorder, type TraceDirection } from "./trace";
@@ -29,7 +28,6 @@ export interface AgentConnectionContext {
 }
 
 export class AgentRequestRouter {
-  private readonly locator = new SnapshotLocatorResolver();
   private readonly requests = new WeakMap<AgentConnectionContext, RequestCancellationRegistry>();
   private readonly actionJournal: ActionJournal<ActionResult>;
   private readonly defaultContext = idleContext();
@@ -146,17 +144,7 @@ export class AgentRequestRouter {
         return await page.capture(request.options, signal);
       }
       case "page.read": {
-        const page = this.page(request.pageId);
-        if (page.resolveTarget) {
-          const resolved = await page.resolveTarget(request.target, request.token, signal);
-          return resolved.node;
-        }
-        const snapshot = await page.snapshot(undefined, signal);
-        if (request.token) page.assertFresh(request.token);
-        const resolved = page.resolve
-          ? await page.resolve(request.target, snapshot, signal)
-          : this.locator.resolve(request.target, snapshot);
-        return resolved.node;
+        return await this.page(request.pageId).read(request.target, request.token, signal);
       }
       case "page.act": {
         if (request.idempotencyKey !== undefined) requireIdempotencyKey(request.idempotencyKey);

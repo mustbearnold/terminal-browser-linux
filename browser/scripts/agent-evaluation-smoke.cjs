@@ -151,7 +151,7 @@ function largeWindowScenarios(pageId) {
       });
       const ambiguityDetails = ambiguity?.details;
       return {
-        passed: liveRead.attributes?.id === "tail"
+        passed: liveRead.node.attributes?.id === "tail"
           && liveGlobalTextWait.satisfied
           && liveTargetedTextWait.satisfied
           && liveElementWait.satisfied
@@ -168,7 +168,7 @@ function largeWindowScenarios(pageId) {
           largeWindowPages: windows,
           largeWindowNodes: current.totalNodes,
           largeTargetOffset: current.offset,
-          liveLocatorRead: liveRead.attributes?.id === "tail" ? 1 : 0,
+          liveLocatorRead: liveRead.node.attributes?.id === "tail" ? 1 : 0,
           liveGlobalTextWait: liveGlobalTextWait.satisfied ? 1 : 0,
           liveTargetedTextWait: liveTargetedTextWait.satisfied ? 1 : 0,
           liveElementWait: liveElementWait.satisfied ? 1 : 0,
@@ -239,7 +239,7 @@ function batchScenarios(pageId) {
         && status.status === "completed"
         && status.result?.steps?.length === 3
         && replay.replayed === true
-        && read.state?.value === "agent records";
+        && read.node.state?.value === "agent records";
       return {
         passed,
         metrics: {
@@ -268,10 +268,15 @@ function queryScenarios(pageId) {
         locator: { kind: "role", role: "button", name: "Tail action", exact: true },
         options: { limit: 1 },
       });
+      const read = await client.call("page.read", {
+        pageId,
+        target: { ref: tail.nodes[0]?.ref },
+        token: snapshotToken(tail),
+      });
       const clicked = await client.call("page.act", {
         pageId,
-        token: snapshotToken(tail),
-        action: { type: "click", target: { ref: tail.nodes[0]?.ref } },
+        token: snapshotToken(read),
+        action: { type: "click", target: { ref: read.node.ref } },
         expect: { text: "Tail clicked", timeoutMs: 1_000 },
         output: { snapshot: "none" },
       });
@@ -283,12 +288,15 @@ function queryScenarios(pageId) {
           && tail.matchCount === 1
           && tail.nodes.length === 1
           && tail.truncated === false
+          && read.node.attributes?.id === "tail"
+          && read.revision === tail.revision
           && clicked.verified === true,
         metrics: {
           queryMatchCount: broad.matchCount,
           queryCandidates: broad.nodes.length,
           queryTruncated: Number(broad.truncated),
           queryAction: Number(clicked.verified),
+          readRevisionBound: Number(read.revision === tail.revision),
         },
       };
     },

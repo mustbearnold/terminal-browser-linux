@@ -66,6 +66,10 @@ the live DOM at one revision, returns a bounded candidate set plus total and
 hidden-match counts, and gives each returned ref a token that can be passed to
 the next action.
 
+Use `page.read` when one control is expected. The result contains the node plus
+the document, revision, and read token that prove which page state was observed;
+that token can be passed to the next action to reject a changed page.
+
 In the live Electron runtime, semantic and CSS locators used by `page.read`,
 `page.act`, `page.wait`, and post-action expectations search the current DOM
 directly across frames and shadow roots. This keeps locator and text search

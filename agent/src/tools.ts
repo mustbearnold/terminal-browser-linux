@@ -121,7 +121,7 @@ export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
     pageId: string("Page identifier."),
     options: captureOptions(),
   }, ["pageId"])),
-  tool("terminal_browser_page_read", "Read one semantic element without asking the agent to manage a snapshot envelope.", "page.read", "page.read", object({
+  tool("terminal_browser_page_read", "Read one semantic element and return the revision token that proves what was observed.", "page.read", "page.read", object({
     pageId: string("Page identifier."),
     target: targetSchema(),
     token: snapshotToken(),

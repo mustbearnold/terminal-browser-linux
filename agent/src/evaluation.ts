@@ -249,7 +249,7 @@ export function fixtureScenarios(pageId: PageId): readonly AgentEvaluationScenar
         });
         const pagesCall = await tools.startTool("terminal_browser_pages_list");
         const [snapshot, pages] = await Promise.all([snapshotCall.promise, pagesCall.promise]);
-        const node = await tools.callTool("terminal_browser_page_read", {
+        const read = await tools.callTool("terminal_browser_page_read", {
           pageId,
           target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } },
           token: snapshotToken(snapshot),
@@ -269,8 +269,8 @@ export function fixtureScenarios(pageId: PageId): readonly AgentEvaluationScenar
             && names.has("terminal_browser_page_read")
             && names.has("terminal_browser_page_act_status")
             && pages.pages.some((page) => page.pageId === pageId)
-            && node.role === "textbox"
-            && node.name === "Name"
+            && read.node.role === "textbox"
+            && read.node.name === "Name"
             && statusAction.verified
             && statusReadback.status === "completed"
             && statusReadback.result?.verified === true,
@@ -322,13 +322,13 @@ export function fixtureScenarios(pageId: PageId): readonly AgentEvaluationScenar
           pageId,
           options: { interactiveOnly: false, includeGeometry: false },
         });
-        const node = await client.call("page.read", {
+        const read = await client.call("page.read", {
           pageId,
           target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } },
           token: snapshotToken(snapshot),
         });
         return {
-          passed: node.role === "textbox" && node.name === "Name",
+          passed: read.node.role === "textbox" && read.node.name === "Name" && read.revision === snapshot.revision,
           metrics: { nodes: snapshot.nodes.length },
         };
       },

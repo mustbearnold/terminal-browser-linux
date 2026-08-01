@@ -77,6 +77,16 @@ function page(): PageSession {
       truncated: false,
       hiddenTruncated: false,
     }),
+    read: async (target) => ({
+      pageId,
+      documentId: identity.documentId,
+      revision: identity.revision,
+      snapshotId: asSnapshotId("read-1"),
+      target,
+      url: identity.url,
+      title: identity.title,
+      node: pageSnapshot.nodes[0],
+    }),
     snapshot: async () => pageSnapshot,
     snapshotDelta: async (base) => ({
       pageId,
@@ -214,9 +224,18 @@ test("routes page reads through a live page target resolver when available", asy
   let resolved = false;
   const resolvedPage: PageSession = {
     ...page(),
-    resolve: async (target) => {
+    read: async (target) => {
       resolved = "locator" in target && target.locator.kind === "css";
-      return { ref: asSnapshotRef("r1"), node: pageSnapshot.nodes[0] };
+      return {
+        pageId,
+        documentId: identity.documentId,
+        revision: identity.revision,
+        snapshotId: asSnapshotId("read-1"),
+        target,
+        url: identity.url,
+        title: identity.title,
+        node: { ...pageSnapshot.nodes[0], ref: asSnapshotRef("r1") },
+      };
     },
   };
   const liveRuntime: AgentRuntime = {
@@ -232,7 +251,7 @@ test("routes page reads through a live page target resolver when available", asy
 
   assert.equal(response.ok, true);
   assert.equal(resolved, true);
-  assert.equal((response.result as { ref: string }).ref, "r1");
+  assert.equal((response.result as { node: { ref: string } }).node.ref, "r1");
 });
 
 test("routes bounded page queries through the live page resolver", async () => {

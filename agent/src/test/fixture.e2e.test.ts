@@ -10,7 +10,9 @@ import type {
   PageSnapshotWindow,
   PageSnapshotDelta,
   PageQueryResult,
+  PageReadResult,
   SnapshotNode,
+  SnapshotToken,
 } from "../protocol/types";
 import {
   AGENT_PROTOCOL,
@@ -193,7 +195,7 @@ test("runs the deterministic agent control contract", async () => {
   ));
   assert.equal(wrongTargetedTextWait.satisfied, false);
 
-  const read = result<SnapshotNode>(
+  const read = result<PageReadResult>(
     await router.handle(
       request("page.read", {
         pageId: FIXTURE_PAGE_ID,
@@ -203,7 +205,7 @@ test("runs the deterministic agent control contract", async () => {
       context,
     ),
   );
-  assert.equal(read.name, "Name");
+  assert.equal(read.node.name, "Name");
 
   result(await router.handle(request("page.observe", { pageId: FIXTURE_PAGE_ID, events: ["dom.changed"] }), context));
 
@@ -211,8 +213,8 @@ test("runs the deterministic agent control contract", async () => {
     await router.handle(
       request("page.act", {
         pageId: FIXTURE_PAGE_ID,
-        token: token(snapshot),
-        action: { type: "fill", target: { ref: read.ref }, value: "Ada" },
+        token: token(read),
+        action: { type: "fill", target: { ref: read.node.ref }, value: "Ada" },
       }),
       context,
     ),
@@ -368,7 +370,7 @@ test("runs the deterministic agent control contract", async () => {
     request("page.act", {
       pageId: FIXTURE_PAGE_ID,
       token: token(snapshot),
-      action: { type: "fill", target: { ref: read.ref }, value: "stale" },
+      action: { type: "fill", target: { ref: read.node.ref }, value: "stale" },
     }),
     context,
   );
@@ -676,7 +678,7 @@ function result<T>(response: AgentResponse): T {
   return response.result as T;
 }
 
-function token(snapshot: PageSnapshot) {
+function token(snapshot: SnapshotToken) {
   return {
     pageId: snapshot.pageId,
     documentId: snapshot.documentId,

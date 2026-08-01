@@ -138,7 +138,7 @@ async function run() {
     });
     const final = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
     const status = final.nodes.find((node) => node.attributes?.id === "status");
-    assert.equal(readLaunch.attributes?.id, "launch");
+    assert.equal(readLaunch.node.attributes?.id, "launch");
     assert.equal(status?.name, "Idle");
 
     console.log(JSON.stringify({

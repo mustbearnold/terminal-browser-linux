@@ -153,6 +153,13 @@ export interface SnapshotToken {
   snapshotId: SnapshotId;
 }
 
+export interface PageReadResult extends SnapshotToken {
+  target: Target;
+  url: string;
+  title: string;
+  node: SnapshotNode;
+}
+
 export interface SnapshotWindowCursor extends SnapshotToken {
   offset: number;
   limit: number;

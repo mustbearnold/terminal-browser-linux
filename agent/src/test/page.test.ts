@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { AgentError } from "../protocol/errors";
 import { RevisionedPageSession, type PageBackend } from "../core/page";
 import { RevisionLedger } from "../core/revisions";
 import {
@@ -113,6 +114,23 @@ test("resolves a live target without building a snapshot", async () => {
   assert.equal(result.ref, "r-live");
   assert.equal(backend.resolveTargetCalls, 1);
   assert.equal(backend.snapshotCalls, 0);
+});
+
+test("returns a revision-bound read result and rejects it after a page change", async () => {
+  const backend = new OutputBackend();
+  const page = session(backend);
+  const read = await page.read({ locator: { kind: "role", role: "button", name: "Continue", exact: true } });
+
+  assert.equal(read.node.name, "Continue");
+  assert.equal(read.pageId, pageId);
+  assert.equal(read.revision, 0);
+  assert.equal("locator" in read.target ? read.target.locator.kind : undefined, "role");
+
+  backend.revision = 1;
+  await assert.rejects(
+    page.read({ ref: read.node.ref }, read),
+    (error: unknown) => error instanceof AgentError && error.code === "STALE_SNAPSHOT",
+  );
 });
 
 test("returns a full action snapshot by default", async () => {

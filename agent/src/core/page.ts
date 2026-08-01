@@ -22,6 +22,7 @@ import type {
   PageCapture,
   PageDialogResult,
   PageFrameSnapshot,
+  PageReadResult,
   PageQueryOptions,
   PageQueryResult,
   PageSnapshot,
@@ -110,6 +111,7 @@ export interface PageSession {
     options?: PageQueryOptions,
     signal?: AbortSignal,
   ): Promise<PageQueryResult>;
+  read(target: Target, token?: SnapshotToken, signal?: AbortSignal): Promise<PageReadResult>;
   snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<PageSnapshot>;
   snapshotWindow?(
     options?: SnapshotWindowOptions,
@@ -232,6 +234,42 @@ export class RevisionedPageSession implements PageSession {
       documentId: state.documentId,
       revision: state.revision,
       snapshotId: asSnapshotId(`${this.pageId}:query:${++this.snapshotSequence}`),
+    };
+  }
+
+  async read(target: Target, token?: SnapshotToken, signal?: AbortSignal): Promise<PageReadResult> {
+    throwIfAborted(signal);
+    const before = await this.backend.identity(signal);
+    this.ledger.synchronize(before.pageId, before.documentId, before.revision);
+    if (token) this.ledger.assertFresh(token);
+
+    let resolved: ResolvedTarget;
+    if (this.backend.resolveTarget) {
+      resolved = await this.backend.resolveTarget(target, signal);
+    } else {
+      const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
+      if (token) this.ledger.assertFresh(token);
+      resolved = this.backend.resolve
+        ? await this.backend.resolve(target, snapshot, signal)
+        : this.snapshotLocator.resolve(target, snapshot);
+    }
+
+    throwIfAborted(signal);
+    const after = await this.backend.identity(signal);
+    const state = this.ledger.synchronize(after.pageId, after.documentId, after.revision);
+    if (before.documentId !== after.documentId || before.revision !== after.revision) {
+      throw new AgentError("STALE_SNAPSHOT", "page changed while reading the target", { retryable: true });
+    }
+    if (token) this.ledger.assertFresh(token);
+    return {
+      pageId: this.pageId,
+      documentId: state.documentId,
+      revision: state.revision,
+      snapshotId: asSnapshotId(`${this.pageId}:read:${++this.snapshotSequence}`),
+      target,
+      url: after.url,
+      title: after.title,
+      node: resolved.node,
     };
   }
 
