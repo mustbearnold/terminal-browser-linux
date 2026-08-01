@@ -1,4 +1,4 @@
-import type { AgentAction, AgentCapability } from "../protocol/types";
+import type { AgentAction, AgentCapability, AgentRequest } from "../protocol/types";
 
 export type AgentActionCapability = Extract<AgentCapability, `page.act.${string}`>;
 
@@ -22,5 +22,31 @@ export function actionCapability(action: AgentAction): AgentActionCapability {
       return "page.act.scroll";
     case "navigate":
       return "page.act.navigate";
+  }
+}
+
+export function operationCapability(request: AgentRequest): AgentCapability | undefined {
+  switch (request.op) {
+    case "pages.list":
+      return "pages.list";
+    case "pages.open":
+      return "pages.open";
+    case "pages.close":
+      return "pages.close";
+    case "page.frames":
+      return "page.frames";
+    case "page.snapshot":
+      return "snapshot.read";
+    case "page.read":
+      return "page.read";
+    case "page.act":
+      return "page.act";
+    case "page.wait":
+      return "page.wait";
+    case "page.observe":
+      return "page.observe";
+    case "hello":
+    case "request.cancel":
+      return undefined;
   }
 }

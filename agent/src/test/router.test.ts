@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { AgentRequestRouter } from "../core/router";
 import { throwIfAborted } from "../core/cancellation";
+import type { PolicyEngine } from "../core/policy";
 import type { AgentRuntime } from "../core/runtime";
 import type { PageSession } from "../core/page";
 import {
@@ -147,6 +148,40 @@ test("rejects actions that the runtime does not advertise", async () => {
   assert.equal(response.ok, false);
   assert.equal(response.error?.code, "CAPABILITY_UNAVAILABLE");
   assert.deepEqual(response.error?.details, { capability: "page.act.navigate" });
+});
+
+test("enforces operation capabilities before invoking a runtime", async () => {
+  const restrictedRuntime: AgentRuntime = {
+    ...runtime(),
+    capabilities: () => runtime().capabilities().filter((capability) => capability !== "pages.open"),
+  };
+  const router = new AgentRequestRouter(restrictedRuntime);
+  const response = await router.handle(envelope({ op: "pages.open", url: "https://example.org" }));
+
+  assert.equal(response.ok, false);
+  assert.equal(response.error?.code, "CAPABILITY_UNAVAILABLE");
+  assert.deepEqual(response.error?.details, { capability: "pages.open" });
+});
+
+test("enforces injected policy decisions with request context", async () => {
+  const policy: PolicyEngine = {
+    decide: (context) => context.capability === "page.act.click"
+      ? { allowed: false, reason: `blocked ${context.pageId}` }
+      : { allowed: true },
+  };
+  const router = new AgentRequestRouter(runtime(), undefined, policy);
+  const response = await router.handle(
+    envelope({
+      op: "page.act",
+      pageId,
+      action: { type: "click", target: { ref: asSnapshotRef("r1") } },
+    }),
+  );
+
+  assert.equal(response.ok, false);
+  assert.equal(response.error?.code, "POLICY_DENIED");
+  assert.equal(response.error?.message, `blocked ${pageId}`);
+  assert.deepEqual(response.error?.details, { capability: "page.act.click" });
 });
 
 test("continues an idempotent action after its connection closes", async () => {

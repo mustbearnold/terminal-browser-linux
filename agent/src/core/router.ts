@@ -2,6 +2,7 @@ import { AgentError } from "../protocol/errors";
 import type {
   ActionResult,
   AgentEvent,
+  AgentAction,
   AgentMessage,
   AgentRequest,
   AgentResponse,
@@ -13,9 +14,10 @@ import {
   type PageId,
 } from "../protocol/types";
 import type { AgentRuntime } from "./runtime";
-import { actionCapability } from "./capabilities";
+import { actionCapability, operationCapability } from "./capabilities";
 import { IdempotencyCache, stableSerialize } from "./idempotency";
 import { SnapshotLocatorResolver } from "./locator";
+import { DefaultPolicy, type PolicyContext, type PolicyEngine } from "./policy";
 import { RequestCancellationRegistry, throwIfAborted, type RequestExecution } from "./cancellation";
 import { MemoryTrace, TraceRecorder, type TraceDirection } from "./trace";
 
@@ -32,7 +34,11 @@ export class AgentRequestRouter {
   private readonly defaultContext = idleContext();
   readonly trace: TraceRecorder;
 
-  constructor(private readonly runtime: AgentRuntime, trace = new TraceRecorder(new MemoryTrace())) {
+  constructor(
+    private readonly runtime: AgentRuntime,
+    trace = new TraceRecorder(new MemoryTrace()),
+    private readonly policy: PolicyEngine = new DefaultPolicy(),
+  ) {
     this.trace = trace;
   }
 
@@ -80,6 +86,11 @@ export class AgentRequestRouter {
   }
 
   private async dispatch(request: AgentRequest, context: AgentConnectionContext, signal: AbortSignal): Promise<unknown> {
+    const capability = operationCapability(request);
+    if (capability) {
+      requireCapability(new Set(this.runtime.capabilities()), capability);
+      await this.authorize(context, capability, requestPolicyContext(request));
+    }
     switch (request.op) {
       case "hello": {
         context.clientId = request.clientId;
@@ -115,6 +126,11 @@ export class AgentRequestRouter {
       }
       case "page.act": {
         if (request.idempotencyKey !== undefined) requireIdempotencyKey(request.idempotencyKey);
+        await this.authorize(context, actionCapability(request.action), {
+          pageId: request.pageId,
+          action: request.action,
+          origin: originForAction(request.action),
+        });
         const execute = () => this.executeAction(request, signal);
         if (request.idempotencyKey === undefined) return await execute();
         const key = `${context.clientId}\u0000${String(request.pageId)}\u0000${request.idempotencyKey}`;
@@ -173,6 +189,21 @@ export class AgentRequestRouter {
     return this.page(request.pageId).act(request.action, request.token, request.expect, signal);
   }
 
+  private async authorize(
+    context: AgentConnectionContext,
+    capability: AgentCapability,
+    extra: Omit<PolicyContext, "clientId" | "capability"> = {},
+  ): Promise<void> {
+    const decision = await this.policy.decide({ clientId: context.clientId, capability, ...extra });
+    if (decision.allowed && !decision.requiresConfirmation) return;
+    throw new AgentError("POLICY_DENIED", decision.reason ?? "agent policy denied the request", {
+      details: {
+        capability,
+        ...(decision.requiresConfirmation ? { requiresConfirmation: true } : {}),
+      },
+    });
+  }
+
   private registry(context: AgentConnectionContext): RequestCancellationRegistry {
     let registry = this.requests.get(context);
     if (!registry) {
@@ -215,6 +246,30 @@ function requireCapability(capabilities: ReadonlySet<AgentCapability>, capabilit
 function requireIdempotencyKey(key: string): void {
   if (key.length === 0 || key.length > 256) {
     throw new AgentError("INVALID_REQUEST", "idempotencyKey must be between 1 and 256 characters");
+  }
+}
+
+function requestPolicyContext(request: AgentRequest): Omit<PolicyContext, "clientId" | "capability"> {
+  const context: Omit<PolicyContext, "clientId" | "capability"> = {};
+  if ("pageId" in request) context.pageId = request.pageId;
+  if (request.op === "page.act") {
+    context.action = request.action;
+    context.origin = originForAction(request.action);
+  } else if (request.op === "pages.open") {
+    context.origin = originForUrl(request.url);
+  }
+  return context;
+}
+
+function originForAction(action: AgentAction): string | undefined {
+  return action.type === "navigate" ? originForUrl(action.url) : undefined;
+}
+
+function originForUrl(url: string): string | undefined {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return undefined;
   }
 }
 
