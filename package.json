@@ -4,6 +4,7 @@
   "scripts": {
     "agent:build": "pnpm --filter terminal-browser-agent build",
     "agent:check": "pnpm --filter terminal-browser-agent check",
+    "agent:e2e": "pnpm --filter terminal-browser-agent test:fixture",
     "agent:test": "pnpm --filter terminal-browser-agent test",
     "browser": "pnpm --filter terminal-browser start",
     "build:dist": "scripts/release.sh \"local-$(git rev-parse --short HEAD)\"",

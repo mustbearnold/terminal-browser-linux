@@ -14,6 +14,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "pnpm build && node --test dist/test/*.test.js",
+    "test:fixture": "pnpm build && node --test dist/test/fixture.e2e.test.js",
     "check": "pnpm typecheck && pnpm test"
   },
   "devDependencies": {
