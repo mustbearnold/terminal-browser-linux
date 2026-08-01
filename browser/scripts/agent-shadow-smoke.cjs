@@ -1,0 +1,153 @@
+"use strict";
+
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { spawn } = require("node:child_process");
+const { AgentClient } = require("../../agent/dist");
+
+const root = path.resolve(__dirname, "../..");
+const electron = path.join(root, "browser/node_modules/.bin/electron");
+const browserMain = path.join(root, "browser/dist/main.js");
+const runtimeHome = process.env.XDG_RUNTIME_DIR || path.join(os.homedir(), ".local/state");
+const instancesDir = path.join(runtimeHome, "terminal-browser", "instances");
+
+const html = `<!doctype html><meta charset="utf-8"><title>Shadow control fixture</title><style>body{font:16px sans-serif;margin:24px}x-control{display:block;width:320px}button,input{font:16px sans-serif;margin:8px;padding:8px}</style><x-control></x-control><script>customElements.define('x-control',class extends HTMLElement{constructor(){super();const root=this.attachShadow({mode:'open'});root.innerHTML='<label>Shadow name <input aria-label="Shadow name"></label><button aria-label="Shadow action">Shadow action</button><span id="status">Idle</span>';root.querySelector('button').addEventListener('click',()=>{root.querySelector('#status').textContent='Clicked';const dynamic=document.createElement('button');dynamic.setAttribute('aria-label','Dynamic action');dynamic.textContent='Dynamic action';root.append(dynamic)})}});</script>`;
+
+async function run() {
+  const existing = new Set(listSockets());
+  const host = spawn(
+    "script",
+    ["-qefc", `${shellQuote(electron)} ${shellQuote(browserMain)} --no-toolbar`, "/dev/null"],
+    { cwd: root, detached: true, stdio: "ignore" },
+  );
+  let client;
+  let pageId;
+  try {
+    const socket = await waitForSocket(existing, 15_000);
+    client = await AgentClient.connect(socket, { clientId: "shadow-smoke" });
+    const hello = await client.hello();
+    const opened = await client.call("pages.open", { url: dataUrl(html) });
+    pageId = opened.pageId;
+    await client.call("page.wait", {
+      pageId,
+      condition: { type: "text", value: "Shadow action" },
+      timeoutMs: 3_000,
+    });
+
+    const events = [];
+    const unsubscribe = client.onEvent((event) => events.push(event));
+    try {
+      await client.observe(pageId, ["dom.changed"]);
+      const initial = await client.call("page.snapshot", {
+        pageId,
+        options: { includeGeometry: false },
+      });
+      const shadowButton = initial.nodes.find((node) => node.name === "Shadow action");
+      const shadowTextbox = initial.nodes.find((node) => node.name === "Shadow name");
+      assert.ok(shadowButton, "shadow button was not exposed in the snapshot");
+      assert.ok(shadowTextbox, "shadow textbox was not exposed in the snapshot");
+      assert.equal(shadowButton.frameId, "main");
+      assert.equal(shadowTextbox.frameId, "main");
+
+      const filled = await client.call("page.act", {
+        pageId,
+        action: {
+          type: "fill",
+          target: { locator: { kind: "role", role: "textbox", name: "Shadow name", exact: true } },
+          value: "Ada",
+        },
+      });
+      const typed = await client.call("page.act", {
+        pageId,
+        action: { type: "type", text: " Lovelace" },
+      });
+      const clicked = await client.call("page.act", {
+        pageId,
+        action: {
+          type: "click",
+          target: { locator: { kind: "role", role: "button", name: "Shadow action", exact: true } },
+        },
+        expect: { text: "Clicked", timeoutMs: 3_000 },
+      });
+      const after = await client.call("page.snapshot", {
+        pageId,
+        options: { interactiveOnly: false },
+      });
+      const dynamicButton = after.nodes.find((node) => node.name === "Dynamic action");
+      assert.equal(filled.verified, true);
+      assert.equal(typed.verified, true);
+      assert.equal(typed.proof?.value, "Ada Lovelace");
+      assert.equal(clicked.verified, true);
+      assert.ok(dynamicButton, "shadow mutation was not exposed in the next snapshot");
+      assert.ok(after.revision > initial.revision, "shadow mutation did not advance the revision");
+      assert.ok(events.some((event) => event.event === "dom.changed"), "shadow mutation emitted no event");
+
+      console.log(JSON.stringify({
+        protocol: `${hello.protocol}/${hello.version}`,
+        shadowNodes: 2,
+        typedValue: typed.proof?.value,
+        dynamicNode: dynamicButton.name,
+        revisionDelta: after.revision - initial.revision,
+        domEvents: events.filter((event) => event.event === "dom.changed").length,
+      }));
+    } finally {
+      unsubscribe();
+    }
+  } finally {
+    if (client) {
+      if (pageId) await client.call("pages.close", { pageId }).catch(() => {});
+      await client.close().catch(() => {});
+    }
+    stopHost(host);
+  }
+}
+
+function listSockets() {
+  try {
+    return fs
+      .readdirSync(instancesDir)
+      .filter((name) => name.endsWith(".agent.sock"))
+      .map((name) => path.join(instancesDir, name));
+  } catch {
+    return [];
+  }
+}
+
+async function waitForSocket(existing, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const socket = listSockets().find((candidate) => !existing.has(candidate));
+    if (socket) return socket;
+    await delay(100);
+  }
+  throw new Error(`agent socket did not appear in ${instancesDir}`);
+}
+
+function stopHost(host) {
+  if (!host.pid) return;
+  try {
+    process.kill(-host.pid, "SIGTERM");
+  } catch {}
+  try {
+    host.kill("SIGTERM");
+  } catch {}
+}
+
+function dataUrl(value) {
+  return `data:text/html;base64,${Buffer.from(value).toString("base64")}`;
+}
+
+function shellQuote(value) {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+run().catch((error) => {
+  process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
+  process.exitCode = 1;
+});

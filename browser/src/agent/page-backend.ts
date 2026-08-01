@@ -573,10 +573,16 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined): stri
     };
     const interactiveFor = (el, role) => el.matches("a[href],button,input,select,textarea,[tabindex],summary,[contenteditable=true]") || el.hasAttribute("role") || role === "heading";
     const focusableFor = (el) => el.tabIndex >= 0 || el.matches("a[href],button,input,select,textarea");
+    const activeFor = (el) => {
+      const root = el.getRootNode();
+      let active = root && root.activeElement ? root.activeElement : document.activeElement;
+      while (active && active.shadowRoot && active.shadowRoot.activeElement) active = active.shadowRoot.activeElement;
+      return active;
+    };
     const stateFor = (el) => {
       const value = {};
       if (el.disabled || el.getAttribute("aria-disabled") === "true") value.disabled = true;
-      if (document.activeElement === el) value.focused = true;
+      if (activeFor(el) === el) value.focused = true;
       if ("checked" in el && typeof el.checked === "boolean") value.checked = el.checked;
       if ("selected" in el && typeof el.selected === "boolean") value.selected = el.selected;
       if (el.getAttribute("aria-expanded")) value.expanded = el.getAttribute("aria-expanded") === "true";
@@ -622,6 +628,10 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined): stri
         nextParent = ref;
       }
       for (const child of el.children) visit(child, nextParent);
+      if (el.shadowRoot) {
+        state.observeRoot(el.shadowRoot);
+        for (const child of el.shadowRoot.children) visit(child, nextParent);
+      }
     };
     visit(document.body || document.documentElement, null);
     return {
@@ -668,7 +678,14 @@ function agentStateSetupScript(key: string): string {
         emit();
       };
       const observer = new MutationObserver(invalidate);
-      observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+      const observedRoots = new WeakSet();
+      const observeRoot = (root) => {
+        if (observedRoots.has(root)) return;
+        observedRoots.add(root);
+        observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
+      };
+      state.observeRoot = observeRoot;
+      observeRoot(document);
       for (const event of ["input", "change", "focusin", "focusout"]) {
         document.addEventListener(event, invalidate, true);
       }
@@ -686,7 +703,21 @@ function inspectScript(key: string, ref: string): string {
     const rect = el.getBoundingClientRect();
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
-    const hit = document.elementFromPoint(x, y);
+    const root = el.getRootNode();
+    const activeFor = () => root && root.activeElement ? root.activeElement : document.activeElement;
+    const hit = typeof root.elementFromPoint === "function" ? root.elementFromPoint(x, y) : document.elementFromPoint(x, y);
+    const composedHit = (candidate, target) => {
+      if (!target) return false;
+      if (candidate === target || candidate.contains(target)) return true;
+      let current = candidate;
+      while (current && current.getRootNode) {
+        const currentRoot = current.getRootNode();
+        if (!currentRoot || !currentRoot.host) break;
+        current = currentRoot.host;
+        if (current === target || current.contains(target)) return true;
+      }
+      return false;
+    };
     const style = getComputedStyle(el);
     return {
       ok: true,
@@ -694,12 +725,12 @@ function inspectScript(key: string, ref: string): string {
       y,
       visible: style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0,
       enabled: !el.disabled && el.getAttribute("aria-disabled") !== "true",
-      occluded: !!hit && hit !== el && !el.contains(hit),
+      occluded: !!hit && !composedHit(el, hit),
       editable:
         el.isContentEditable ||
         el.tagName === "TEXTAREA" ||
         (el.tagName === "INPUT" && !["checkbox", "radio", "file", "button", "submit", "reset", "image"].includes(el.type)),
-      focused: document.activeElement === el,
+      focused: activeFor(el) === el,
       role: el.getAttribute("role") || el.tagName.toLowerCase(),
       name: el.getAttribute("aria-label") || el.innerText || el.value || "",
       value: "value" in el && typeof el.value === "string" ? el.value : undefined,
@@ -712,6 +743,8 @@ function fillScript(key: string, ref: string, value: string): string {
     const state = window[${JSON.stringify(key)}];
     const el = state && state.refs && state.refs.get(${JSON.stringify(ref)});
     if (!el || !el.isConnected) return { ok: false };
+    const root = el.getRootNode();
+    const activeFor = () => root && root.activeElement ? root.activeElement : document.activeElement;
     const editable = el.isContentEditable || el.tagName === "TEXTAREA" ||
       (el.tagName === "INPUT" && !["checkbox", "radio", "file", "button", "submit", "reset", "image"].includes(el.type));
     const role = el.getAttribute("role") || el.tagName.toLowerCase();
@@ -733,7 +766,7 @@ function fillScript(key: string, ref: string, value: string): string {
     return {
       ok: true,
       editable: true,
-      focused: document.activeElement === el,
+      focused: activeFor(el) === el,
       role,
       name,
       value: "value" in el ? String(el.value ?? "") : String(el.innerText ?? ""),
@@ -743,7 +776,8 @@ function fillScript(key: string, ref: string, value: string): string {
 
 function activeElementScript(): string {
   return `(() => {
-    const el = document.activeElement;
+    let el = document.activeElement;
+    while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
     if (!el || el === document.body || el === document.documentElement) return { ok: false };
     const editable = el.isContentEditable || el.tagName === "TEXTAREA" ||
       (el.tagName === "INPUT" && !["checkbox", "radio", "file", "button", "submit", "reset", "image"].includes(el.type));
