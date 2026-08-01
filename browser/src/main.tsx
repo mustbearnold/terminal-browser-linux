@@ -13,6 +13,9 @@ import type { SessionHandle } from "./session/session";
 app.commandLine.appendSwitch("disable-renderer-backgrounding");
 app.commandLine.appendSwitch("disable-background-timer-throttling");
 app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
+if (process.env.TERMINAL_BROWSER_SMOKE_NO_SANDBOX === "1") {
+  app.commandLine.appendSwitch("no-sandbox");
+}
 try {
   ensureDataDir();
   fs.mkdirSync(LOGS_DIR, { recursive: true });
