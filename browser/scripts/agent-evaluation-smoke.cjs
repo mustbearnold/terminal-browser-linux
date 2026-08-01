@@ -50,7 +50,7 @@ const frameHtml = `<!doctype html><meta charset="utf-8"><title>Frame evaluation 
 const crossOriginChildHtml = `<!doctype html><label>Frame name <input aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input type="checkbox" aria-label="Frame enabled">Frame enabled</label><div role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
 const navigationStartHtml = `<!doctype html><meta charset="utf-8"><title>Navigation start</title><button aria-label="Start action">Start action</button><output>Navigation start</output>`;
 const navigationNextHtml = `<!doctype html><meta charset="utf-8"><title>Navigation next</title><label>Recovered name <input aria-label="Recovered name"></label><button aria-label="Next action" onclick="document.querySelector('output').textContent='Next clicked'">Next action</button><output>Next ready</output>`;
-const eventHtml = `<!doctype html><meta charset="utf-8"><title>Native event fixture</title><button aria-label="Emit console" onclick="console.warn('agent console probe')">Emit console</button><button aria-label="Emit dialog" onclick="alert('agent dialog probe')">Emit dialog</button>`;
+const eventHtml = `<!doctype html><meta charset="utf-8"><title>Native event fixture</title><button aria-label="Emit console" onclick="console.warn('agent console probe')">Emit console</button><button aria-label="Emit dialog" onclick="alert('agent dialog probe')">Emit dialog</button><button aria-label="Schedule update" onclick="setTimeout(() => document.querySelector('#async-status').textContent = 'Asynchronous update', 180)">Schedule update</button><span id="async-status">Idle</span>`;
 
 async function expectCode(promise, code) {
   await assert.rejects(promise, (error) => error && error.code === code);
@@ -477,6 +477,25 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
           const dialogs = events.filter((event) => event.event === "dialog");
           return dialogs.length > dialogCountBeforeNavigation ? dialogs[dialogs.length - 1] : undefined;
         });
+        await client.call("page.act", {
+          pageId: eventPageId,
+          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Schedule update", exact: true } } },
+        });
+        const externalWait = await client.call("page.wait", {
+          pageId: eventPageId,
+          condition: { type: "text", value: "Asynchronous update" },
+          timeoutMs: 2_000,
+        });
+        const stableWait = await client.call("page.wait", {
+          pageId: eventPageId,
+          condition: { type: "stable", quietMs: 50 },
+          timeoutMs: 1_000,
+        });
+        const timedOutWait = await client.call("page.wait", {
+          pageId: eventPageId,
+          condition: { type: "text", value: "This text never appears" },
+          timeoutMs: 100,
+        });
         await client.call("pages.activate", { pageId: downloadPageId });
         await client.call("page.act", {
           pageId: downloadPageId,
@@ -499,6 +518,10 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
           && dialogEvent?.data?.dialogType === "alert"
           && dialogEvent?.data?.handled === "dismissed"
           && dialogAfterNavigation?.data?.handled === "dismissed"
+          && externalWait.satisfied === true
+          && stableWait.satisfied === true
+          && timedOutWait.satisfied === false
+          && timedOutWait.elapsedMs >= 90
           && downloadEvent?.data?.filename === "agent-control-download.txt"
           && downloadEvent?.data?.receivedBytes > 0
           && errorEvent?.data?.mainFrame === true
@@ -508,6 +531,9 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
           metrics: {
             consoleEvents: events.filter((event) => event.event === "console").length,
             dialogEvents: events.filter((event) => event.event === "dialog").length,
+            externalWaitMs: externalWait.elapsedMs,
+            stableWaitMs: stableWait.elapsedMs,
+            timedOutWaitMs: timedOutWait.elapsedMs,
             downloadStates: new Set(events.filter((event) => event.event === "download").map((event) => event.data?.state)).size,
             pageErrors: events.filter((event) => event.event === "page.error").length,
           },

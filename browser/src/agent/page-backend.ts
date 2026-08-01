@@ -103,6 +103,13 @@ const AGENT_STATE_KEY = "__terminalBrowserAgent";
 const AGENT_EVENT_CHANNEL = "terminal-browser.agent";
 const MAIN_FRAME_ID = asFrameId("main");
 const CSS_RESOLUTION_MAX_NODES = 5_000;
+const WAIT_FALLBACK_MS = 250;
+const WAIT_WAKE_EVENTS = new Set<AgentEvent["event"]>([
+  "navigation",
+  "frame.lifecycle",
+  "load",
+  "dom.changed",
+]);
 
 export class ElectronPageBackend implements PageBackend {
   private readonly resolver = new SnapshotLocatorResolver();
@@ -937,8 +944,8 @@ export class ElectronPageBackend implements PageBackend {
 
     let stableRevision: number | null = null;
     let stableSince = Date.now();
-    while (Date.now() <= deadline) {
-      throwIfAborted(signal);
+    const fallbackMs = condition.type === "stable" ? Math.max(1, condition.quietMs) : WAIT_FALLBACK_MS;
+    const result = await this.waitForUpdates(deadline, signal, async () => {
       const identity = await this.identity(signal);
       let satisfied = false;
       if (condition.type === "url") satisfied = identity.url.includes(condition.value);
@@ -948,7 +955,9 @@ export class ElectronPageBackend implements PageBackend {
           try {
             await this.resolve(condition.target, snapshot, signal);
             satisfied = true;
-          } catch {}
+          } catch (error) {
+            if (signal?.aborted) throw error;
+          }
         } else {
           satisfied = snapshot.nodes.some((node) =>
             textContains(`${node.name} ${node.text ?? ""}`, condition.value),
@@ -962,10 +971,14 @@ export class ElectronPageBackend implements PageBackend {
         }
         satisfied = Date.now() - stableSince >= condition.quietMs;
       }
-      if (satisfied) return { satisfied: true, elapsedMs: Date.now() - started };
-      await abortableDelay(Math.min(25, Math.max(1, deadline - Date.now())), signal);
-    }
-    return { satisfied: false, elapsedMs: Date.now() - started };
+      return {
+        done: satisfied,
+        value: { satisfied, elapsedMs: Date.now() - started },
+      };
+    }, fallbackMs);
+    return result.satisfied
+      ? result
+      : { satisfied: false, elapsedMs: Math.max(result.elapsedMs, Date.now() - started) };
   }
 
   async subscribe(
@@ -1000,6 +1013,39 @@ export class ElectronPageBackend implements PageBackend {
       await this.controller.attachCdp();
       await this.readScriptState(signal);
     } catch {}
+  }
+
+  private async waitForUpdates<T>(
+    deadline: number,
+    signal: AbortSignal | undefined,
+    check: () => Promise<{ done: boolean; value: T }>,
+    fallbackMs = WAIT_FALLBACK_MS,
+  ): Promise<T> {
+    await this.startObservation(signal);
+    let wake: (() => void) | null = null;
+    let updateVersion = 0;
+    const subscription = this.events.subscribe((event) => {
+      if (!WAIT_WAKE_EVENTS.has(event.event)) return;
+      updateVersion += 1;
+      wake?.();
+    }, { afterSequence: this.events.latestSequence });
+    try {
+      while (true) {
+        throwIfAborted(signal);
+        const versionAtStart = updateVersion;
+        const result = await check();
+        if (result.done) return result.value;
+        if (updateVersion !== versionAtStart) continue;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return result.value;
+        await waitForWake(Math.min(fallbackMs, remaining), signal, (next) => {
+          wake = next;
+        });
+      }
+    } finally {
+      subscription.unsubscribe();
+      wake = null;
+    }
   }
 
   private async captureFrame(
@@ -1226,23 +1272,23 @@ export class ElectronPageBackend implements PageBackend {
     const hasExpectation = !!expect && (expect.url !== undefined || expect.title !== undefined || expect.text !== undefined);
     const timeoutMs = hasExpectation ? expect?.timeoutMs ?? 2_000 : 250;
     const deadline = Date.now() + Math.max(0, timeoutMs);
-    let identity = before;
-    let satisfied = false;
-    let changed = false;
-    do {
+    let last = { identity: before, changed: false, satisfied: false };
+    return this.waitForUpdates(deadline, signal, async () => {
       try {
         throwIfAborted(signal);
-        identity = await this.identity(signal);
-        changed = identityChanged(before, identity);
-        satisfied = hasExpectation ? await this.matchesExpectation(expect!, identity, signal) : changed;
-        if (satisfied || (changed && !identity.loading)) return { identity, changed, satisfied };
+        const identity = await this.identity(signal);
+        const changed = identityChanged(before, identity);
+        const satisfied = hasExpectation ? await this.matchesExpectation(expect!, identity, signal) : changed;
+        last = { identity, changed, satisfied };
+        return {
+          done: satisfied || (changed && !identity.loading),
+          value: last,
+        };
       } catch (error) {
         if (signal?.aborted) throw error;
+        return { done: false, value: last };
       }
-      if (Date.now() >= deadline) break;
-      await abortableDelay(Math.min(25, Math.max(1, deadline - Date.now())), signal);
-    } while (Date.now() <= deadline);
-    return { identity, changed, satisfied };
+    });
   }
 
   private async matchesExpectation(expect: ActionExpectation, identity: PageIdentity, signal?: AbortSignal): Promise<boolean> {
@@ -1282,6 +1328,46 @@ function identityChanged(before: PageIdentity, after: PageIdentity): boolean {
     before.title !== after.title ||
     before.revision !== after.revision
   );
+}
+
+function waitForWake(
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+  setWake: (wake: (() => void) | null) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let onAbort: (() => void) | null = null;
+    let settled = false;
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+      setWake(null);
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      try {
+        throwIfAborted(signal);
+      } catch (error) {
+        reject(error);
+      }
+    };
+    setWake(finish);
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    timer = setTimeout(finish, Math.max(0, timeoutMs));
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function textContains(value: string, expected: string): boolean {
