@@ -263,9 +263,9 @@ function traceWindow(before: TraceDocument | undefined, after: TraceDocument): A
     startSequence,
     endSequence,
     entries: entries.length,
-    requests: entries.filter((entry) => entry.direction === "inbound").length,
-    responses: entries.filter((entry) => entry.direction === "outbound").length,
-    events: entries.filter((entry) => entry.direction === "event").length,
+    requests: entries.filter((entry) => entry.message.kind === "request").length,
+    responses: entries.filter((entry) => entry.message.kind === "response").length,
+    events: entries.filter((entry) => entry.message.kind === "event").length,
   };
 }
 

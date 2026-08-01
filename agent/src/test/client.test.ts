@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { MemoryTrace, TraceRecorder } from "../core/trace";
 import { AgentError } from "../protocol/errors";
 import { createFixtureAgentClient } from "../evaluation/loopback";
 import { FIXTURE_PAGE_ID } from "./fixture";
@@ -42,6 +43,31 @@ test("correlates typed calls and delivers observed events", async () => {
     assert.deepEqual(events, ["dom.changed"]);
   } finally {
     unsubscribe();
+    await client.close();
+  }
+});
+
+test("records client-side requests, responses, and events when tracing is enabled", async () => {
+  const trace = new MemoryTrace();
+  const client = createFixtureAgentClient({ clientId: "trace-client-test", trace: new TraceRecorder(trace, () => 1234) });
+  try {
+    await client.hello();
+    await client.observe(FIXTURE_PAGE_ID, ["dom.changed"]);
+    await client.call("page.act", {
+      pageId: FIXTURE_PAGE_ID,
+      action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } } },
+    });
+    assert.deepEqual(trace.document().entries.map((entry) => entry.message.kind), [
+      "request",
+      "response",
+      "request",
+      "response",
+      "request",
+      "event",
+      "response",
+    ]);
+    assert.ok(trace.document().entries.every((entry) => entry.timestamp === 1234));
+  } finally {
     await client.close();
   }
 });

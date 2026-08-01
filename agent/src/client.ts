@@ -1,4 +1,5 @@
 import { AgentError, type AgentErrorCode } from "./protocol/errors";
+import { TraceRecorder } from "./core/trace";
 import {
   AGENT_PROTOCOL,
   AGENT_PROTOCOL_VERSION,
@@ -30,6 +31,7 @@ export interface AgentClientOptions {
   clientId?: string;
   capabilities?: readonly AgentCapability[];
   defaultDeadlineMs?: number;
+  trace?: TraceRecorder;
 }
 
 export interface AgentCallOptions {
@@ -95,6 +97,7 @@ export class AgentClient {
   private readonly unsubscribeMessage: () => void;
   private readonly unsubscribeError: () => void;
   private readonly unsubscribeClose: () => void;
+  private readonly trace: TraceRecorder | undefined;
   private requestSequence = 0;
   private closed = false;
 
@@ -103,6 +106,7 @@ export class AgentClient {
     this.clientId = options.clientId ?? "terminal-browser-agent-client";
     this.capabilities = options.capabilities;
     this.defaultDeadlineMs = options.defaultDeadlineMs;
+    this.trace = options.trace;
     this.unsubscribeMessage = transport.onMessage((message) => this.handleMessage(message));
     this.unsubscribeError = transport.onError((error) => this.failPending(transportError(error)));
     this.unsubscribeClose = transport.onClose(() => this.handleClose());
@@ -242,6 +246,7 @@ export class AgentClient {
           this.sendCancellation(request.requestId);
         }, options.deadlineMs);
       }
+      this.trace?.record("outbound", request);
       void this.transport.send(request).catch((error) => settle(transportError(error)));
     });
   }
@@ -256,12 +261,14 @@ export class AgentClient {
       op: "request.cancel",
       targetRequestId,
     };
+    this.trace?.record("outbound", request);
     void this.transport.send(request).catch(() => {});
   }
 
   private handleMessage(message: AgentMessage): void {
     if (message.kind === "request") return;
     if (message.kind === "event") {
+      this.trace?.record("event", message);
       for (const listener of this.eventListeners) {
         try {
           listener(message);
@@ -269,6 +276,7 @@ export class AgentClient {
       }
       return;
     }
+    this.trace?.record("inbound", message);
     this.pending.get(message.requestId)?.resolve(message);
   }
 
