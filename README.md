@@ -19,6 +19,11 @@ For MCP-compatible agent hosts, expose the same negotiated tools over stdio:
 terminal-browser mcp --browser <browser-key>
 ```
 
+For line-oriented named tool calls without an MCP host:
+```
+terminal-browser tools --browser <browser-key> --list
+```
+
 For the browser-compatible control path:
 ```
 pnpm agent:live-smoke

@@ -28,6 +28,8 @@ Usage: terminal-browser [url] [direction]
   setup   Configure installed terminals so terminal-browser works best
   action  Use the open browser through the agent-browser CLI
   agent   Connect a persistent JSON agent session to the open browser
+  tools   Expose discoverable structured agent tools
+  mcp     Expose browser tools through an MCP stdio server
 
 terminal-browser <command> --help for one command's options
 ```
@@ -105,4 +107,34 @@ Options:
 Examples:
   terminal-browser agent --browser 90107-1
   printf '%s\n' '{"kind":"request",...}' | terminal-browser agent
+```
+
+```
+$ terminal-browser tools --help
+Usage: terminal-browser tools [options]
+
+Connects to the selected browser and exposes the negotiated agent operations
+as named tools. Pass --list to print the tool manifest. Without --list, read
+one JSON tool request per line from stdin. Calls are concurrent: each first
+returns an accepted line, then a correlated result or event line.
+
+Options:
+  --browser <key>     A browser key from terminal-browser ls
+  --list              Print the negotiated tool manifest and exit
+
+Request shape:
+  {"id":"1","name":"terminal_browser_page_snapshot","arguments":{},"deadlineMs":5000}
+  {"id":"2","cancelRequestId":"page.wait-3"}
+```
+
+```
+$ terminal-browser mcp --help
+Usage: terminal-browser mcp [options]
+
+Connects to the selected browser and exposes the negotiated agent operations
+through the Model Context Protocol over stdin/stdout. It supports the MCP
+initialize lifecycle, tools/list, tools/call, cancellation, and agent events.
+
+Options:
+  --browser <key>     A browser key from terminal-browser ls
 ```

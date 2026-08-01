@@ -276,8 +276,23 @@ function queryScenarios(pageId) {
           },
         ],
       });
+      const plannedBatch = await client.call("page.query.batch", {
+        pageId,
+        queries: [
+          {
+            locator: { kind: "css", value: "#controls > button" },
+            options: { limit: 8, diagnostics: "summary" },
+          },
+          {
+            locator: { kind: "css", value: "#controls > button" },
+            options: { limit: 1, diagnostics: "summary" },
+          },
+        ],
+      });
       const batchBroad = queryBatch.queries[0];
       const tail = queryBatch.queries[1];
+      const plannedFirst = plannedBatch.queries[0];
+      const plannedSecond = plannedBatch.queries[1];
       const indexed = await client.call("page.read", {
         pageId,
         target: {
@@ -302,6 +317,12 @@ function queryScenarios(pageId) {
           && tail.matchCount === 1
           && tail.nodes.length === 1
           && tail.truncated === false
+          && plannedBatch.diagnostics?.mode === "live"
+          && plannedBatch.diagnostics.queriesEvaluated === 2
+          && (plannedBatch.diagnostics.planCacheHits ?? 0) > 0
+          && plannedFirst.matchCount === plannedSecond.matchCount
+          && plannedFirst.nodes.length === 8
+          && plannedSecond.nodes.length === 1
           && read.node.attributes?.id === "tail"
           && read.revision === queryBatch.revision,
         metrics: {
@@ -310,6 +331,8 @@ function queryScenarios(pageId) {
           queryTruncated: Number(broad.truncated),
           queryBatchQueries: queryBatch.queries.length,
           queryBatchSharedRevision: Number(read.revision === queryBatch.revision),
+          queryPlanCacheHits: plannedBatch.diagnostics?.planCacheHits ?? 0,
+          queryPlanReuse: Number((plannedBatch.diagnostics?.planCacheHits ?? 0) > 0),
           indexedLocatorRead: Number(indexed.node.attributes?.id === "large-4"),
           readRevisionBound: Number(read.revision === queryBatch.revision),
         },
