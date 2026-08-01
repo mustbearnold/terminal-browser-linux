@@ -1,4 +1,5 @@
 import { AgentEventBus } from "../core/events";
+import type { EventSubscriptionOptions } from "../core/events";
 import { abortableDelay, throwIfAborted } from "../core/cancellation";
 import { SnapshotLocatorResolver } from "../core/locator";
 import { RevisionedPageSession, type PageBackend, type PageSession } from "../core/page";
@@ -390,9 +391,13 @@ class FixturePageBackend implements PageBackend {
     return { satisfied: false, elapsedMs: Date.now() - started };
   }
 
-  async subscribe(listener: (event: AgentEvent) => void, signal?: AbortSignal): Promise<() => void> {
+  async subscribe(
+    listener: (event: AgentEvent) => void,
+    options?: EventSubscriptionOptions,
+    signal?: AbortSignal,
+  ) {
     throwIfAborted(signal);
-    return this.events.subscribe(listener);
+    return this.events.subscribe(listener, options);
   }
 
   private async matches(expect: ActionExpectation | undefined, identity: PageIdentity, signal?: AbortSignal): Promise<boolean> {

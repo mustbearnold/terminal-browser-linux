@@ -115,19 +115,25 @@ export class AgentRequestRouter {
       case "page.observe": {
         const page = this.page(request.pageId);
         const wanted = new Set(request.events);
-        const cleanup = await page.subscribe((event) => {
+        const subscription = await page.subscribe((event) => {
           if (!wanted.has(event.event)) return;
           this.record("event", event);
           void context.emit(event);
-        }, signal);
+        }, { afterSequence: request.afterSequence }, signal);
         try {
           throwIfAborted(signal);
         } catch (error) {
-          cleanup();
+          subscription.unsubscribe();
           throw error;
         }
-        context.addSubscription(cleanup);
-        return { pageId: request.pageId, events: request.events };
+        context.addSubscription(subscription.unsubscribe);
+        return {
+          pageId: request.pageId,
+          events: request.events,
+          ...(request.afterSequence === undefined ? {} : { afterSequence: request.afterSequence }),
+          sequence: subscription.sequence,
+          replayed: subscription.replayed,
+        };
       }
       default:
         throw new AgentError("INVALID_REQUEST", "unsupported request operation");

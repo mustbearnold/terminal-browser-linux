@@ -1,5 +1,6 @@
 import { RevisionLedger } from "./revisions";
 import { throwIfAborted } from "./cancellation";
+import type { EventSubscription, EventSubscriptionOptions } from "./events";
 import type {
   ActionExpectation,
   ActionResult,
@@ -29,7 +30,11 @@ export interface PageBackend {
     signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">>;
   wait(condition: WaitCondition, timeoutMs?: number, signal?: AbortSignal): Promise<Omit<WaitResult, "snapshot">>;
-  subscribe(listener: (event: AgentEvent) => void, signal?: AbortSignal): Promise<() => void>;
+  subscribe(
+    listener: (event: AgentEvent) => void,
+    options?: EventSubscriptionOptions,
+    signal?: AbortSignal,
+  ): Promise<EventSubscription>;
 }
 
 export interface PageSession {
@@ -42,7 +47,11 @@ export interface PageSession {
   navigate(documentId: DocumentId): { documentId: DocumentId; revision: number };
   act(action: AgentAction, token?: SnapshotToken, expect?: ActionExpectation, signal?: AbortSignal): Promise<ActionResult>;
   wait(condition: WaitCondition, timeoutMs?: number, signal?: AbortSignal): Promise<WaitResult>;
-  subscribe(listener: (event: AgentEvent) => void, signal?: AbortSignal): Promise<() => void>;
+  subscribe(
+    listener: (event: AgentEvent) => void,
+    options?: EventSubscriptionOptions,
+    signal?: AbortSignal,
+  ): Promise<EventSubscription>;
 }
 
 export class RevisionedPageSession implements PageSession {
@@ -120,9 +129,13 @@ export class RevisionedPageSession implements PageSession {
     return result.satisfied ? { ...result, snapshot: await this.snapshot(undefined, signal) } : result;
   }
 
-  async subscribe(listener: (event: AgentEvent) => void, signal?: AbortSignal): Promise<() => void> {
+  async subscribe(
+    listener: (event: AgentEvent) => void,
+    options?: EventSubscriptionOptions,
+    signal?: AbortSignal,
+  ): Promise<EventSubscription> {
     throwIfAborted(signal);
-    return this.backend.subscribe(listener, signal);
+    return this.backend.subscribe(listener, options, signal);
   }
 
   private enqueueAction<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {

@@ -228,7 +228,16 @@ export type AgentRequest =
       op: "page.observe";
       pageId: PageId;
       events: readonly AgentEventType[];
+      afterSequence?: number;
     });
+
+export interface PageObserveResult {
+  pageId: PageId;
+  events: readonly AgentEventType[];
+  afterSequence?: number;
+  sequence: number;
+  replayed: number;
+}
 
 export interface AgentResponse {
   kind: "response";

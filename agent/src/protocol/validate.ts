@@ -69,7 +69,10 @@ function validateRequest(message: Record<string, unknown>): void {
   if (op === "page.read") requireObject(message.target, "target");
   if (op === "page.act") requireObject(message.action, "action");
   if (op === "page.wait") requireObject(message.condition, "condition");
-  if (op === "page.observe") requireStringArray(message.events, "events");
+  if (op === "page.observe") {
+    requireStringArray(message.events, "events");
+    if (message.afterSequence !== undefined) requireNonNegativeInteger(message.afterSequence, "afterSequence");
+  }
 }
 
 export function parseAgentMessage(value: unknown): AgentMessage {

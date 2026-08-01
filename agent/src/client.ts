@@ -9,6 +9,7 @@ import {
   type AgentMessage,
   type AgentRequest,
   type AgentResponse,
+  type PageObserveResult,
   type PageIdentity,
   type PageFrameSnapshot,
   type PageSnapshot,
@@ -31,6 +32,10 @@ export interface AgentCallOptions {
   signal?: AbortSignal;
 }
 
+export interface AgentObserveOptions extends AgentCallOptions {
+  afterSequence?: number;
+}
+
 export interface AgentHelloResult {
   protocol: typeof AGENT_PROTOCOL;
   version: typeof AGENT_PROTOCOL_VERSION;
@@ -50,7 +55,7 @@ export interface AgentOperationResults {
   "page.read": SnapshotNode;
   "page.act": ActionResult;
   "page.wait": WaitResult;
-  "page.observe": { pageId: PageId; events: readonly AgentEventType[] };
+  "page.observe": PageObserveResult;
 }
 
 export type AgentOperation = AgentRequest["op"];
@@ -114,8 +119,14 @@ export class AgentClient {
     return this.call("request.cancel", { targetRequestId }, options).then((result) => result.canceled);
   }
 
-  observe(pageId: PageId, events: readonly AgentEventType[], options?: AgentCallOptions) {
-    return this.call("page.observe", { pageId, events }, options);
+  observe(pageId: PageId, events: readonly AgentEventType[], options: AgentObserveOptions = {}) {
+    validateSequence(options.afterSequence);
+    const { afterSequence, ...callOptions } = options;
+    return this.call("page.observe", {
+      pageId,
+      events,
+      ...(afterSequence === undefined ? {} : { afterSequence }),
+    }, callOptions);
   }
 
   frames(pageId: PageId, options?: AgentCallOptions): Promise<PageFrameSnapshot> {
@@ -257,6 +268,12 @@ function validateDeadline(deadlineMs: number | undefined): void {
     (!Number.isSafeInteger(deadlineMs) || deadlineMs < 0 || deadlineMs > MAX_REQUEST_DEADLINE_MS)
   ) {
     throw new AgentError("INVALID_REQUEST", "deadlineMs must be a non-negative safe integer within timer limits");
+  }
+}
+
+function validateSequence(sequence: number | undefined): void {
+  if (sequence !== undefined && (!Number.isSafeInteger(sequence) || sequence < 0)) {
+    throw new AgentError("INVALID_REQUEST", "afterSequence must be a non-negative safe integer");
   }
 }
 

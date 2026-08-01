@@ -62,7 +62,7 @@ function page(): PageSession {
     navigate: () => ({ documentId: identity.documentId, revision: 0 }),
     act: async () => ({ verified: true, effects: [], snapshot: pageSnapshot }),
     wait: async () => ({ satisfied: true, elapsedMs: 1, snapshot: pageSnapshot }),
-    subscribe: async () => () => {},
+    subscribe: async () => ({ sequence: 0, replayed: 0, unsubscribe: () => {} }),
   };
 }
 

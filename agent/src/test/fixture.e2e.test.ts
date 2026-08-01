@@ -158,6 +158,45 @@ test("runs the deterministic agent control contract", async () => {
   for (const cleanup of cleanups) cleanup();
 });
 
+test("replays missed fixture events from an observation cursor", async () => {
+  const runtime = new FixtureRuntime();
+  const router = new AgentRequestRouter(runtime);
+  const events: AgentEvent[] = [];
+  const context: AgentConnectionContext = {
+    clientId: "fixture-replay",
+    emit: (message) => {
+      events.push(message as AgentEvent);
+    },
+    addSubscription: () => {},
+  };
+
+  const clicked = await router.handle(
+    request("page.act", {
+      pageId: FIXTURE_PAGE_ID,
+      action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } } },
+    }),
+    context,
+  );
+  assert.equal(clicked.ok, true);
+
+  const observed = await router.handle(
+    request("page.observe", {
+      pageId: FIXTURE_PAGE_ID,
+      events: ["dom.changed"],
+      afterSequence: 0,
+    }),
+    context,
+  );
+  assert.deepEqual(observed.result, {
+    pageId: FIXTURE_PAGE_ID,
+    events: ["dom.changed"],
+    afterSequence: 0,
+    sequence: 1,
+    replayed: 1,
+  });
+  assert.deepEqual(events.map((event) => event.sequence), [1]);
+});
+
 test("serializes concurrent page actions before checking snapshot freshness", async () => {
   const runtime = new FixtureRuntime();
   const router = new AgentRequestRouter(runtime);

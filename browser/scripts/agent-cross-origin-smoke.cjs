@@ -14,6 +14,7 @@ async function run() {
   const existing = new Set(listSockets());
   const { host, output } = launchHost();
   let client;
+  let recoveryClient;
   let pageId;
   try {
     const socket = await waitForSocket(existing, 15_000, output);
@@ -128,6 +129,15 @@ async function run() {
         "cross-origin frame event did not preserve its frame identity",
       );
 
+      const recoveryEvents = [];
+      recoveryClient = await AgentClient.connect(socket, { clientId: "cross-origin-recovery" });
+      recoveryClient.onEvent((event) => recoveryEvents.push(event));
+      const recovered = await recoveryClient.observe(pageId, ["dom.changed", "frame.lifecycle"], {
+        afterSequence: events[0].sequence,
+      });
+      assert.ok(recovered.replayed > 0, "event cursor replayed no retained events");
+      assert.ok(recoveryEvents.some((event) => event.sequence > events[0].sequence), "recovery client received no replayed event");
+
       await client.call("page.act", {
         pageId,
         action: {
@@ -206,6 +216,7 @@ async function run() {
       if (pageId) await client.call("pages.close", { pageId }).catch(() => {});
       await client.close().catch(() => {});
     }
+    if (recoveryClient) await recoveryClient.close().catch(() => {});
     stopHost(host);
     await closeServer(parentServer);
     await closeServer(childServer);

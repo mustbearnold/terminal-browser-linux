@@ -29,7 +29,9 @@ test("correlates typed calls and delivers observed events", async () => {
       }],
     });
 
-    await client.observe(FIXTURE_PAGE_ID, ["dom.changed"]);
+    const observation = await client.observe(FIXTURE_PAGE_ID, ["dom.changed"]);
+    assert.equal(observation.sequence, 0);
+    assert.equal(observation.replayed, 0);
     const action = await client.call("page.act", {
       pageId: FIXTURE_PAGE_ID,
       action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } } },

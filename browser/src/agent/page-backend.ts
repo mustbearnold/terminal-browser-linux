@@ -2,6 +2,7 @@ import {
   AGENT_PROTOCOL,
   AGENT_PROTOCOL_VERSION,
   AgentError,
+  AgentEventBus,
   SnapshotLocatorResolver,
   abortableDelay,
   asDocumentId,
@@ -15,6 +16,8 @@ import type {
   ActionProof,
   AgentAction,
   AgentEvent,
+  EventSubscription,
+  EventSubscriptionOptions,
   PageBackend,
   PageFrame,
   PageFrameSnapshot,
@@ -73,7 +76,7 @@ const MAIN_FRAME_ID = asFrameId("main");
 
 export class ElectronPageBackend implements PageBackend {
   private readonly resolver = new SnapshotLocatorResolver();
-  private readonly listeners = new Set<(event: AgentEvent) => void>();
+  private readonly events = new AgentEventBus();
   private readonly agentKey = AGENT_STATE_KEY;
   private sequence = 0;
   private remoteRevision = 0;
@@ -664,20 +667,28 @@ export class ElectronPageBackend implements PageBackend {
     return { satisfied: false, elapsedMs: Date.now() - started };
   }
 
-  async subscribe(listener: (event: AgentEvent) => void, signal?: AbortSignal): Promise<() => void> {
+  async subscribe(
+    listener: (event: AgentEvent) => void,
+    options?: EventSubscriptionOptions,
+    signal?: AbortSignal,
+  ): Promise<EventSubscription> {
     throwIfAborted(signal);
-    this.listeners.add(listener);
+    const subscription = this.events.subscribe(listener, options);
     try {
-      if (this.listeners.size === 1) this.observationReady = this.startObservation(signal);
+      if (this.events.size === 1) this.observationReady = this.startObservation(signal);
       await this.observationReady;
       throwIfAborted(signal);
-      return () => {
-        this.listeners.delete(listener);
-        if (this.listeners.size === 0) this.observationReady = null;
+      return {
+        ...subscription,
+        sequence: this.events.latestSequence,
+        unsubscribe: () => {
+          subscription.unsubscribe();
+          if (this.events.size === 0) this.observationReady = null;
+        },
       };
     } catch (error) {
-      this.listeners.delete(listener);
-      if (this.listeners.size === 0) this.observationReady = null;
+      subscription.unsubscribe();
+      if (this.events.size === 0) this.observationReady = null;
       throw error;
     }
   }
@@ -952,7 +963,7 @@ export class ElectronPageBackend implements PageBackend {
       sequence: ++this.sequence,
       data,
     };
-    for (const listener of this.listeners) listener(message);
+    this.events.publish(message);
   }
 }
 
