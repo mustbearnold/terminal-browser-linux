@@ -11,6 +11,10 @@ export interface BrowserState {
   zoom: number;
 }
 
+export type BrowserLifecycleEvent =
+  | { type: "navigation"; url: string; inPage: boolean }
+  | { type: "load"; loading: boolean; url: string };
+
 export function initialBrowserState(url: string): BrowserState {
   return {
     url,

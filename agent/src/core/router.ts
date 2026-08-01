@@ -83,7 +83,7 @@ export class AgentRequestRouter {
       case "page.observe": {
         const page = this.page(request.pageId);
         const wanted = new Set(request.events);
-        const cleanup = page.subscribe((event) => {
+        const cleanup = await page.subscribe((event) => {
           if (wanted.has(event.event)) void context.emit(event);
         });
         context.addSubscription(cleanup);

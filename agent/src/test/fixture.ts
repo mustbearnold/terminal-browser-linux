@@ -353,7 +353,7 @@ class FixturePageBackend implements PageBackend {
     return { satisfied: false, elapsedMs: Date.now() - started };
   }
 
-  subscribe(listener: (event: AgentEvent) => void): () => void {
+  async subscribe(listener: (event: AgentEvent) => void): Promise<() => void> {
     return this.events.subscribe(listener);
   }
 

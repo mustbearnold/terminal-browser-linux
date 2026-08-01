@@ -18,7 +18,12 @@ import { offscreenMode, offscreenPreferences } from "./offscreen";
 import { presentBitmap, presentTexture } from "./paint";
 import { PopupWindow } from "./popup";
 import { cssSize, initialBrowserState } from "./types";
-import type { BrowserState, BrowserSurfaceLayout, DeviceSpec } from "./types";
+import type {
+  BrowserLifecycleEvent,
+  BrowserState,
+  BrowserSurfaceLayout,
+  DeviceSpec,
+} from "./types";
 import { scaleZoom, stepZoom } from "./zoom";
 import type { ZoomDirection } from "./zoom";
 
@@ -62,6 +67,7 @@ export class BrowserController {
   onDevtoolsChange: (() => void) | null = null;
   onDevtoolsAction: ((action: DevtoolsAction) => void) | null = null;
   onContextMenu: ((params: Electron.ContextMenuParams) => void) | null = null;
+  onLifecycleEvent: ((event: BrowserLifecycleEvent) => void) | null = null;
 
   constructor(
     surface: Surface,
@@ -131,17 +137,27 @@ export class BrowserController {
         presentBitmap(this.surface, image, dirtyRect);
       }
     });
-    this.window.webContents.on("did-start-loading", () => this.updateState({ loading: true }));
-    this.window.webContents.on("did-stop-loading", () => this.updateNavigation(false));
+    this.window.webContents.on("did-start-loading", () => {
+      this.updateState({ loading: true });
+      this.onLifecycleEvent?.({ type: "load", loading: true, url: this.state.url });
+    });
+    this.window.webContents.on("did-stop-loading", () => {
+      this.updateNavigation(false);
+      this.onLifecycleEvent?.({ type: "load", loading: false, url: this.state.url });
+    });
     this.window.webContents.on("did-navigate", (_event, url) => {
       if (urlHost(url) !== urlHost(this.state.url)) this.updateState({ favicon: null });
       this.updateNavigation(false, url);
+      this.onLifecycleEvent?.({ type: "navigation", url, inPage: false });
     });
     this.window.webContents.on("page-favicon-updated", (_event, favicons) => {
       void this.loadFavicon(favicons);
     });
     this.window.webContents.on("did-navigate-in-page", (_event, url, mainFrame) => {
-      if (mainFrame) this.updateNavigation(this.state.loading, url);
+      if (mainFrame) {
+        this.updateNavigation(this.state.loading, url);
+        this.onLifecycleEvent?.({ type: "navigation", url, inPage: true });
+      }
     });
     this.window.webContents.on("page-title-updated", (_event, title) => {
       this.updateState({ title });
@@ -461,6 +477,8 @@ export class BrowserController {
     screen.off("display-added", this.onDisplayChange);
     screen.off("display-removed", this.onDisplayChange);
     screen.off("display-metrics-changed", this.onDisplayChange);
+    this.onLifecycleEvent = null;
+    this.emitHandlers.clear();
     this.surface.close();
     this.window.destroy();
   }

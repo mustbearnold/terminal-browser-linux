@@ -6,6 +6,7 @@ import type { AgentEvent, AgentRequest, AgentResponse, PageSnapshot, SnapshotNod
 import {
   AGENT_PROTOCOL,
   AGENT_PROTOCOL_VERSION,
+  asSnapshotRef,
   type PageIdentity,
 } from "../protocol/types";
 import { FIXTURE_PAGE_ID, FixtureRuntime } from "./fixture";
@@ -121,6 +122,35 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(stale.error?.retryable, true);
 
   for (const cleanup of cleanups) cleanup();
+});
+
+test("serializes concurrent page actions before checking snapshot freshness", async () => {
+  const runtime = new FixtureRuntime();
+  const router = new AgentRequestRouter(runtime);
+  const snapshot = result<PageSnapshot>(
+    await router.handle(request("page.snapshot", { pageId: FIXTURE_PAGE_ID, options: { interactiveOnly: false } })),
+  );
+  const tokenValue = token(snapshot);
+  const first = router.handle(
+    request("page.act", {
+      pageId: FIXTURE_PAGE_ID,
+      token: tokenValue,
+      action: { type: "fill", target: { ref: asSnapshotRef("r2") }, value: "first" },
+    }),
+  );
+  const second = router.handle(
+    request("page.act", {
+      pageId: FIXTURE_PAGE_ID,
+      token: tokenValue,
+      action: { type: "fill", target: { ref: asSnapshotRef("r2") }, value: "second" },
+    }),
+  );
+
+  const [firstResponse, secondResponse] = await Promise.all([first, second]);
+  assert.equal(firstResponse.ok, true);
+  assert.equal(secondResponse.ok, false);
+  assert.equal(secondResponse.error?.code, "STALE_SNAPSHOT");
+  assert.equal((firstResponse.result as { proof?: { value?: string } }).proof?.value, "first");
 });
 
 function request<T extends AgentRequest["op"]>(op: T, fields: Record<string, unknown> = {}): AgentRequest {

@@ -23,7 +23,7 @@ import type {
   WaitResult,
 } from "terminal-browser-agent";
 import type { BrowserController } from "../page/controller";
-import type { BrowserState } from "../page/types";
+import type { BrowserLifecycleEvent, BrowserState } from "../page/types";
 
 type CapturedSnapshot = Omit<PageSnapshot, "snapshotId">;
 type PageScriptState = { documentId: string; revision: number };
@@ -49,6 +49,7 @@ type ActiveElementInfo = {
 };
 
 const AGENT_STATE_KEY = "__terminalBrowserAgent";
+const AGENT_EVENT_CHANNEL = "terminal-browser.agent";
 const MAIN_FRAME_ID = asFrameId("main");
 
 export class ElectronPageBackend implements PageBackend {
@@ -58,13 +59,17 @@ export class ElectronPageBackend implements PageBackend {
   private sequence = 0;
   private lastSnapshot: CapturedSnapshot | null = null;
   private lastSnapshotOptions: string | null = null;
+  private observationReady: Promise<void> | null = null;
 
   constructor(
     readonly pageId: PageId,
     private readonly controller: BrowserController,
     private readonly state: () => BrowserState,
     private readonly active: () => boolean,
-  ) {}
+  ) {
+    this.controller.onEmit(AGENT_EVENT_CHANNEL, (data) => this.handlePageEvent(data));
+    this.controller.onLifecycleEvent = (event) => this.handleLifecycleEvent(event);
+  }
 
   async identity(): Promise<PageIdentity> {
     const page = this.state();
@@ -326,9 +331,21 @@ export class ElectronPageBackend implements PageBackend {
     return { satisfied: false, elapsedMs: Date.now() - started };
   }
 
-  subscribe(listener: (event: AgentEvent) => void): () => void {
+  async subscribe(listener: (event: AgentEvent) => void): Promise<() => void> {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    if (this.listeners.size === 1) this.observationReady = this.startObservation();
+    await this.observationReady;
+    return () => {
+      this.listeners.delete(listener);
+      if (this.listeners.size === 0) this.observationReady = null;
+    };
+  }
+
+  private async startObservation(): Promise<void> {
+    try {
+      await this.controller.attachCdp();
+      await this.readScriptState();
+    } catch {}
   }
 
   private async readScriptState(): Promise<PageScriptState> {
@@ -365,12 +382,27 @@ export class ElectronPageBackend implements PageBackend {
     const effects: ActionEffect[] = [];
     if (before.documentId !== after.documentId || before.url !== after.url) {
       effects.push({ type: "navigation", data: { url: after.url } });
-      this.emit("navigation", { url: after.url, documentId: after.documentId });
     } else if (before.revision !== after.revision) {
       effects.push({ type: "dom.changed", data: { revision: after.revision } });
-      this.emit("dom.changed", { revision: after.revision });
     }
     return effects;
+  }
+
+  private handlePageEvent(value: unknown): void {
+    if (!value || typeof value !== "object") return;
+    const event = value as { event?: unknown; data?: AgentEvent["data"] };
+    if (event.event !== "dom.changed") return;
+    this.invalidateSnapshots();
+    this.emit("dom.changed", event.data);
+  }
+
+  private handleLifecycleEvent(event: BrowserLifecycleEvent): void {
+    if (event.type === "navigation") {
+      this.invalidateSnapshots();
+      this.emit("navigation", { url: event.url, inPage: event.inPage });
+      return;
+    }
+    this.emit("load", { loading: event.loading, url: event.url });
   }
 
   private async waitForOutcome(
@@ -450,61 +482,15 @@ function snapshotOptionsKey(options?: SnapshotOptions): string {
 
 function scriptStateScript(key: string): string {
   return `(() => {
-    const key = ${JSON.stringify(key)};
-    const documentId = String(performance.timeOrigin);
-    let state = window[key];
-    if (!state || state.documentId !== documentId) {
-      state = {
-        documentId,
-        revision: 0,
-        nextRef: 0,
-        refs: new Map(),
-        elementRefs: new WeakMap(),
-        snapshotRevision: -1,
-      };
-      const invalidate = () => {
-        state.revision += 1;
-        state.refs = new Map();
-        state.elementRefs = new WeakMap();
-      };
-      const observer = new MutationObserver(invalidate);
-      observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-      for (const event of ["input", "change", "focusin", "focusout"]) {
-        document.addEventListener(event, invalidate, true);
-      }
-      window[key] = state;
-    }
+    ${agentStateSetupScript(key)}
     return { documentId: state.documentId, revision: state.revision };
   })()`;
 }
 
 function snapshotScript(key: string, options: SnapshotOptions | undefined): string {
   return `(() => {
-    const key = ${JSON.stringify(key)};
+    ${agentStateSetupScript(key)}
     const options = ${JSON.stringify(options ?? {})};
-    const documentId = String(performance.timeOrigin);
-    let state = window[key];
-    if (!state || state.documentId !== documentId) {
-      state = {
-        documentId,
-        revision: 0,
-        nextRef: 0,
-        refs: new Map(),
-        elementRefs: new WeakMap(),
-        snapshotRevision: -1,
-      };
-      const invalidate = () => {
-        state.revision += 1;
-        state.refs = new Map();
-        state.elementRefs = new WeakMap();
-      };
-      const observer = new MutationObserver(invalidate);
-      observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-      for (const event of ["input", "change", "focusin", "focusout"]) {
-        document.addEventListener(event, invalidate, true);
-      }
-      window[key] = state;
-    }
     const maxNodes = Number.isFinite(options.maxNodes) ? Math.max(1, options.maxNodes) : 1000;
     const interactiveOnly = options.interactiveOnly ?? true;
     const includeGeometry = options.includeGeometry !== false;
@@ -606,6 +592,46 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined): stri
       truncated,
     };
   })()`;
+}
+
+function agentStateSetupScript(key: string): string {
+  return `
+    const key = ${JSON.stringify(key)};
+    const documentId = String(performance.timeOrigin);
+    let state = window[key];
+    if (!state || state.documentId !== documentId) {
+      state = {
+        documentId,
+        revision: 0,
+        nextRef: 0,
+        refs: new Map(),
+        elementRefs: new WeakMap(),
+        snapshotRevision: -1,
+      };
+      const emit = () => {
+        const binding = window.__pixelEmit;
+        if (typeof binding !== "function") return;
+        try {
+          binding(JSON.stringify({
+            channel: ${JSON.stringify(AGENT_EVENT_CHANNEL)},
+            data: { event: "dom.changed", data: { revision: state.revision } },
+          }));
+        } catch {}
+      };
+      const invalidate = () => {
+        state.revision += 1;
+        state.refs = new Map();
+        state.elementRefs = new WeakMap();
+        emit();
+      };
+      const observer = new MutationObserver(invalidate);
+      observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+      for (const event of ["input", "change", "focusin", "focusout"]) {
+        document.addEventListener(event, invalidate, true);
+      }
+      window[key] = state;
+    }
+  `;
 }
 
 function inspectScript(key: string, ref: string): string {
