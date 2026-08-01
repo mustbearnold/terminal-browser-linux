@@ -1,6 +1,7 @@
 import { AgentError } from "../protocol/errors";
 import type {
   JsonValue,
+  FrameId,
   Locator,
   SnapshotNode,
   SnapshotRef,
@@ -37,11 +38,14 @@ export interface LocatorResolver {
 export function querySnapshot(
   locator: Locator,
   snapshot: SnapshotView,
-  options: LocatorResolutionOptions & { limit?: number } = {},
+  options: LocatorResolutionOptions & { frameId?: FrameId; limit?: number } = {},
 ): SnapshotQueryResult {
   const limit = options.limit ?? 32;
-  const nodesByRef = new Map(snapshot.nodes.map((node) => [String(node.ref), node]));
-  const matchesInSnapshot = snapshot.nodes.filter((node) => matches(locator, node, nodesByRef));
+  const scopedNodes = options.frameId === undefined
+    ? snapshot.nodes
+    : snapshot.nodes.filter((node) => node.frameId === options.frameId);
+  const nodesByRef = new Map(scopedNodes.map((node) => [String(node.ref), node]));
+  const matchesInSnapshot = scopedNodes.filter((node) => matches(locator, node, nodesByRef));
   const hiddenMatches = matchesInSnapshot.filter((node) => !node.visible);
   const visibleMatches = options.includeHidden === true
     ? matchesInSnapshot

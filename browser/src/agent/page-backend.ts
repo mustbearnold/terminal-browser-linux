@@ -411,6 +411,7 @@ export class ElectronPageBackend implements PageBackend {
       { includeHidden: options?.includeHidden === true },
       signal,
       options?.limit ?? LIVE_LOCATOR_MAX_CANDIDATES,
+      options?.frameId,
     );
     if (matches.invalid) throw new AgentError("INVALID_REQUEST", "invalid CSS locator");
     throwIfAborted(signal);
@@ -449,6 +450,7 @@ export class ElectronPageBackend implements PageBackend {
         { includeHidden: options?.includeHidden === true },
         signal,
         options?.limit ?? LIVE_LOCATOR_MAX_CANDIDATES,
+        options?.frameId,
       );
       if (matches.invalid) throw new AgentError("INVALID_REQUEST", "invalid CSS locator");
       return { locator, matches };

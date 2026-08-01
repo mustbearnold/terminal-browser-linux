@@ -127,6 +127,17 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(query.nodes[0].name, "Name");
   assert.equal(query.truncated, false);
 
+  const frameScopedQuery = result<PageQueryResult>(await router.handle(
+    request("page.query", {
+      pageId: FIXTURE_PAGE_ID,
+      locator: { kind: "role", role: "textbox", name: "Name", exact: true },
+      options: { frameId: query.nodes[0].frameId, limit: 1 },
+    }),
+    context,
+  ));
+  assert.equal(frameScopedQuery.matchCount, 1);
+  assert.equal(frameScopedQuery.nodes[0].ref, query.nodes[0].ref);
+
   const scopedQuery = result<PageQueryResult>(await router.handle(
     request("page.query", {
       pageId: FIXTURE_PAGE_ID,
@@ -147,8 +158,8 @@ test("runs the deterministic agent control contract", async () => {
     request("page.query.batch", {
       pageId: FIXTURE_PAGE_ID,
       queries: [
-        { locator: { kind: "role", role: "textbox", name: "Name", exact: true }, options: { limit: 1 } },
-        { locator: { kind: "role", role: "button", name: "Continue", exact: true }, options: { limit: 1 } },
+        { locator: { kind: "role", role: "textbox", name: "Name", exact: true }, options: { frameId: query.nodes[0].frameId, limit: 1 } },
+        { locator: { kind: "role", role: "button", name: "Continue", exact: true }, options: { frameId: query.nodes[0].frameId, limit: 1 } },
       ],
     }),
     context,

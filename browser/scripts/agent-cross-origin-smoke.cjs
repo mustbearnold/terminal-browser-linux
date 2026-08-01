@@ -9,7 +9,7 @@ const child = `<!doctype html><style>body{font:16px sans-serif;margin:18px}butto
 
 async function run() {
   const childServer = await serve(child);
-  const parent = `<!doctype html><meta charset="utf-8"><title>Cross-origin frame control fixture</title><style>body{font:16px sans-serif;margin:24px}button{font:16px sans-serif;margin:8px;padding:8px}iframe{display:block;width:460px;height:220px;border:4px solid #888}</style><iframe title="Control frame" src="http://127.0.0.1:${childServer.port}/frame.html"></iframe><script>window.addEventListener('message',event=>{if(!event.data||event.data.type!=='remove-frame')return;const frame=document.querySelector('iframe');if(frame)frame.remove();setTimeout(()=>{const restored=document.createElement('iframe');restored.title='Control frame';restored.src='http://127.0.0.1:${childServer.port}/frame-restored.html';document.body.append(restored)},50)})</script>`;
+  const parent = `<!doctype html><meta charset="utf-8"><title>Cross-origin frame control fixture</title><style>body{font:16px sans-serif;margin:24px}button{font:16px sans-serif;margin:8px;padding:8px}iframe{display:block;width:460px;height:220px;border:4px solid #888}</style><button aria-label="Parent action">Parent action</button><iframe title="Control frame" src="http://127.0.0.1:${childServer.port}/frame.html"></iframe><script>window.addEventListener('message',event=>{if(!event.data||event.data.type!=='remove-frame')return;const frame=document.querySelector('iframe');if(frame)frame.remove();setTimeout(()=>{const restored=document.createElement('iframe');restored.title='Control frame';restored.src='http://127.0.0.1:${childServer.port}/frame-restored.html';document.body.append(restored)},50)})</script>`;
   const parentServer = await serve(parent);
   const existing = new Set(listSockets());
   const { host, output } = launchHost();
@@ -61,12 +61,14 @@ async function run() {
       const queryBatch = await client.call("page.query.batch", {
         pageId,
         queries: [
-          { locator: { kind: "role", role: "button", name: "Frame action", exact: true }, options: { limit: 1 } },
-          { locator: { kind: "role", role: "textbox", name: "Frame name", exact: true }, options: { limit: 1 } },
+          { locator: { kind: "role", role: "button" }, options: { frameId: frameButton.frameId, limit: 8 } },
+          { locator: { kind: "role", role: "textbox", name: "Frame name", exact: true }, options: { frameId: frameButton.frameId, limit: 1 } },
         ],
       });
       assert.equal(queryBatch.revision, initial.revision);
-      assert.equal(queryBatch.queries[0].nodes[0]?.ref, frameButton.ref);
+      assert.equal(queryBatch.queries[0].matchCount, 3);
+      assert.equal(queryBatch.queries[0].nodes.every((node) => node.frameId === frameButton.frameId), true);
+      assert.equal(queryBatch.queries[0].nodes.some((node) => node.name === "Parent action"), false);
       assert.equal(queryBatch.queries[1].nodes[0]?.ref, frameTextbox.ref);
       assert.equal(queryBatch.queries[0].nodes[0]?.frameId, queryBatch.queries[1].nodes[0]?.frameId);
       const cssRead = await client.call("page.read", {
@@ -306,6 +308,8 @@ async function run() {
         hoverVerified: hovered.verified,
         scrollVerified: scrolled.verified,
         targetedPressVerified: pressed.verified && pressed.proof?.target !== undefined,
+        frameScopedQueryVerified: queryBatch.queries[0].matchCount === 3
+          && queryBatch.queries[0].nodes.every((node) => node.frameId === frameButton.frameId),
         idempotentReplayVerified: scrolledRetry.replayed === true,
         frameLifecycleVerified: events.some((event) => event.event === "frame.lifecycle"),
       }));

@@ -95,6 +95,7 @@ export interface SnapshotOptions {
 export interface PageQueryOptions {
   includeHidden?: boolean;
   limit?: number;
+  frameId?: FrameId;
 }
 
 export interface SnapshotWindowOptions {

@@ -88,6 +88,7 @@ function validateSnapshotOptions(value: unknown): void {
 function validatePageQueryOptions(value: unknown): void {
   const options = requireObject(value, "options");
   optionalBoolean(options, "includeHidden", "options.includeHidden");
+  if (options.frameId !== undefined) requireString(options.frameId, "options.frameId");
   if (options.limit !== undefined) {
     requirePositiveInteger(options.limit, "options.limit");
     if (Number(options.limit) > 256) {

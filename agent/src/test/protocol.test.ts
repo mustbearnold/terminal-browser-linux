@@ -177,7 +177,7 @@ test("validates nested agent request shapes at the wire boundary", () => {
       exact: true,
       within: { kind: "role", role: "region", name: "Primary card", exact: true },
     },
-    options: { includeHidden: true, limit: 16 },
+    options: { includeHidden: true, limit: 16, frameId: "frame-1" },
   });
   assert.equal(query.kind, "request");
 
@@ -324,6 +324,7 @@ test("validates nested agent request shapes at the wire boundary", () => {
   invalid({ op: "page.act.batch", pageId: "page-1", steps: [{ action: { type: "click" } }] });
   invalid({ op: "page.query", pageId: "page-1" });
   invalid({ op: "page.query", pageId: "page-1", locator: { kind: "role", role: "button" }, options: { limit: 257 } });
+  invalid({ op: "page.query", pageId: "page-1", locator: { kind: "role", role: "button" }, options: { frameId: "" } });
   invalid({ op: "page.query.batch", pageId: "page-1", queries: [] });
   invalid({ op: "page.query.batch", pageId: "page-1", queries: Array.from({ length: 33 }, () => ({ locator: { kind: "role", role: "button" } })) });
   invalid({ op: "page.query.batch", pageId: "page-1", queries: [{ locator: { kind: "role", role: "button" }, options: { limit: 257 } }] });

@@ -795,6 +795,7 @@ function normalizePageQueryOptions(options?: PageQueryOptions): PageQueryOptions
   return {
     includeHidden: options?.includeHidden === true,
     limit,
+    ...(options?.frameId === undefined ? {} : { frameId: options.frameId }),
   };
 }
 
