@@ -104,6 +104,62 @@ test("validates request deadlines and cancellation operations", () => {
   );
 });
 
+test("validates nested agent request shapes at the wire boundary", () => {
+  const valid = parseAgentMessage({
+    ...listRequest(),
+    op: "page.act",
+    pageId: "page-1",
+    action: {
+      type: "click",
+      target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } },
+      button: "left",
+      clickCount: 2,
+    },
+    token: { pageId: "page-1", documentId: "document-1", revision: 3, snapshotId: "snapshot-1" },
+    expect: { url: "https://example.com", timeoutMs: 500, quietMs: 20 },
+  });
+  assert.equal(valid.kind, "request");
+
+  const invalid = (body: Record<string, unknown>) => {
+    assert.throws(
+      () => parseAgentMessage({ ...listRequest(), ...body }),
+      (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
+    );
+  };
+
+  invalid({ op: "page.read", pageId: "page-1", target: { ref: "r1", locator: { kind: "css", value: "button" } } });
+  invalid({ op: "page.act", pageId: "page-1", action: { type: "scroll", direction: "diagonal" } });
+  invalid({ op: "page.act", pageId: "page-1", action: { type: "fill", target: { ref: "r1" } } });
+  invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, expect: { timeoutMs: -1 } });
+  invalid({ op: "page.wait", pageId: "page-1", condition: { type: "stable", quietMs: 1.5 } });
+  invalid({ op: "page.read", pageId: "page-1", target: { ref: "r1" }, token: { pageId: "page-1" } });
+  invalid({ op: "page.observe", pageId: "page-1", events: ["unknown.event"] });
+});
+
+test("validates response errors and event sequences", () => {
+  assert.throws(
+    () => parseAgentMessage({
+      kind: "response",
+      protocol: AGENT_PROTOCOL,
+      version: AGENT_PROTOCOL_VERSION,
+      requestId: "request-1",
+      ok: false,
+    }),
+    (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
+  );
+  assert.throws(
+    () => parseAgentMessage({
+      kind: "event",
+      protocol: AGENT_PROTOCOL,
+      version: AGENT_PROTOCOL_VERSION,
+      event: "dom.changed",
+      pageId: "page-1",
+      sequence: -1,
+    }),
+    (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
+  );
+});
+
 test("rejects incomplete transport frames", () => {
   const decoder = new LineJsonDecoder();
   decoder.push(encodeAgentMessage(listRequest()).trimEnd().slice(0, -1));

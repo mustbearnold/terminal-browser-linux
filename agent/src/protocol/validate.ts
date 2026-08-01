@@ -36,6 +36,186 @@ function requireNonNegativeInteger(value: unknown, field: string): void {
   }
 }
 
+function requirePositiveInteger(value: unknown, field: string): void {
+  if (!Number.isSafeInteger(value) || Number(value) < 1) {
+    throw new AgentError("INVALID_MESSAGE", `${field} must be a positive safe integer`);
+  }
+}
+
+function requireNonNegativeNumber(value: unknown, field: string): void {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new AgentError("INVALID_MESSAGE", `${field} must be a non-negative number`);
+  }
+}
+
+function requireBoolean(value: unknown, field: string): void {
+  if (typeof value !== "boolean") throw new AgentError("INVALID_MESSAGE", `${field} must be a boolean`);
+}
+
+function requireStringValue(value: unknown, field: string): void {
+  if (typeof value !== "string") throw new AgentError("INVALID_MESSAGE", `${field} must be a string`);
+}
+
+function requireOneOf<T extends string>(value: unknown, field: string, values: readonly T[]): void {
+  if (typeof value !== "string" || !values.includes(value as T)) {
+    throw new AgentError("INVALID_MESSAGE", `${field} must be one of ${values.join(", ")}`);
+  }
+}
+
+function optionalBoolean(value: Record<string, unknown>, property: string, field = property): void {
+  if (value[property] !== undefined) requireBoolean(value[property], field);
+}
+
+function optionalString(value: Record<string, unknown>, property: string, field = property): void {
+  if (value[property] !== undefined) requireStringValue(value[property], field);
+}
+
+function optionalNonNegativeInteger(value: Record<string, unknown>, property: string, field = property): void {
+  if (value[property] !== undefined) requireNonNegativeInteger(value[property], field);
+}
+
+function validateSnapshotOptions(value: unknown): void {
+  const options = requireObject(value, "options");
+  optionalBoolean(options, "interactiveOnly", "options.interactiveOnly");
+  optionalBoolean(options, "includeGeometry", "options.includeGeometry");
+  optionalBoolean(options, "includeText", "options.includeText");
+  if (options.maxNodes !== undefined) requirePositiveInteger(options.maxNodes, "options.maxNodes");
+}
+
+function validateSnapshotToken(value: unknown, field: string): void {
+  const token = requireObject(value, field);
+  requireString(token.pageId, `${field}.pageId`);
+  requireString(token.documentId, `${field}.documentId`);
+  requireNonNegativeInteger(token.revision, `${field}.revision`);
+  requireString(token.snapshotId, `${field}.snapshotId`);
+}
+
+function validateLocator(value: unknown, field: string): void {
+  const locator = requireObject(value, field);
+  const kind = requireString(locator.kind, `${field}.kind`);
+  switch (kind) {
+    case "role":
+      requireString(locator.role, `${field}.role`);
+      optionalString(locator, "name", `${field}.name`);
+      optionalBoolean(locator, "exact", `${field}.exact`);
+      return;
+    case "text":
+    case "label":
+    case "placeholder":
+      requireString(locator.text, `${field}.text`);
+      optionalBoolean(locator, "exact", `${field}.exact`);
+      return;
+    case "testid":
+    case "css":
+      requireString(locator.value, `${field}.value`);
+      return;
+    default:
+      throw new AgentError("INVALID_MESSAGE", `${field}.kind is unsupported`);
+  }
+}
+
+function validateTarget(value: unknown, field: string): void {
+  const target = requireObject(value, field);
+  const hasRef = target.ref !== undefined;
+  const hasLocator = target.locator !== undefined;
+  if (hasRef === hasLocator) {
+    throw new AgentError("INVALID_MESSAGE", `${field} must contain exactly one of ref or locator`);
+  }
+  if (hasRef) requireString(target.ref, `${field}.ref`);
+  else validateLocator(target.locator, `${field}.locator`);
+}
+
+function validateAction(value: unknown): void {
+  const action = requireObject(value, "action");
+  const type = requireString(action.type, "action.type");
+  switch (type) {
+    case "click":
+      validateTarget(action.target, "action.target");
+      if (action.button !== undefined) requireOneOf(action.button, "action.button", ["left", "middle", "right"]);
+      if (action.clickCount !== undefined) requirePositiveInteger(action.clickCount, "action.clickCount");
+      return;
+    case "fill":
+      validateTarget(action.target, "action.target");
+      requireStringValue(action.value, "action.value");
+      return;
+    case "type":
+      requireStringValue(action.text, "action.text");
+      return;
+    case "press":
+      requireString(action.key, "action.key");
+      return;
+    case "select":
+      validateTarget(action.target, "action.target");
+      requireStringArray(action.values, "action.values");
+      return;
+    case "check":
+      validateTarget(action.target, "action.target");
+      requireBoolean(action.checked, "action.checked");
+      return;
+    case "hover":
+      validateTarget(action.target, "action.target");
+      return;
+    case "scroll":
+      if (action.target !== undefined) validateTarget(action.target, "action.target");
+      requireOneOf(action.direction, "action.direction", ["up", "down", "left", "right"]);
+      if (action.amount !== undefined) requireNonNegativeNumber(action.amount, "action.amount");
+      return;
+    case "navigate":
+      requireString(action.url, "action.url");
+      return;
+    default:
+      throw new AgentError("INVALID_MESSAGE", `action.type is unsupported: ${type}`);
+  }
+}
+
+function validateExpectation(value: unknown): void {
+  const expect = requireObject(value, "expect");
+  optionalString(expect, "url", "expect.url");
+  optionalString(expect, "title", "expect.title");
+  optionalString(expect, "text", "expect.text");
+  optionalNonNegativeInteger(expect, "timeoutMs", "expect.timeoutMs");
+  optionalNonNegativeInteger(expect, "quietMs", "expect.quietMs");
+}
+
+function validateWaitCondition(value: unknown): void {
+  const condition = requireObject(value, "condition");
+  const type = requireString(condition.type, "condition.type");
+  switch (type) {
+    case "time":
+      requireNonNegativeInteger(condition.ms, "condition.ms");
+      return;
+    case "url":
+      requireString(condition.value, "condition.value");
+      return;
+    case "text":
+      requireString(condition.value, "condition.value");
+      if (condition.target !== undefined) validateTarget(condition.target, "condition.target");
+      return;
+    case "stable":
+      requireNonNegativeInteger(condition.quietMs, "condition.quietMs");
+      return;
+    default:
+      throw new AgentError("INVALID_MESSAGE", `condition.type is unsupported: ${type}`);
+  }
+}
+
+const agentEventTypes = new Set([
+  "navigation",
+  "frame.lifecycle",
+  "load",
+  "dom.changed",
+  "console",
+  "page.error",
+  "download",
+  "dialog",
+]);
+
+function validateEventType(value: unknown, field: string): void {
+  if (typeof value !== "string" || !agentEventTypes.has(value)) {
+    throw new AgentError("INVALID_MESSAGE", `${field} is unsupported`);
+  }
+}
+
 function validateRequest(message: Record<string, unknown>): void {
   const op = requireString(message.op, "op");
   if (message.deadlineMs !== undefined) requireNonNegativeInteger(message.deadlineMs, "deadlineMs");
@@ -65,18 +245,27 @@ function validateRequest(message: Record<string, unknown>): void {
       throw new AgentError("INVALID_MESSAGE", `unsupported request operation: ${op}`);
   }
 
-  if (op === "page.snapshot" && message.options !== undefined) requireObject(message.options, "options");
-  if (op === "page.read") requireObject(message.target, "target");
+  if (op === "page.snapshot" && message.options !== undefined) validateSnapshotOptions(message.options);
+  if (op === "page.read") {
+    validateTarget(message.target, "target");
+    if (message.token !== undefined) validateSnapshotToken(message.token, "token");
+  }
   if (op === "page.act") {
-    requireObject(message.action, "action");
+    validateAction(message.action);
+    if (message.token !== undefined) validateSnapshotToken(message.token, "token");
+    if (message.expect !== undefined) validateExpectation(message.expect);
     if (message.idempotencyKey !== undefined) {
       const key = requireString(message.idempotencyKey, "idempotencyKey");
       if (key.length > 256) throw new AgentError("INVALID_MESSAGE", "idempotencyKey must be at most 256 characters");
     }
   }
-  if (op === "page.wait") requireObject(message.condition, "condition");
+  if (op === "page.wait") {
+    validateWaitCondition(message.condition);
+    if (message.timeoutMs !== undefined) requireNonNegativeInteger(message.timeoutMs, "timeoutMs");
+  }
   if (op === "page.observe") {
     requireStringArray(message.events, "events");
+    for (const [index, event] of (message.events as string[]).entries()) validateEventType(event, `events[${index}]`);
     if (message.afterSequence !== undefined) requireNonNegativeInteger(message.afterSequence, "afterSequence");
   }
 }
@@ -104,12 +293,16 @@ export function parseAgentMessage(value: unknown): AgentMessage {
     if (typeof message.ok !== "boolean") {
       throw new AgentError("INVALID_MESSAGE", "response.ok must be a boolean");
     }
-  } else if (kind === "event") {
-    requireString(message.event, "event");
-    requireString(message.pageId, "pageId");
-    if (typeof message.sequence !== "number" || !Number.isInteger(message.sequence)) {
-      throw new AgentError("INVALID_MESSAGE", "event.sequence must be an integer");
+    if (!message.ok) {
+      const error = requireObject(message.error, "response.error");
+      requireString(error.code, "response.error.code");
+      requireString(error.message, "response.error.message");
+      if (error.retryable !== undefined) requireBoolean(error.retryable, "response.error.retryable");
     }
+  } else if (kind === "event") {
+    validateEventType(message.event, "event");
+    requireString(message.pageId, "pageId");
+    requireNonNegativeInteger(message.sequence, "event.sequence");
   } else {
     throw new AgentError("INVALID_MESSAGE", `unknown message kind: ${kind}`);
   }
