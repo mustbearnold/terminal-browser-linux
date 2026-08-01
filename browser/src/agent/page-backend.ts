@@ -107,6 +107,7 @@ type ActiveElementInfo = {
   enabled?: boolean;
   visible?: boolean;
   editable?: boolean;
+  focused?: boolean;
   role?: string;
   name?: string;
   value?: string;
@@ -777,9 +778,9 @@ export class ElectronPageBackend implements PageBackend {
       case "scroll":
         return this.scroll(action, token, expect, signal);
       case "type":
-        return this.typeText(action.text, token, expect, signal);
+        return this.typeText(action, token, expect, signal);
       case "press":
-        return this.press(action.key, token, expect, signal);
+        return this.press(action, token, expect, signal);
       case "navigate":
         return this.navigate(action, token, expect, signal);
       case "history":
@@ -907,21 +908,32 @@ export class ElectronPageBackend implements PageBackend {
   }
 
   private async typeText(
-    text: string,
+    action: Extract<AgentAction, { type: "type" }>,
     token?: SnapshotToken,
     expect?: ActionExpectation,
     signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
     const before = await this.identity(signal);
     this.assertToken(token, before.documentId, before.revision);
-    const activeBefore = await this.activeElement(signal);
-    if (!activeBefore.ok || !activeBefore.visible || !activeBefore.enabled || !activeBefore.editable) {
-      throw new AgentError("NOT_INTERACTABLE", "the active element is not editable", { retryable: true });
+    const target = action.target
+      ? await this.resolveActionTarget(action.target, token, before, signal)
+      : undefined;
+    const activeBefore = target
+      ? await this.focusTarget(target, signal, "typing")
+      : await this.activeElement(signal);
+    if (
+      !activeBefore.ok ||
+      !activeBefore.visible ||
+      !activeBefore.enabled ||
+      !activeBefore.editable ||
+      (target !== undefined && !activeBefore.focused)
+    ) {
+      throw new AgentError("NOT_INTERACTABLE", target ? "target is not an editable control" : "the active element is not editable", { retryable: true });
     }
 
     this.controller.focusContent();
     throwIfAborted(signal);
-    await this.controller.cdp("Input.insertText", { text });
+    await this.controller.cdp("Input.insertText", { text: action.text });
     this.invalidateSnapshots();
     const outcome = await this.waitForOutcome(before, expect, signal);
     const activeAfter = await this.activeElement(signal).catch((error) => {
@@ -935,8 +947,9 @@ export class ElectronPageBackend implements PageBackend {
       pageId: after.pageId,
       documentId: after.documentId,
       revision: after.revision,
+      target: target?.ref,
       role: activeAfter.role ?? activeBefore.role,
-      frameId: activeAfter.frameId === undefined ? undefined : asFrameId(activeAfter.frameId),
+      frameId: target?.node.frameId ?? (activeAfter.frameId === undefined ? undefined : asFrameId(activeAfter.frameId)),
       name: activeAfter.name ?? activeBefore.name,
       value: activeAfter.value,
       url: after.url,
@@ -944,7 +957,7 @@ export class ElectronPageBackend implements PageBackend {
     };
     const verified = hasExpectation(expect)
       ? outcome.satisfied
-      : text === "" || activeAfter.value !== activeBefore.value;
+      : action.text === "" || activeAfter.value !== activeBefore.value;
     return { verified, effects, proof };
   }
 
@@ -1230,14 +1243,23 @@ export class ElectronPageBackend implements PageBackend {
   }
 
   private async press(
-    rawKey: string,
+    action: Extract<AgentAction, { type: "press" }>,
     token?: SnapshotToken,
     expect?: ActionExpectation,
     signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
     const before = await this.identity(signal);
     this.assertToken(token, before.documentId, before.revision);
-    const key = parsePressKey(rawKey);
+    const target = action.target
+      ? await this.resolveActionTarget(action.target, token, before, signal)
+      : undefined;
+    const focused = target
+      ? await this.focusTarget(target, signal, "key press")
+      : await this.activeElement(signal);
+    if (!focused.ok || !focused.visible || !focused.enabled || !focused.focused) {
+      throw new AgentError("NOT_INTERACTABLE", target ? "target is not focusable" : "the active element is not focusable", { retryable: true });
+    }
+    const key = parsePressKey(action.key);
     this.controller.focusContent();
     const base = {
       key: key.key,
@@ -1270,8 +1292,9 @@ export class ElectronPageBackend implements PageBackend {
       pageId: after.pageId,
       documentId: after.documentId,
       revision: after.revision,
+      target: target?.ref,
       role: active.role,
-      frameId: active.frameId === undefined ? undefined : asFrameId(active.frameId),
+      frameId: target?.node.frameId ?? (active.frameId === undefined ? undefined : asFrameId(active.frameId)),
       name: active.name,
       value: active.value,
       url: after.url,
@@ -1606,6 +1629,24 @@ export class ElectronPageBackend implements PageBackend {
       }
     }
     return fallback ?? { ok: false };
+  }
+
+  private async focusTarget(
+    target: ResolvedTarget,
+    signal: AbortSignal | undefined,
+    actionName: string,
+  ): Promise<ActiveElementInfo> {
+    throwIfAborted(signal);
+    const frameId = String(target.node.frameId);
+    const source = focusElementScript(this.agentKey, String(target.ref));
+    const value = frameId === "main"
+      ? await this.controller.runJs(source)
+      : await this.controller.runJsInFrame(frameId, source);
+    throwIfAborted(signal);
+    if (!isActiveElementInfo(value)) {
+      throw new AgentError("INTERNAL_ERROR", `${actionName} target focus returned an invalid shape`);
+    }
+    return { ...value, frameId };
   }
 
   private assertToken(token: SnapshotToken | undefined, documentId: string, revision: number): void {
@@ -2665,6 +2706,31 @@ function fillScript(key: string, ref: string, value: string): string {
   })()`;
 }
 
+function focusElementScript(key: string, ref: string): string {
+  return `(() => {
+    const state = window[${JSON.stringify(key)}];
+    const el = state && state.refs && state.refs.get(${JSON.stringify(ref)});
+    if (!el || !el.isConnected) return { ok: false };
+    ${semanticHelpersScript()}
+    const role = roleFor(el);
+    const name = nameFor(el);
+    const enabled = enabledFor(el);
+    const visible = visibleFor(el);
+    if (!enabled || !visible) return { ok: true, enabled, visible, focused: false, editable: editableFor(el), role, name };
+    el.focus({ preventScroll: true });
+    return {
+      ok: true,
+      enabled,
+      visible,
+      focused: activeFor(el) === el,
+      editable: editableFor(el),
+      role,
+      name,
+      value: "value" in el ? String(el.value ?? "") : String(el.innerText ?? ""),
+    };
+  })()`;
+}
+
 function selectScript(key: string, ref: string, values: readonly string[]): string {
   return `(() => {
     const state = window[${JSON.stringify(key)}];
@@ -2755,6 +2821,7 @@ function activeElementScript(): string {
     ${semanticHelpersScript()}
     return {
       ok: true,
+      focused: true,
       enabled: enabledFor(el),
       visible: visibleFor(el),
       editable: editableFor(el),

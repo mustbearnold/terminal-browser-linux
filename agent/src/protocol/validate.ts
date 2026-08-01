@@ -203,9 +203,11 @@ function validateAction(value: unknown): void {
       return;
     case "type":
       requireStringValue(action.text, "action.text");
+      if (action.target !== undefined) validateTarget(action.target, "action.target");
       return;
     case "press":
       requireString(action.key, "action.key");
+      if (action.target !== undefined) validateTarget(action.target, "action.target");
       return;
     case "select":
       validateTarget(action.target, "action.target");

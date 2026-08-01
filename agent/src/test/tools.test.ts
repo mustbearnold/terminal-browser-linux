@@ -76,6 +76,18 @@ test("validates and dispatches structured calls through the typed client", async
   assert.equal(batch.completed, 1);
   assert.equal(batch.snapshot, undefined);
 
+  const targetedType = await tools.callTool("terminal_browser_page_act", {
+    pageId: String(FIXTURE_PAGE_ID),
+    action: {
+      type: "type",
+      text: " Ada",
+      target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } },
+    },
+    output: { snapshot: "none" },
+  });
+  assert.equal(targetedType.verified, true);
+  assert.equal(targetedType.proof?.target !== undefined, true);
+
   const compactWait = await tools.callTool("terminal_browser_page_wait", {
     pageId: String(FIXTURE_PAGE_ID),
     condition: { type: "text", value: "Fixture" },

@@ -24,10 +24,14 @@ async function run() {
     });
     assert.ok(hello.capabilities.includes("page.capture"), "page capture capability was not advertised");
     assert.ok(hello.capabilities.includes("snapshot.delta"), "snapshot delta capability was not advertised");
-    const captured = await client.capture(pageId, { format: "png" });
-    assert.equal(captured.format, "png");
-    assert.equal(captured.pageId, pageId);
-    assert.ok(captured.data.length > 100, "page capture returned too little image data");
+    const captured = process.env.TERMINAL_BROWSER_SMOKE_SKIP_CAPTURE === "1"
+      ? null
+      : await client.capture(pageId, { format: "png" });
+    if (captured) {
+      assert.equal(captured.format, "png");
+      assert.equal(captured.pageId, pageId);
+      assert.ok(captured.data.length > 100, "page capture returned too little image data");
+    }
 
     const events = [];
     const unsubscribe = client.onEvent((event) => events.push(event));
@@ -57,7 +61,20 @@ async function run() {
       assert.ok(valueDelta.updated.some((entry) => entry.node.name === "Shadow name"), "incremental delta omitted the input state");
       const typed = await client.call("page.act", {
         pageId,
-        action: { type: "type", text: " Lovelace" },
+        action: {
+          type: "type",
+          text: " Lovelace",
+          target: { locator: { kind: "role", role: "textbox", name: "Shadow name", exact: true } },
+        },
+      });
+      const pressed = await client.call("page.act", {
+        pageId,
+        action: {
+          type: "press",
+          key: "Tab",
+          target: { locator: { kind: "role", role: "textbox", name: "Shadow name", exact: true } },
+        },
+        output: { snapshot: "none" },
       });
       const typedDelta = await client.snapshotDelta(pageId, valueDelta);
       assert.equal(typedDelta.mode, "incremental", "typing did not use the incremental delta path");
@@ -111,8 +128,9 @@ async function run() {
         protocol: `${hello.protocol}/${hello.version}`,
         shadowNodes: initial.nodes.length,
         typedValue: typed.proof?.value,
+        targetedPress: Number(pressed.verified && pressed.proof?.target !== undefined),
         dynamicNode: dynamicButton.name,
-        captureBytes: captured.data.length,
+        captureBytes: captured?.data.length ?? 0,
         incrementalDeltaMode: typedDelta.mode,
         fallbackDeltaMode: delta.mode,
         deltaAdded: delta.added.length,

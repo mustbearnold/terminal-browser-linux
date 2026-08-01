@@ -199,6 +199,30 @@ test("validates nested agent request shapes at the wire boundary", () => {
   });
   assert.equal(reload.kind, "request");
 
+  const targetedKeyboard = parseAgentMessage({
+    ...listRequest(),
+    op: "page.act",
+    pageId: "page-1",
+    action: {
+      type: "type",
+      text: "Ada",
+      target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } },
+    },
+  });
+  assert.equal(targetedKeyboard.kind, "request");
+
+  const targetedPress = parseAgentMessage({
+    ...listRequest(),
+    op: "page.act",
+    pageId: "page-1",
+    action: {
+      type: "press",
+      key: "Enter",
+      target: { ref: "r1" },
+    },
+  });
+  assert.equal(targetedPress.kind, "request");
+
   const history = parseAgentMessage({
     ...listRequest(),
     op: "page.act",

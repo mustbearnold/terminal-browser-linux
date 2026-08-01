@@ -259,8 +259,8 @@ export type Target =
 export type AgentAction =
   | { type: "click"; target: Target; button?: "left" | "middle" | "right"; clickCount?: number }
   | { type: "fill"; target: Target; value: string }
-  | { type: "type"; text: string }
-  | { type: "press"; key: string }
+  | { type: "type"; text: string; target?: Target }
+  | { type: "press"; key: string; target?: Target }
   | { type: "select"; target: Target; values: readonly string[] }
   | { type: "check"; target: Target; checked: boolean }
   | { type: "hover"; target: Target }

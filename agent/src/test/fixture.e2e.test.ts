@@ -267,7 +267,11 @@ test("runs the deterministic agent control contract", async () => {
       request("page.act", {
         pageId: FIXTURE_PAGE_ID,
         token: token(filled.snapshot!),
-        action: { type: "type", text: " Lovelace" },
+        action: {
+          type: "type",
+          text: " Lovelace",
+          target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } },
+        },
       }),
       context,
     ),
@@ -280,7 +284,11 @@ test("runs the deterministic agent control contract", async () => {
       request("page.act", {
         pageId: FIXTURE_PAGE_ID,
         token: token(typed.snapshot!),
-        action: { type: "press", key: "Enter" },
+        action: {
+          type: "press",
+          key: "Enter",
+          target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } },
+        },
         expect: {
           element: {
             target: { locator: { kind: "role", role: "status", name: "Ready", exact: true } },

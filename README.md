@@ -77,6 +77,11 @@ Locators can also include a recursive `within` locator to scope a match to an
 ancestor, such as a button within a named row or dialog. Scope depth is bounded
 so malformed agent requests cannot turn DOM matching into unbounded work.
 
+Keyboard actions can optionally include a `target`. Targeted `type` and `press`
+actions focus and verify that element before dispatching input, so they do not
+depend on ambient focus; omitting the target keeps the compact active-element
+path.
+
 In the live Electron runtime, semantic and CSS locators used by `page.read`,
 `page.act`, `page.wait`, and post-action expectations search the current DOM
 directly across frames and shadow roots. This keeps locator and text search

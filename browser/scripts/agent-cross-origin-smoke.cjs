@@ -198,10 +198,29 @@ async function run() {
       assert.equal(valueDelta.mode, "incremental", "cross-origin frame input did not use the incremental delta path");
       const typed = await client.call("page.act", {
         pageId,
-        action: { type: "type", text: " Lovelace" },
+        action: {
+          type: "type",
+          text: " Lovelace",
+          target: {
+            locator: { kind: "role", role: "textbox", name: "Frame name", exact: true },
+            frameId: activeFrameId,
+          },
+        },
       });
       const typedDelta = await client.snapshotDelta(pageId, valueDelta);
       assert.equal(typedDelta.mode, "incremental", "cross-origin frame typing did not use the incremental delta path");
+      const pressed = await client.call("page.act", {
+        pageId,
+        action: {
+          type: "press",
+          key: "Tab",
+          target: {
+            locator: { kind: "role", role: "textbox", name: "Frame name", exact: true },
+            frameId: activeFrameId,
+          },
+        },
+        output: { snapshot: "none" },
+      });
       const clicked = await client.call("page.act", {
         pageId,
         action: {
@@ -225,6 +244,8 @@ async function run() {
       assert.equal(checked.verified, true);
       assert.equal(checked.proof?.value, "true");
       assert.equal(typed.proof?.value, "Ada Lovelace");
+      assert.equal(pressed.verified, true);
+      assert.ok(pressed.proof?.target, "targeted frame press omitted its target proof");
       assert.equal(clicked.verified, true);
       assert.ok(dynamicButton, "cross-origin frame mutation was not exposed in the next snapshot");
       assert.equal(dynamicButton.frameId, activeFrameId);
@@ -273,6 +294,7 @@ async function run() {
         frameLifecycleEvents: events.filter((event) => event.event === "frame.lifecycle").length,
         hoverVerified: hovered.verified,
         scrollVerified: scrolled.verified,
+        targetedPressVerified: pressed.verified && pressed.proof?.target !== undefined,
         idempotentReplayVerified: scrolledRetry.replayed === true,
         frameLifecycleVerified: events.some((event) => event.event === "frame.lifecycle"),
       }));

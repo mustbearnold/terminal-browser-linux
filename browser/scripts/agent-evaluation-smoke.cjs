@@ -596,7 +596,14 @@ function shadowScenarios(pageId) {
         pageId,
         action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Shadow name", exact: true } }, value: "Ada" },
       });
-      const typed = await client.call("page.act", { pageId, action: { type: "type", text: " Lovelace" } });
+      const typed = await client.call("page.act", {
+        pageId,
+        action: {
+          type: "type",
+          text: " Lovelace",
+          target: { locator: { kind: "role", role: "textbox", name: "Shadow name", exact: true } },
+        },
+      });
       const clicked = await client.call("page.act", {
         pageId,
         action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Shadow action", exact: true } } },
@@ -679,7 +686,17 @@ function crossOriginScenarios(pageId) {
         pageId,
         action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Frame name", exact: true } }, value: "Ada" },
       });
-      const typed = await client.call("page.act", { pageId, action: { type: "type", text: " Lovelace" } });
+      const typed = await client.call("page.act", {
+        pageId,
+        action: {
+          type: "type",
+          text: " Lovelace",
+          target: {
+            locator: { kind: "role", role: "textbox", name: "Frame name", exact: true },
+            frameId: frameTextbox.frameId,
+          },
+        },
+      });
       const clicked = await client.call("page.act", {
         pageId,
         action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Frame action", exact: true } } },

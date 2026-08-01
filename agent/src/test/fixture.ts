@@ -259,9 +259,9 @@ class FixturePageBackend implements PageBackend {
       case "fill":
         return this.fill(action, token, expect, signal);
       case "type":
-        return this.typeText(action.text, token, expect, signal);
+        return this.typeText(action, token, expect, signal);
       case "press":
-        return this.press(action.key, token, expect, signal);
+        return this.press(action, token, expect, signal);
       case "reload":
         return this.reload(action, token, expect, signal);
       case "history":
@@ -343,15 +343,20 @@ class FixturePageBackend implements PageBackend {
   }
 
   private async typeText(
-    text: string,
+    action: Extract<AgentAction, { type: "type" }>,
     token?: SnapshotToken,
     expect?: ActionExpectation,
     signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
-    await this.actionSnapshot(token, signal);
+    const snapshot = await this.actionSnapshot(token, signal);
+    const target = action.target ? this.resolver.resolve(action.target, snapshot) : undefined;
+    if (target && (target.node.role !== "textbox" || !target.node.visible || !target.node.enabled)) {
+      throw new AgentError("NOT_INTERACTABLE", "fixture target is not editable", { retryable: true });
+    }
     throwIfAborted(signal);
-    if (!this.focused) throw new AgentError("NOT_INTERACTABLE", "fixture has no focused editable control", { retryable: true });
-    this.value += text;
+    if (!target && !this.focused) throw new AgentError("NOT_INTERACTABLE", "fixture has no focused editable control", { retryable: true });
+    this.focused = true;
+    this.value += action.text;
     this.revision += 1;
     const identity = await this.identity(signal);
     this.emitChanged();
@@ -365,6 +370,7 @@ class FixturePageBackend implements PageBackend {
         pageId: identity.pageId,
         documentId: identity.documentId,
         revision: identity.revision,
+        target: target?.ref,
         role: "textbox",
         frameId: FRAME_ID,
         name: "Name",
@@ -376,15 +382,20 @@ class FixturePageBackend implements PageBackend {
   }
 
   private async press(
-    key: string,
+    action: Extract<AgentAction, { type: "press" }>,
     token?: SnapshotToken,
     expect?: ActionExpectation,
     signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
-    await this.actionSnapshot(token, signal);
+    const snapshot = await this.actionSnapshot(token, signal);
+    const target = action.target ? this.resolver.resolve(action.target, snapshot) : undefined;
+    if (target && (!target.node.visible || !target.node.enabled || !target.node.focusable)) {
+      throw new AgentError("NOT_INTERACTABLE", "fixture target is not focusable", { retryable: true });
+    }
     throwIfAborted(signal);
-    if (!this.focused) throw new AgentError("NOT_INTERACTABLE", "fixture has no focused control", { retryable: true });
-    if (key.toLocaleLowerCase() === "enter") this.ready = true;
+    if (!target && !this.focused) throw new AgentError("NOT_INTERACTABLE", "fixture has no focused control", { retryable: true });
+    this.focused = true;
+    if (action.key.toLocaleLowerCase() === "enter") this.ready = true;
     this.revision += 1;
     const identity = await this.identity(signal);
     this.emitChanged();
@@ -395,9 +406,10 @@ class FixturePageBackend implements PageBackend {
         pageId: identity.pageId,
         documentId: identity.documentId,
         revision: identity.revision,
-        role: "textbox",
+        target: target?.ref,
+        role: target?.node.role ?? "textbox",
         frameId: FRAME_ID,
-        name: "Name",
+        name: target?.node.name ?? "Name",
         value: this.value,
         url: identity.url,
         title: identity.title,
