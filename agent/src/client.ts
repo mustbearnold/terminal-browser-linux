@@ -4,6 +4,7 @@ import {
   AGENT_PROTOCOL,
   AGENT_PROTOCOL_VERSION,
   type ActionResult,
+  type ActionStatusResult,
   type AgentCapability,
   type AgentEvent,
   type AgentEventType,
@@ -68,6 +69,7 @@ export interface AgentOperationResults {
   "page.capture": PageCapture;
   "page.read": SnapshotNode;
   "page.act": ActionResult;
+  "page.act.status": ActionStatusResult;
   "page.wait": WaitResult;
   "page.observe": PageObserveResult;
   "page.dialog": PageDialogResult;
@@ -134,6 +136,14 @@ export class AgentClient {
 
   cancel(targetRequestId: string, options?: AgentCallOptions): Promise<boolean> {
     return this.call("request.cancel", { targetRequestId }, options).then((result) => result.canceled);
+  }
+
+  actionStatus(
+    pageId: PageId,
+    idempotencyKey: string,
+    options?: AgentCallOptions,
+  ): Promise<ActionStatusResult> {
+    return this.call("page.act.status", { pageId, idempotencyKey }, options);
   }
 
   observe(pageId: PageId, events: readonly AgentEventType[], options: AgentObserveOptions = {}) {

@@ -254,13 +254,27 @@ export function fixtureScenarios(pageId: PageId): readonly AgentEvaluationScenar
           target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } },
           token: snapshotToken(snapshot),
         });
+        const statusAction = await tools.callTool("terminal_browser_page_act", {
+          pageId,
+          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } } },
+          output: { snapshot: "none" },
+          idempotencyKey: "structured-status-action",
+        });
+        const statusReadback = await tools.callTool("terminal_browser_page_act_status", {
+          pageId,
+          idempotencyKey: "structured-status-action",
+        });
         return {
           passed: names.has("terminal_browser_page_snapshot")
             && names.has("terminal_browser_page_read")
+            && names.has("terminal_browser_page_act_status")
             && pages.pages.some((page) => page.pageId === pageId)
             && node.role === "textbox"
-            && node.name === "Name",
-          metrics: { structuredTools: manifest.tools.length, structuredConcurrent: 1 },
+            && node.name === "Name"
+            && statusAction.verified
+            && statusReadback.status === "completed"
+            && statusReadback.result?.verified === true,
+          metrics: { structuredTools: manifest.tools.length, structuredConcurrent: 1, structuredStatus: 1 },
         };
       },
     },

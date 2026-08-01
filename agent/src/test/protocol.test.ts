@@ -70,6 +70,16 @@ test("validates request deadlines and cancellation operations", () => {
   assert.equal(cancellation.kind, "request");
   assert.equal((cancellation as AgentRequest).op, "request.cancel");
 
+  const actionStatus = parseAgentMessage({
+    ...listRequest(),
+    requestId: "status-1",
+    op: "page.act.status",
+    pageId: "page-1",
+    idempotencyKey: "action-1",
+  });
+  assert.equal(actionStatus.kind, "request");
+  assert.equal((actionStatus as AgentRequest).op, "page.act.status");
+
   assert.throws(
     () => parseAgentMessage({ ...listRequest(), deadlineMs: -1 }),
     (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
@@ -100,6 +110,10 @@ test("validates request deadlines and cancellation operations", () => {
   );
   assert.throws(
     () => parseAgentMessage({ ...listRequest(), op: "request.cancel" }),
+    (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
+  );
+  assert.throws(
+    () => parseAgentMessage({ ...listRequest(), op: "page.act.status", pageId: "page-1", idempotencyKey: "" }),
     (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
   );
 });

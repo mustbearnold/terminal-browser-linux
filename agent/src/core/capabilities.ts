@@ -51,6 +51,8 @@ export function operationCapability(request: AgentRequest): AgentCapability | un
       return "page.read";
     case "page.act":
       return "page.act";
+    case "page.act.status":
+      return "page.act.status";
     case "page.wait":
       return "page.wait";
     case "page.observe":

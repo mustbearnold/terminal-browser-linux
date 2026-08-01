@@ -27,6 +27,7 @@ export type AgentCapability =
   | "page.frames"
   | "page.read"
   | "page.act"
+  | "page.act.status"
   | "page.act.click"
   | "page.act.fill"
   | "page.act.type"
@@ -258,6 +259,15 @@ export interface ActionResult {
   snapshotDelta?: PageSnapshotDelta;
 }
 
+export type ActionStatus = "missing" | "running" | "completed" | "unknown";
+
+export interface ActionStatusResult {
+  pageId: PageId;
+  idempotencyKey: string;
+  status: ActionStatus;
+  result?: ActionResult;
+}
+
 export type WaitCondition =
   | { type: "time"; ms: number }
   | { type: "url"; value: string }
@@ -325,6 +335,11 @@ export type AgentRequest =
       expect?: ActionExpectation;
       output?: ActionOutputOptions;
       idempotencyKey?: string;
+    })
+  | (AgentRequestEnvelope & {
+      op: "page.act.status";
+      pageId: PageId;
+      idempotencyKey: string;
     })
   | (AgentRequestEnvelope & {
       op: "page.wait";

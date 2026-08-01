@@ -297,6 +297,7 @@ function validateRequest(message: Record<string, unknown>): void {
     case "page.capture":
     case "page.read":
     case "page.act":
+    case "page.act.status":
     case "page.wait":
     case "page.observe":
     case "page.dialog":
@@ -324,6 +325,12 @@ function validateRequest(message: Record<string, unknown>): void {
     if (message.idempotencyKey !== undefined) {
       const key = requireString(message.idempotencyKey, "idempotencyKey");
       if (key.length > 256) throw new AgentError("INVALID_MESSAGE", "idempotencyKey must be at most 256 characters");
+    }
+  }
+  if (op === "page.act.status") {
+    const key = requireString(message.idempotencyKey, "idempotencyKey");
+    if (key.length === 0 || key.length > 256) {
+      throw new AgentError("INVALID_MESSAGE", "idempotencyKey must be between 1 and 256 characters");
     }
   }
   if (op === "page.wait") {

@@ -42,6 +42,12 @@ test("validates and dispatches structured calls through the typed client", async
   });
   assert.equal(node.name, "Name");
 
+  const missingAction = await tools.callTool("terminal_browser_page_act_status", {
+    pageId: String(FIXTURE_PAGE_ID),
+    idempotencyKey: "not-started",
+  });
+  assert.equal(missingAction.status, "missing");
+
   await assert.rejects(
     tools.callTool("terminal_browser_page_act", {
       pageId: String(FIXTURE_PAGE_ID),

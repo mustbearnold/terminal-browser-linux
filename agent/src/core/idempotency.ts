@@ -5,18 +5,25 @@ export interface IdempotentResult<Result> {
   replayed: boolean;
 }
 
+export type ActionJournalStatus<Result> =
+  | { status: "missing" | "running" | "unknown" }
+  | { status: "completed"; result: Result };
+
 export interface ActionJournal<Result> {
   execute(
     key: string,
     fingerprint: string,
     operation: () => Promise<Result>,
   ): Promise<IdempotentResult<Result>>;
+  status(key: string): ActionJournalStatus<Result>;
 }
 
 interface Entry<Result> {
   fingerprint: string;
   promise: Promise<Result>;
   settled: boolean;
+  succeeded: boolean;
+  result?: Result;
 }
 
 export class IdempotencyCache<Result> implements ActionJournal<Result> {
@@ -47,10 +54,13 @@ export class IdempotencyCache<Result> implements ActionJournal<Result> {
       fingerprint,
       promise: Promise.resolve().then(operation),
       settled: false,
+      succeeded: false,
     };
     this.entries.set(key, entry);
     void entry.promise.then(
-      () => {
+      (result) => {
+        entry.succeeded = true;
+        entry.result = result;
         entry.settled = true;
         this.evict();
       },
@@ -61,6 +71,14 @@ export class IdempotencyCache<Result> implements ActionJournal<Result> {
     );
     this.evict();
     return entry.promise.then((result) => ({ result, replayed: false }));
+  }
+
+  status(key: string): ActionJournalStatus<Result> {
+    const entry = this.entries.get(key);
+    if (!entry) return { status: "missing" };
+    if (!entry.settled) return { status: "running" };
+    if (entry.succeeded) return { status: "completed", result: entry.result as Result };
+    return { status: "unknown" };
   }
 
   private evict(): void {

@@ -27,6 +27,24 @@ test("shares an in-flight operation and marks later results as replayed", async 
   assert.deepEqual(await second, { result: "done", replayed: true });
 });
 
+test("reports missing, running, and completed action states", async () => {
+  const cache = new IdempotencyCache<string>();
+  assert.deepEqual(cache.status("missing"), { status: "missing" });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const pending = cache.execute("key", "fingerprint", async () => {
+    await gate;
+    return "done";
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(cache.status("key"), { status: "running" });
+  release();
+  await pending;
+  assert.deepEqual(cache.status("key"), { status: "completed", result: "done" });
+});
+
 test("rejects a key reused with a different fingerprint and forgets failures", async () => {
   const cache = new IdempotencyCache<string>();
   await cache.execute("key", "first", async () => "done");

@@ -51,6 +51,7 @@ export interface AgentToolOperationMap {
   terminal_browser_page_capture: "page.capture";
   terminal_browser_page_read: "page.read";
   terminal_browser_page_act: "page.act";
+  terminal_browser_page_act_status: "page.act.status";
   terminal_browser_page_wait: "page.wait";
   terminal_browser_page_observe: "page.observe";
   terminal_browser_page_dialog: "page.dialog";
@@ -120,6 +121,10 @@ export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
     output: actionOutputSchema(),
     idempotencyKey: string("Stable key for safe retry and replay."),
   }, ["pageId", "action"])),
+  tool("terminal_browser_page_act_status", "Check the durable outcome of an idempotent browser action.", "page.act.status", "page.act.status", object({
+    pageId: string("Page identifier."),
+    idempotencyKey: string("Stable action key to inspect."),
+  }, ["pageId", "idempotencyKey"])),
   tool("terminal_browser_page_wait", "Wait for a URL, text, DOM state, element state, or quiet page.", "page.wait", "page.wait", object({
     pageId: string("Page identifier."),
     condition: waitConditionSchema(),

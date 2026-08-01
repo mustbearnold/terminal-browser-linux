@@ -4,7 +4,7 @@ import path from "node:path";
 import { AgentError } from "../protocol/errors";
 import type { ActionResult, AgentEvent, PageId } from "../protocol/types";
 import type { EventHistoryStore } from "./events";
-import type { ActionJournal, IdempotentResult } from "./idempotency";
+import type { ActionJournal, ActionJournalStatus, IdempotentResult } from "./idempotency";
 
 export interface AgentJournal {
   readonly actions: ActionJournal<ActionResult>;
@@ -96,6 +96,16 @@ export class DurableActionJournal implements ActionJournal<ActionResult> {
       () => this.inFlight.delete(key),
     );
     return execution.then((result) => ({ result, replayed: false }));
+  }
+
+  status(key: string): ActionJournalStatus<ActionResult> {
+    const entry = this.entries.get(key);
+    if (!entry) return { status: "missing" };
+    if (entry.status === "completed") {
+      if (!entry.result) throw new AgentError("INTERNAL_ERROR", "completed action journal entry has no result");
+      return { status: "completed", result: entry.result };
+    }
+    return { status: this.inFlight.has(key) ? "running" : "unknown" };
   }
 
   private load(): void {

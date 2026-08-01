@@ -151,7 +151,7 @@ export class AgentRequestRouter {
         });
         const execute = () => this.executeAction(request, signal);
         if (request.idempotencyKey === undefined) return await execute();
-        const key = `${context.clientId}\u0000${String(request.pageId)}\u0000${request.idempotencyKey}`;
+        const key = actionJournalKey(context.clientId, request.pageId, request.idempotencyKey);
         const fingerprint = stableSerialize({
           pageId: request.pageId,
           action: request.action,
@@ -161,6 +161,16 @@ export class AgentRequestRouter {
         });
         const outcome = await this.actionJournal.execute(key, fingerprint, execute);
         return outcome.replayed ? { ...outcome.result, replayed: true } : outcome.result;
+      }
+      case "page.act.status": {
+        const status = this.actionJournal.status(
+          actionJournalKey(context.clientId, request.pageId, request.idempotencyKey),
+        );
+        return {
+          pageId: request.pageId,
+          idempotencyKey: request.idempotencyKey,
+          ...status,
+        };
       }
       case "page.wait":
         return await this.page(request.pageId).wait(request.condition, request.timeoutMs, signal);
@@ -275,6 +285,10 @@ function requireIdempotencyKey(key: string): void {
   if (key.length === 0 || key.length > 256) {
     throw new AgentError("INVALID_REQUEST", "idempotencyKey must be between 1 and 256 characters");
   }
+}
+
+function actionJournalKey(clientId: string, pageId: PageId, idempotencyKey: string): string {
+  return `${clientId}\u0000${String(pageId)}\u0000${idempotencyKey}`;
 }
 
 function requestPolicyContext(request: AgentRequest): Omit<PolicyContext, "clientId" | "capability"> {

@@ -107,6 +107,7 @@ function runtime(): AgentRuntime {
       "page.capture",
       "page.read",
       "page.act",
+      "page.act.status",
       "page.act.click",
       "page.act.fill",
       "page.act.type",
@@ -352,12 +353,29 @@ test("replays an action through a journal injected into a new router", async () 
     const first = new AgentRequestRouter(runtime(), undefined, undefined, new DurableActionJournal(filePath));
     const context = { clientId: "durable-router-client", emit: () => {}, addSubscription: () => {} };
     const firstResponse = await first.handle(request, context);
+    const firstStatus = await first.handle(envelope({
+      op: "page.act.status",
+      pageId,
+      idempotencyKey: "durable-router-action",
+    }), context);
     const second = new AgentRequestRouter(runtime(), undefined, undefined, new DurableActionJournal(filePath));
     const secondResponse = await second.handle({ ...request, requestId: "durable-router-retry" }, context);
+    const secondStatus = await second.handle(envelope({
+      op: "page.act.status",
+      pageId,
+      idempotencyKey: "durable-router-action",
+    }), context);
 
     assert.equal(firstResponse.ok, true);
+    assert.deepEqual(firstStatus.result, {
+      pageId,
+      idempotencyKey: "durable-router-action",
+      status: "completed",
+      result: firstResponse.result,
+    });
     assert.equal(secondResponse.ok, true);
     assert.equal((secondResponse.result as { replayed?: boolean }).replayed, true);
+    assert.deepEqual(secondStatus.result, firstStatus.result);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

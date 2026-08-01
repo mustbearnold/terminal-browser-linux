@@ -25,6 +25,8 @@ test("replays completed actions from a new durable journal instance", async () =
       calls += 1;
       return { verified: false, effects: [] };
     }), { result, replayed: true });
+    assert.deepEqual(second.status("key"), { status: "completed", result });
+    assert.deepEqual(second.status("missing"), { status: "missing" });
     assert.equal(calls, 1);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -52,6 +54,7 @@ test("does not repeat an action whose durable outcome is uncertain", async () =>
     await startedPromise;
 
     const restarted = new DurableActionJournal(filePath);
+    assert.deepEqual(restarted.status("key"), { status: "unknown" });
     await assert.rejects(
       Promise.resolve().then(() => restarted.execute("key", "fingerprint", async () => ({ verified: false, effects: [] }))),
       (error: unknown) => error instanceof Error && "code" in error && error.code === "ACTION_STATUS_UNKNOWN",
