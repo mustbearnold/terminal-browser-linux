@@ -4,6 +4,7 @@
   "private": true,
   "main": "dist/main.js",
   "scripts": {
+    "agent:frame-smoke": "node scripts/agent-frame-smoke.cjs",
     "agent:shadow-smoke": "node scripts/agent-shadow-smoke.cjs",
     "bench:bun-webview": "bun scripts/bun-webview-bench.ts",
     "bench:electron-offscreen": "electron scripts/electron-offscreen-bench.cjs",

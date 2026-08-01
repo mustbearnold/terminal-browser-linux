@@ -543,6 +543,22 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined): stri
     state.snapshotRevision = state.revision;
 
     const text = (value) => String(value ?? "").replace(/\\s+/g, " ").trim().slice(0, 240);
+    const frameIdFor = (frame, parentFrameId) => {
+      let frameId = state.frameRefs.get(frame);
+      if (!frameId) {
+        frameId = parentFrameId + "/frame-" + (++state.nextFrame);
+        state.frameRefs.set(frame, frameId);
+      }
+      return frameId;
+    };
+    const styleFor = (el) => {
+      const view = el.ownerDocument && el.ownerDocument.defaultView;
+      return view ? view.getComputedStyle(el) : getComputedStyle(el);
+    };
+    const boxFor = (el, offset) => {
+      const rect = el.getBoundingClientRect();
+      return { x: rect.x + offset.x, y: rect.y + offset.y, width: rect.width, height: rect.height, rect };
+    };
     const roleFor = (el) => {
       const explicit = el.getAttribute("role");
       if (explicit) return explicit;
@@ -567,7 +583,7 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined): stri
       return text(el.innerText || el.value || "");
     };
     const visibleFor = (el) => {
-      const style = getComputedStyle(el);
+      const style = styleFor(el);
       const rect = el.getBoundingClientRect();
       return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0" && (rect.width > 0 || rect.height > 0);
     };
@@ -597,10 +613,10 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined): stri
       }
       return Object.keys(attrs).length ? attrs : undefined;
     };
-    const visit = (el, parent) => {
+    const visit = (el, parent, frameId, offset, parentVisible) => {
       if (nodes.length >= maxNodes) { truncated = true; return; }
       const role = roleFor(el);
-      const visible = visibleFor(el);
+      const visible = parentVisible && visibleFor(el);
       const include = !interactiveOnly || interactiveFor(el, role);
       let nextParent = parent;
       if (include) {
@@ -610,16 +626,16 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined): stri
           state.elementRefs.set(el, ref);
         }
         state.refs.set(ref, el);
-        const rect = el.getBoundingClientRect();
+        const box = boxFor(el, offset);
         nodes.push({
           ref,
-          frameId: "main",
+          frameId,
           parent,
           role,
           name: nameFor(el),
           ...(includeText ? { text: text(el.innerText || "") } : {}),
           state: stateFor(el),
-          ...(includeGeometry ? { box: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } } : {}),
+          ...(includeGeometry ? { box: { x: box.x, y: box.y, width: box.width, height: box.height } } : {}),
           visible,
           enabled: !el.disabled && el.getAttribute("aria-disabled") !== "true",
           focusable: focusableFor(el),
@@ -627,13 +643,27 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined): stri
         });
         nextParent = ref;
       }
-      for (const child of el.children) visit(child, nextParent);
+      for (const child of el.children) visit(child, nextParent, frameId, offset, visible);
       if (el.shadowRoot) {
         state.observeRoot(el.shadowRoot);
-        for (const child of el.shadowRoot.children) visit(child, nextParent);
+        for (const child of el.shadowRoot.children) visit(child, nextParent, frameId, offset, visible);
+      }
+      if (el.tagName === "IFRAME" && el.contentDocument) {
+        state.observeFrame(el);
+        state.observeRoot(el.contentDocument);
+        const childFrameId = frameIdFor(el, frameId);
+        const childBody = el.contentDocument.body || el.contentDocument.documentElement;
+        if (childBody) {
+          const frameBox = boxFor(el, offset);
+          const childOffset = {
+            x: frameBox.x + (el.clientLeft || 0),
+            y: frameBox.y + (el.clientTop || 0),
+          };
+          visit(childBody, nextParent, childFrameId, childOffset, visible);
+        }
       }
     };
-    visit(document.body || document.documentElement, null);
+    visit(document.body || document.documentElement, null, "main", { x: 0, y: 0 }, true);
     return {
       pageId: "",
       documentId: state.documentId,
@@ -659,6 +689,10 @@ function agentStateSetupScript(key: string): string {
         nextRef: 0,
         refs: new Map(),
         elementRefs: new WeakMap(),
+        frameRefs: new WeakMap(),
+        nextFrame: 0,
+        observedFrames: new WeakSet(),
+        invalidationScheduled: false,
         snapshotRevision: -1,
       };
       const emit = () => {
@@ -672,23 +706,40 @@ function agentStateSetupScript(key: string): string {
         } catch {}
       };
       const invalidate = () => {
-        state.revision += 1;
-        state.refs = new Map();
-        state.elementRefs = new WeakMap();
-        emit();
+        if (state.invalidationScheduled) return;
+        state.invalidationScheduled = true;
+        queueMicrotask(() => {
+          state.invalidationScheduled = false;
+          state.revision += 1;
+          state.refs = new Map();
+          state.elementRefs = new WeakMap();
+          emit();
+        });
       };
       const observer = new MutationObserver(invalidate);
       const observedRoots = new WeakSet();
+      const handledEvents = new WeakSet();
+      const invalidateEvent = (event) => {
+        if (handledEvents.has(event)) return;
+        handledEvents.add(event);
+        invalidate();
+      };
       const observeRoot = (root) => {
         if (observedRoots.has(root)) return;
         observedRoots.add(root);
         observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
+        for (const event of ["input", "change", "focusin", "focusout"]) {
+          root.addEventListener(event, invalidateEvent, true);
+        }
+      };
+      const observeFrame = (frame) => {
+        if (state.observedFrames.has(frame)) return;
+        state.observedFrames.add(frame);
+        frame.addEventListener("load", invalidateEvent, true);
       };
       state.observeRoot = observeRoot;
+      state.observeFrame = observeFrame;
       observeRoot(document);
-      for (const event of ["input", "change", "focusin", "focusout"]) {
-        document.addEventListener(event, invalidate, true);
-      }
       window[key] = state;
     }
   `;
@@ -701,11 +752,30 @@ function inspectScript(key: string, ref: string): string {
     if (!el || !el.isConnected) return { ok: false };
     el.scrollIntoView({ block: "center", inline: "center" });
     const rect = el.getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
+    let x = rect.left + rect.width / 2;
+    let y = rect.top + rect.height / 2;
+    let ownerDocument = el.ownerDocument;
+    try {
+      let frame = ownerDocument.defaultView && ownerDocument.defaultView.frameElement;
+      while (frame) {
+        const frameRect = frame.getBoundingClientRect();
+        x += frameRect.left + (frame.clientLeft || 0);
+        y += frameRect.top + (frame.clientTop || 0);
+        ownerDocument = frame.ownerDocument;
+        frame = ownerDocument.defaultView && ownerDocument.defaultView.frameElement;
+      }
+    } catch {}
     const root = el.getRootNode();
-    const activeFor = () => root && root.activeElement ? root.activeElement : document.activeElement;
-    const hit = typeof root.elementFromPoint === "function" ? root.elementFromPoint(x, y) : document.elementFromPoint(x, y);
+    const activeFor = () => {
+      let active = root && root.activeElement ? root.activeElement : el.ownerDocument.activeElement;
+      while (active && active.shadowRoot && active.shadowRoot.activeElement) active = active.shadowRoot.activeElement;
+      return active;
+    };
+    const localX = rect.left + rect.width / 2;
+    const localY = rect.top + rect.height / 2;
+    const hit = typeof root.elementFromPoint === "function"
+      ? root.elementFromPoint(localX, localY)
+      : el.ownerDocument.elementFromPoint(localX, localY);
     const composedHit = (candidate, target) => {
       if (!target) return false;
       if (candidate === target || candidate.contains(target)) return true;
@@ -718,12 +788,29 @@ function inspectScript(key: string, ref: string): string {
       }
       return false;
     };
-    const style = getComputedStyle(el);
+    const view = el.ownerDocument.defaultView || window;
+    const style = view.getComputedStyle(el);
+    let visibleInFrames = true;
+    try {
+      let frame = el.ownerDocument.defaultView && el.ownerDocument.defaultView.frameElement;
+      while (frame) {
+        const frameView = frame.ownerDocument.defaultView || window;
+        const frameStyle = frameView.getComputedStyle(frame);
+        const frameRect = frame.getBoundingClientRect();
+        if (frameStyle.display === "none" || frameStyle.visibility === "hidden" || frameStyle.opacity === "0" || frameRect.width <= 0 || frameRect.height <= 0) {
+          visibleInFrames = false;
+          break;
+        }
+        frame = frame.ownerDocument.defaultView && frame.ownerDocument.defaultView.frameElement;
+      }
+    } catch {
+      visibleInFrames = false;
+    }
     return {
       ok: true,
       x,
       y,
-      visible: style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0,
+      visible: visibleInFrames && style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0" && rect.width > 0 && rect.height > 0,
       enabled: !el.disabled && el.getAttribute("aria-disabled") !== "true",
       occluded: !!hit && !composedHit(el, hit),
       editable:
@@ -744,7 +831,11 @@ function fillScript(key: string, ref: string, value: string): string {
     const el = state && state.refs && state.refs.get(${JSON.stringify(ref)});
     if (!el || !el.isConnected) return { ok: false };
     const root = el.getRootNode();
-    const activeFor = () => root && root.activeElement ? root.activeElement : document.activeElement;
+    const activeFor = () => {
+      let active = root && root.activeElement ? root.activeElement : el.ownerDocument.activeElement;
+      while (active && active.shadowRoot && active.shadowRoot.activeElement) active = active.shadowRoot.activeElement;
+      return active;
+    };
     const editable = el.isContentEditable || el.tagName === "TEXTAREA" ||
       (el.tagName === "INPUT" && !["checkbox", "radio", "file", "button", "submit", "reset", "image"].includes(el.type));
     const role = el.getAttribute("role") || el.tagName.toLowerCase();
@@ -761,8 +852,11 @@ function fillScript(key: string, ref: string, value: string): string {
       if (!setter) return { ok: false, editable: true, role, name };
       setter.call(el, ${JSON.stringify(value)});
     }
-    el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ${JSON.stringify(value)} }));
-    el.dispatchEvent(new Event("change", { bubbles: true }));
+    const view = el.ownerDocument.defaultView || window;
+    const InputEventCtor = view.InputEvent || InputEvent;
+    const EventCtor = view.Event || Event;
+    el.dispatchEvent(new InputEventCtor("input", { bubbles: true, inputType: "insertText", data: ${JSON.stringify(value)} }));
+    el.dispatchEvent(new EventCtor("change", { bubbles: true }));
     return {
       ok: true,
       editable: true,
@@ -776,8 +870,22 @@ function fillScript(key: string, ref: string, value: string): string {
 
 function activeElementScript(): string {
   return `(() => {
-    let el = document.activeElement;
-    while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+    const deepActive = (root) => {
+      let el = root.activeElement;
+      while (el) {
+        if (el.shadowRoot && el.shadowRoot.activeElement) {
+          el = el.shadowRoot.activeElement;
+          continue;
+        }
+        if (el.tagName === "IFRAME" && el.contentDocument) {
+          const child = deepActive(el.contentDocument);
+          if (child && child !== el.contentDocument.body && child !== el.contentDocument.documentElement) return child;
+        }
+        return el;
+      }
+      return null;
+    };
+    const el = deepActive(document);
     if (!el || el === document.body || el === document.documentElement) return { ok: false };
     const editable = el.isContentEditable || el.tagName === "TEXTAREA" ||
       (el.tagName === "INPUT" && !["checkbox", "radio", "file", "button", "submit", "reset", "image"].includes(el.type));

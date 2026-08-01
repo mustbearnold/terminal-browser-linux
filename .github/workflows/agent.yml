@@ -20,3 +20,5 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm agent:check
+      - run: pnpm --filter terminal-browser typecheck
+      - run: pnpm --filter terminal-browser build
