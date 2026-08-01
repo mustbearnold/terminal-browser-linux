@@ -1,4 +1,5 @@
 export * from "./cancellation";
+export * from "./capabilities";
 export * from "./events";
 export * from "./locator";
 export * from "./page";

@@ -34,6 +34,17 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(hello.capabilities.includes("page.act.fill"), true);
   assert.equal(hello.capabilities.includes("page.act.select"), false);
 
+  const unsupported = await router.handle(
+    request("page.act", {
+      pageId: FIXTURE_PAGE_ID,
+      action: { type: "select", target: { ref: asSnapshotRef("r2") }, values: ["one"] },
+    }),
+    context,
+  );
+  assert.equal(unsupported.ok, false);
+  assert.equal(unsupported.error?.code, "CAPABILITY_UNAVAILABLE");
+  assert.deepEqual(unsupported.error?.details, { capability: "page.act.select" });
+
   const pages = result<{ pages: PageIdentity[] }>(await router.handle(request("pages.list"), context));
   assert.equal(pages.pages[0].pageId, FIXTURE_PAGE_ID);
 

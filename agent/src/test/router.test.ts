@@ -132,3 +132,18 @@ test("returns a typed error for an unknown page", async () => {
   assert.equal(response.ok, false);
   assert.equal(response.error?.code, "PAGE_NOT_FOUND");
 });
+
+test("rejects actions that the runtime does not advertise", async () => {
+  const router = new AgentRequestRouter(runtime());
+  const response = await router.handle(
+    envelope({
+      op: "page.act",
+      pageId,
+      action: { type: "navigate", url: "https://example.org" },
+    }),
+  );
+
+  assert.equal(response.ok, false);
+  assert.equal(response.error?.code, "CAPABILITY_UNAVAILABLE");
+  assert.deepEqual(response.error?.details, { capability: "page.act.navigate" });
+});

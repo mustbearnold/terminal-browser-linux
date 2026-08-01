@@ -8,9 +8,11 @@ import type {
 import {
   AGENT_PROTOCOL,
   AGENT_PROTOCOL_VERSION,
+  type AgentCapability,
   type PageId,
 } from "../protocol/types";
 import type { AgentRuntime } from "./runtime";
+import { actionCapability } from "./capabilities";
 import { SnapshotLocatorResolver } from "./locator";
 import { RequestCancellationRegistry, throwIfAborted, type RequestExecution } from "./cancellation";
 import { MemoryTrace, TraceRecorder, type TraceDirection } from "./trace";
@@ -102,8 +104,12 @@ export class AgentRequestRouter {
         if (request.token) page.assertFresh(request.token);
         return this.locator.resolve(request.target, snapshot).node;
       }
-      case "page.act":
+      case "page.act": {
+        const capabilities = new Set(this.runtime.capabilities());
+        requireCapability(capabilities, "page.act");
+        requireCapability(capabilities, actionCapability(request.action));
         return await this.page(request.pageId).act(request.action, request.token, request.expect, signal);
+      }
       case "page.wait":
         return await this.page(request.pageId).wait(request.condition, request.timeoutMs, signal);
       case "page.observe": {
@@ -164,6 +170,13 @@ export class AgentRequestRouter {
 function normalizeError(error: unknown): AgentError {
   if (error instanceof AgentError) return error;
   return new AgentError("INTERNAL_ERROR", error instanceof Error ? error.message : String(error));
+}
+
+function requireCapability(capabilities: ReadonlySet<AgentCapability>, capability: AgentCapability): void {
+  if (capabilities.has(capability)) return;
+  throw new AgentError("CAPABILITY_UNAVAILABLE", `runtime does not advertise ${capability}`, {
+    details: { capability },
+  });
 }
 
 function idleContext(): AgentConnectionContext {
