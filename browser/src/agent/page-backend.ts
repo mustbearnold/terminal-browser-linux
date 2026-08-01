@@ -844,7 +844,11 @@ export class ElectronPageBackend implements PageBackend {
     const effects = this.transitionEffects(before, after);
 
     const proof: ActionProof = {
+      pageId: after.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
       target: target.ref,
+      frameId: target.node.frameId,
       role: inspection.role,
       name: inspection.name,
       value: inspection.value,
@@ -887,7 +891,11 @@ export class ElectronPageBackend implements PageBackend {
     const effects = this.transitionEffects(before, after);
     effects.push({ type: "value.changed", data: { value: value.value } });
     const proof: ActionProof = {
+      pageId: after.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
       target: target.ref,
+      frameId: target.node.frameId,
       role: value.role ?? inspection.role,
       name: value.name ?? inspection.name,
       value: value.value,
@@ -924,7 +932,11 @@ export class ElectronPageBackend implements PageBackend {
     const effects = this.transitionEffects(before, after);
     effects.push({ type: "value.changed", data: { value: activeAfter.value ?? "" } });
     const proof: ActionProof = {
+      pageId: after.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
       role: activeAfter.role ?? activeBefore.role,
+      frameId: activeAfter.frameId === undefined ? undefined : asFrameId(activeAfter.frameId),
       name: activeAfter.name ?? activeBefore.name,
       value: activeAfter.value,
       url: after.url,
@@ -973,7 +985,11 @@ export class ElectronPageBackend implements PageBackend {
     const effects = this.transitionEffects(before, after);
     effects.push({ type: "value.changed", data: { values: raw.values } });
     const proof: ActionProof = {
+      pageId: after.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
       target: target.ref,
+      frameId: target.node.frameId,
       role: inspection.role,
       name: inspection.name,
       value: raw.values.join(","),
@@ -1020,7 +1036,11 @@ export class ElectronPageBackend implements PageBackend {
     const effects = this.transitionEffects(before, after);
     effects.push({ type: "value.changed", data: { checked: raw.checked } });
     const proof: ActionProof = {
+      pageId: after.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
       target: target.ref,
+      frameId: target.node.frameId,
       role: inspection.role,
       name: inspection.name,
       value: String(raw.checked),
@@ -1045,7 +1065,13 @@ export class ElectronPageBackend implements PageBackend {
     const outcome = await this.waitForOutcome(before, navigationExpectation, signal);
     const after = outcome.identity;
     const effects = this.transitionEffects(before, after);
-    const proof: ActionProof = { url: after.url, title: after.title };
+    const proof: ActionProof = {
+      pageId: after.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
+      url: after.url,
+      title: after.title,
+    };
     return { verified: outcome.satisfied, effects, proof };
   }
 
@@ -1066,7 +1092,13 @@ export class ElectronPageBackend implements PageBackend {
       signal,
     );
     const after = outcome.identity;
-    const proof: ActionProof = { url: after.url, title: after.title };
+    const proof: ActionProof = {
+      pageId: after.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
+      url: after.url,
+      title: after.title,
+    };
     return { verified: outcome.satisfied, effects: this.transitionEffects(before, after), proof };
   }
 
@@ -1088,7 +1120,13 @@ export class ElectronPageBackend implements PageBackend {
     this.invalidateSnapshots();
     const outcome = await this.waitForOutcome(before, expect, signal);
     const after = outcome.identity;
-    const proof: ActionProof = { url: after.url, title: after.title };
+    const proof: ActionProof = {
+      pageId: after.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
+      url: after.url,
+      title: after.title,
+    };
     return {
       verified: hasExpectation(expect) ? outcome.satisfied : outcome.changed,
       effects: this.transitionEffects(before, after),
@@ -1123,7 +1161,11 @@ export class ElectronPageBackend implements PageBackend {
       : { identity: await this.identity(signal), changed: false, satisfied: true };
     const after = outcome.identity;
     const proof: ActionProof = {
+      pageId: after.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
       target: target.ref,
+      frameId: target.node.frameId,
       role: inspection.role,
       name: inspection.name,
       url: after.url,
@@ -1173,7 +1215,11 @@ export class ElectronPageBackend implements PageBackend {
       data: { direction: action.direction, amount, x: raw.x ?? 0, y: raw.y ?? 0, changed: raw.changed ?? false },
     });
     const proof: ActionProof = {
+      pageId: after.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
       target: target?.ref,
+      frameId: target?.node.frameId,
       role: target?.node.role,
       name: target?.node.name,
       value: `${raw.x ?? 0},${raw.y ?? 0}`,
@@ -1221,7 +1267,11 @@ export class ElectronPageBackend implements PageBackend {
     const after = outcome.identity;
     const effects = this.transitionEffects(before, after);
     const proof: ActionProof = {
+      pageId: after.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
       role: active.role,
+      frameId: active.frameId === undefined ? undefined : asFrameId(active.frameId),
       name: active.name,
       value: active.value,
       url: after.url,

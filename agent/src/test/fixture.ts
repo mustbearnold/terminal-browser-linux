@@ -291,7 +291,11 @@ class FixturePageBackend implements PageBackend {
       verified: await this.matches(expect, identity, signal),
       effects: [{ type: "dom.changed", data: { revision: this.revision } }],
       proof: {
+        pageId: identity.pageId,
+        documentId: identity.documentId,
+        revision: identity.revision,
         target: target.ref,
+        frameId: target.node.frameId,
         role: target.node.role,
         name: target.node.name,
         url: identity.url,
@@ -324,7 +328,11 @@ class FixturePageBackend implements PageBackend {
         { type: "value.changed", data: { value: this.value } },
       ],
       proof: {
+        pageId: identity.pageId,
+        documentId: identity.documentId,
+        revision: identity.revision,
         target: target.ref,
+        frameId: target.node.frameId,
         role: target.node.role,
         name: target.node.name,
         value: this.value,
@@ -354,7 +362,11 @@ class FixturePageBackend implements PageBackend {
         { type: "value.changed", data: { value: this.value } },
       ],
       proof: {
+        pageId: identity.pageId,
+        documentId: identity.documentId,
+        revision: identity.revision,
         role: "textbox",
+        frameId: FRAME_ID,
         name: "Name",
         value: this.value,
         url: identity.url,
@@ -380,7 +392,11 @@ class FixturePageBackend implements PageBackend {
       verified: await this.matches(expect, identity, signal),
       effects: [{ type: "dom.changed", data: { revision: this.revision } }],
       proof: {
+        pageId: identity.pageId,
+        documentId: identity.documentId,
+        revision: identity.revision,
         role: "textbox",
+        frameId: FRAME_ID,
         name: "Name",
         value: this.value,
         url: identity.url,
@@ -407,7 +423,13 @@ class FixturePageBackend implements PageBackend {
     return {
       verified: await this.matches(expect, identity, signal),
       effects: [{ type: "navigation", data: { url: identity.url } }],
-      proof: { url: identity.url, title: identity.title },
+      proof: {
+        pageId: identity.pageId,
+        documentId: identity.documentId,
+        revision: identity.revision,
+        url: identity.url,
+        title: identity.title,
+      },
     };
   }
 
@@ -436,7 +458,13 @@ class FixturePageBackend implements PageBackend {
     return {
       verified: await this.matches(expect, identity, signal),
       effects: [{ type: "navigation", data: { url: identity.url } }],
-      proof: { url: identity.url, title: identity.title },
+      proof: {
+        pageId: identity.pageId,
+        documentId: identity.documentId,
+        revision: identity.revision,
+        url: identity.url,
+        title: identity.title,
+      },
     };
   }
 

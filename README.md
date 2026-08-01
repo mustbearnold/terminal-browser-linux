@@ -37,6 +37,8 @@ targeted `text` condition checks the matched node's text rather than presence al
 Actions return a full post-action snapshot by default. Set `output.snapshot` to
 `none` to keep only the verified action result, or to `delta` with an
 `output.base` snapshot token to receive only the changes from that snapshot.
+Even without a snapshot, action proof includes the page document and revision;
+targeted actions also include the resolved frame ID.
 Use `expect.element` for target-specific post-action verification; its optional
 state uses the same semantic fields as `page.wait`.
 

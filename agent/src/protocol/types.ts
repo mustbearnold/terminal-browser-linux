@@ -50,10 +50,13 @@ export type AgentCapability =
   | "page.capture"
   | "unsafe.eval";
 
-export interface PageIdentity {
+export interface PageRevision {
   pageId: PageId;
   documentId: DocumentId;
   revision: number;
+}
+
+export interface PageIdentity extends PageRevision {
   url: string;
   title: string;
   active: boolean;
@@ -147,10 +150,7 @@ export interface PageQueryResult extends SnapshotToken {
   hiddenTruncated: boolean;
 }
 
-export interface SnapshotToken {
-  pageId: PageId;
-  documentId: DocumentId;
-  revision: number;
+export interface SnapshotToken extends PageRevision {
   snapshotId: SnapshotId;
 }
 
@@ -307,8 +307,9 @@ export interface ActionEffect {
   data?: JsonValue;
 }
 
-export interface ActionProof {
+export interface ActionProof extends PageRevision {
   target?: SnapshotRef;
+  frameId?: FrameId;
   role?: string;
   name?: string;
   value?: string;

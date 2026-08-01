@@ -516,7 +516,12 @@ function semanticScenarios(pageId) {
         const snapshot = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
         const fullName = snapshot.nodes.find((node) => node.attributes?.id === "full-name");
         const notifications = snapshot.nodes.find((node) => node.attributes?.id === "notifications");
+        const compactProof = filled.proof?.pageId === pageId
+          && typeof filled.proof?.documentId === "string"
+          && Number.isSafeInteger(filled.proof?.revision)
+          && typeof filled.proof?.frameId === "string";
         const passed = filled.verified && filled.proof?.name === "Full name" && filled.proof.value === "Ada"
+          && compactProof
           && checked.verified && checked.proof?.value === "true"
           && initialFormStateWait.satisfied && valueWait.satisfied && validWait.satisfied
           && checkedWait.satisfied && disabledWait.satisfied && pressedWait.satisfied
@@ -549,7 +554,7 @@ function semanticScenarios(pageId) {
             ].filter((wait) => wait.satisfied).length,
             attachedWaits: Number(initialFormStateWait.satisfied) + Number(detachedWait.satisfied),
             targetedTextWaits: Number(wrongTargetedTextWait.satisfied === false),
-            compactActionOutputs: Number(filled.snapshot === undefined && checked.snapshotDelta !== undefined),
+            compactActionOutputs: Number(filled.snapshot === undefined && checked.snapshotDelta !== undefined && compactProof),
             targetedElementExpectations: Number(expandedAction.verified && removedAction.verified),
           },
         };
@@ -723,7 +728,8 @@ function crossOriginScenarios(pageId) {
           && frameScopedRead.node.ref === frameButton.ref
           && hovered.verified && scrolled.verified && selected.proof?.value === "two"
           && checked.proof?.value === "true" && filled.verified && typed.proof?.value === "Ada Lovelace"
-          && clicked.verified && retry.replayed === true && dynamic?.frameId === frameButton.frameId
+          && clicked.verified && clicked.proof?.frameId === frameButton.frameId
+          && retry.replayed === true && dynamic?.frameId === frameButton.frameId
           && navigatedFrame?.url.endsWith("/frame-next.html") && restoredFrame?.url.endsWith("/frame-restored.html")
           && lifecycleTransitions.length >= 3;
         return {
@@ -731,6 +737,7 @@ function crossOriginScenarios(pageId) {
           metrics: {
             crossOriginControls: [frameButton, frameTextbox].filter(Boolean).length,
             frameScopedIndexedRead: Number(frameScopedRead.node.ref === frameButton?.ref),
+            frameActionProof: Number(clicked.proof?.frameId === frameButton?.frameId),
             verifiedActions: [hovered, scrolled, selected, checked, filled, typed, clicked].filter((action) => action.verified).length,
             replayedActions: retry.replayed === true ? 1 : 0,
             lifecycleTransitions: lifecycleTransitions.length,

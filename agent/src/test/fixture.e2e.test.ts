@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { AgentRequestRouter, type AgentConnectionContext } from "../core/router";
 import type {
+  ActionProof,
   AgentEvent,
   AgentRequest,
   AgentResponse,
@@ -209,7 +210,7 @@ test("runs the deterministic agent control contract", async () => {
 
   result(await router.handle(request("page.observe", { pageId: FIXTURE_PAGE_ID, events: ["dom.changed"] }), context));
 
-  const filled = result<{ verified: boolean; proof?: { value?: string }; snapshot?: PageSnapshot }>(
+  const filled = result<{ verified: boolean; proof?: ActionProof; snapshot?: PageSnapshot }>(
     await router.handle(
       request("page.act", {
         pageId: FIXTURE_PAGE_ID,
@@ -221,6 +222,10 @@ test("runs the deterministic agent control contract", async () => {
   );
   assert.equal(filled.verified, true);
   assert.equal(filled.proof?.value, "Ada");
+  assert.equal(filled.proof?.pageId, FIXTURE_PAGE_ID);
+  assert.equal(filled.proof?.documentId, "fixture-document-1");
+  assert.equal(filled.proof?.revision, filled.snapshot?.revision);
+  assert.equal(filled.proof?.frameId, "main");
 
   const staleWindow = await router.handle(
     request("page.snapshot.window", { pageId: FIXTURE_PAGE_ID, cursor: firstWindow.nextCursor }),
@@ -229,7 +234,7 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(staleWindow.ok, false);
   assert.equal(staleWindow.error?.code, "STALE_SNAPSHOT");
 
-  const typed = result<{ verified: boolean; proof?: { value?: string }; snapshot?: PageSnapshot }>(
+  const typed = result<{ verified: boolean; proof?: ActionProof; snapshot?: PageSnapshot }>(
     await router.handle(
       request("page.act", {
         pageId: FIXTURE_PAGE_ID,
@@ -242,7 +247,7 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(typed.verified, true);
   assert.equal(typed.proof?.value, "Ada Lovelace");
 
-  const pressed = result<{ verified: boolean; proof?: { value?: string }; snapshot?: PageSnapshot }>(
+  const pressed = result<{ verified: boolean; proof?: ActionProof; snapshot?: PageSnapshot }>(
     await router.handle(
       request("page.act", {
         pageId: FIXTURE_PAGE_ID,
