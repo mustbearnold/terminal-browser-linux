@@ -25,6 +25,12 @@ async function run() {
       condition: { type: "text", value: "Frame action" },
       timeoutMs: 5_000,
     });
+    const frames = await client.frames(pageId);
+    const rootFrame = frames.find((frame) => frame.parentFrameId === null);
+    const childFrame = frames.find((frame) => frame.parentFrameId !== null);
+    assert.equal(rootFrame?.frameId, "main");
+    assert.ok(childFrame, "cross-origin child frame was not enumerated");
+    assert.equal(childFrame.url, `http://127.0.0.1:${childServer.port}/frame.html`);
 
     const events = [];
     const unsubscribe = client.onEvent((event) => events.push(event));

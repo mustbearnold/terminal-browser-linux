@@ -53,6 +53,7 @@ function validateRequest(message: Record<string, unknown>): void {
       requireString(message.url, "url");
       return;
     case "pages.close":
+    case "page.frames":
     case "page.snapshot":
     case "page.read":
     case "page.act":

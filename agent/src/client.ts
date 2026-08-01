@@ -10,6 +10,7 @@ import {
   type AgentRequest,
   type AgentResponse,
   type PageIdentity,
+  type PageFrame,
   type PageSnapshot,
   type PageId,
   type SnapshotNode,
@@ -44,6 +45,7 @@ export interface AgentOperationResults {
   "pages.list": { pages: readonly PageIdentity[] };
   "pages.open": PageIdentity;
   "pages.close": { pageId: PageId };
+  "page.frames": { pageId: PageId; frames: readonly PageFrame[] };
   "page.snapshot": PageSnapshot;
   "page.read": SnapshotNode;
   "page.act": ActionResult;
@@ -114,6 +116,10 @@ export class AgentClient {
 
   observe(pageId: PageId, events: readonly AgentEventType[], options?: AgentCallOptions) {
     return this.call("page.observe", { pageId, events }, options);
+  }
+
+  frames(pageId: PageId, options?: AgentCallOptions): Promise<readonly PageFrame[]> {
+    return this.call("page.frames", { pageId }, options).then((result) => result.frames);
   }
 
   async call<Operation extends AgentOperation>(

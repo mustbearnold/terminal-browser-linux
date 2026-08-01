@@ -36,6 +36,7 @@ export class BrowserAgentRuntime implements AgentRuntime {
       "pages.open",
       "pages.close",
       "snapshot.read",
+      "page.frames",
       "page.read",
       "page.act",
       "page.wait",

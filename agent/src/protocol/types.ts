@@ -23,6 +23,7 @@ export type AgentCapability =
   | "pages.open"
   | "pages.close"
   | "snapshot.read"
+  | "page.frames"
   | "page.read"
   | "page.act"
   | "page.wait"
@@ -38,6 +39,13 @@ export interface PageIdentity {
   title: string;
   active: boolean;
   loading: boolean;
+}
+
+export interface PageFrame {
+  frameId: FrameId;
+  parentFrameId: FrameId | null;
+  url: string;
+  origin: string;
 }
 
 export interface SnapshotOptions {
@@ -179,6 +187,7 @@ export type AgentRequest =
   | (AgentRequestEnvelope & { op: "pages.list" })
   | (AgentRequestEnvelope & { op: "pages.open"; url: string })
   | (AgentRequestEnvelope & { op: "pages.close"; pageId: PageId })
+  | (AgentRequestEnvelope & { op: "page.frames"; pageId: PageId })
   | (AgentRequestEnvelope & { op: "page.snapshot"; pageId: PageId; options?: SnapshotOptions })
   | (AgentRequestEnvelope & { op: "page.read"; pageId: PageId; target: Target; token?: SnapshotToken })
   | (AgentRequestEnvelope & {

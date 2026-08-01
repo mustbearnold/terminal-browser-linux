@@ -17,6 +17,7 @@ import {
   type AgentAction,
   type AgentCapability,
   type AgentEvent,
+  type PageFrame,
   type PageIdentity,
   type PageId,
   type PageSnapshot,
@@ -43,6 +44,7 @@ export class FixtureRuntime implements AgentRuntime {
       "pages.open",
       "pages.close",
       "snapshot.read",
+      "page.frames",
       "page.read",
       "page.act",
       "page.wait",
@@ -97,6 +99,16 @@ class FixturePageBackend implements PageBackend {
       active: true,
       loading: false,
     };
+  }
+
+  async frames(signal?: AbortSignal): Promise<readonly PageFrame[]> {
+    throwIfAborted(signal);
+    return [{
+      frameId: FRAME_ID,
+      parentFrameId: null,
+      url: FIXTURE_URL,
+      origin: FIXTURE_URL,
+    }];
   }
 
   async snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<Omit<PageSnapshot, "snapshotId">> {

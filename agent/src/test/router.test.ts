@@ -49,6 +49,7 @@ const pageSnapshot: PageSnapshot = {
 function page(): PageSession {
   return {
     pageId,
+    frames: async () => [{ frameId: asFrameId("main"), parentFrameId: null, url: identity.url, origin: "https://example.com" }],
     snapshot: async () => pageSnapshot,
     assertFresh: () => {},
     currentRevision: () => ({ documentId: identity.documentId, revision: identity.revision }),
@@ -62,7 +63,7 @@ function page(): PageSession {
 
 function runtime(): AgentRuntime {
   return {
-    capabilities: () => ["pages.list", "snapshot.read", "page.act", "page.wait"],
+    capabilities: () => ["pages.list", "snapshot.read", "page.frames", "page.act", "page.wait"],
     listPages: async () => [identity],
     getPage: (candidate) => (candidate === pageId ? page() : undefined),
     openPage: async () => identity,
@@ -84,6 +85,7 @@ test("routes the first agent vertical slice", async () => {
   const router = new AgentRequestRouter(runtime());
   const hello = await router.handle(envelope({ op: "hello", clientId: "test" }));
   const pages = await router.handle(envelope({ op: "pages.list" }));
+  const frames = await router.handle(envelope({ op: "page.frames", pageId }));
   const snapshot = await router.handle(envelope({ op: "page.snapshot", pageId }));
   const action = await router.handle(
     envelope({ op: "page.act", pageId, action: { type: "click", target: { ref: asSnapshotRef("r1") } } }),
@@ -94,6 +96,9 @@ test("routes the first agent vertical slice", async () => {
 
   assert.equal(hello.ok, true);
   assert.deepEqual((pages.result as { pages: PageIdentity[] }).pages, [identity]);
+  assert.deepEqual((frames.result as { frames: unknown[] }).frames, [
+    { frameId: asFrameId("main"), parentFrameId: null, url: identity.url, origin: "https://example.com" },
+  ]);
   assert.equal((snapshot.result as PageSnapshot).snapshotId, pageSnapshot.snapshotId);
   assert.equal((action.result as { verified: boolean }).verified, true);
   assert.equal((wait.result as { satisfied: boolean }).satisfied, true);

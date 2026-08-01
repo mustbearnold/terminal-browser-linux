@@ -16,6 +16,7 @@ import type {
   AgentAction,
   AgentEvent,
   PageBackend,
+  PageFrame,
   PageId,
   PageIdentity,
   PageSnapshot,
@@ -99,6 +100,21 @@ export class ElectronPageBackend implements PageBackend {
       active: this.active(),
       loading: page.loading,
     };
+  }
+
+  async frames(signal?: AbortSignal): Promise<readonly PageFrame[]> {
+    throwIfAborted(signal);
+    const browserFrames = await this.controller.agentFrames();
+    throwIfAborted(signal);
+    const mainFrame = browserFrames.find((frame) => frame.parentId === null);
+    if (!mainFrame) throw new AgentError("INTERNAL_ERROR", "browser frame tree has no main frame");
+    const protocolFrameId = (frameId: string) => frameId === mainFrame.id ? MAIN_FRAME_ID : asFrameId(frameId);
+    return browserFrames.map((frame) => ({
+      frameId: protocolFrameId(frame.id),
+      parentFrameId: frame.parentId === null ? null : protocolFrameId(frame.parentId),
+      url: frame.url,
+      origin: frame.origin,
+    }));
   }
 
   async snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<CapturedSnapshot> {

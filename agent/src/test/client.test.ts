@@ -10,9 +10,19 @@ test("correlates typed calls and delivers observed events", async () => {
   const events: string[] = [];
   const unsubscribe = client.onEvent((event) => events.push(event.event));
   try {
-    const [hello, pages] = await Promise.all([client.hello(), client.call("pages.list", {})]);
+    const [hello, pages, frames] = await Promise.all([
+      client.hello(),
+      client.call("pages.list", {}),
+      client.frames(FIXTURE_PAGE_ID),
+    ]);
     assert.equal(hello.clientId, "client-test");
     assert.equal(pages.pages[0].pageId, FIXTURE_PAGE_ID);
+    assert.deepEqual(frames, [{
+      frameId: "main",
+      parentFrameId: null,
+      url: "fixture://agent-control",
+      origin: "fixture://agent-control",
+    }]);
 
     await client.observe(FIXTURE_PAGE_ID, ["dom.changed"]);
     const action = await client.call("page.act", {

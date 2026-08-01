@@ -50,6 +50,10 @@ test("rejects unknown and incomplete request operations", () => {
     () => parseAgentMessage({ ...listRequest(), op: "page.snapshot" }),
     (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
   );
+  assert.throws(
+    () => parseAgentMessage({ ...listRequest(), op: "page.frames" }),
+    (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
+  );
 });
 
 test("validates request deadlines and cancellation operations", () => {
