@@ -30,12 +30,22 @@ function requireStringArray(value: unknown, field: string): void {
   }
 }
 
+function requireNonNegativeInteger(value: unknown, field: string): void {
+  if (!Number.isSafeInteger(value) || Number(value) < 0) {
+    throw new AgentError("INVALID_MESSAGE", `${field} must be a non-negative safe integer`);
+  }
+}
+
 function validateRequest(message: Record<string, unknown>): void {
   const op = requireString(message.op, "op");
+  if (message.deadlineMs !== undefined) requireNonNegativeInteger(message.deadlineMs, "deadlineMs");
   switch (op) {
     case "hello":
       requireString(message.clientId, "clientId");
       if (message.capabilities !== undefined) requireStringArray(message.capabilities, "capabilities");
+      return;
+    case "request.cancel":
+      requireString(message.targetRequestId, "targetRequestId");
       return;
     case "pages.list":
       return;

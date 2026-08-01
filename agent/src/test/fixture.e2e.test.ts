@@ -153,6 +153,64 @@ test("serializes concurrent page actions before checking snapshot freshness", as
   assert.equal((firstResponse.result as { proof?: { value?: string } }).proof?.value, "first");
 });
 
+test("enforces request deadlines and explicit cancellation", async () => {
+  const runtime = new FixtureRuntime();
+  const router = new AgentRequestRouter(runtime);
+  const pendingRequest = request("page.wait", {
+    pageId: FIXTURE_PAGE_ID,
+    condition: { type: "time", ms: 1000 },
+    timeoutMs: 1000,
+  });
+  const pending = router.handle(pendingRequest);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const canceled = await router.handle(
+    request("request.cancel", { targetRequestId: pendingRequest.requestId }),
+  );
+  assert.equal(canceled.ok, true);
+  assert.deepEqual(canceled.result, { requestId: pendingRequest.requestId, canceled: true });
+
+  const cancelledResponse = await pending;
+  assert.equal(cancelledResponse.ok, false);
+  assert.equal(cancelledResponse.error?.code, "REQUEST_CANCELLED");
+  assert.equal(cancelledResponse.error?.retryable, true);
+
+  const timedOut = await router.handle(
+    request("page.wait", {
+      pageId: FIXTURE_PAGE_ID,
+      condition: { type: "time", ms: 1000 },
+      timeoutMs: 1000,
+      deadlineMs: 10,
+    }),
+  );
+  assert.equal(timedOut.ok, false);
+  assert.equal(timedOut.error?.code, "TIMEOUT");
+  assert.equal(timedOut.error?.retryable, true);
+});
+
+test("cancels in-flight work when a connection closes", async () => {
+  const runtime = new FixtureRuntime();
+  const router = new AgentRequestRouter(runtime);
+  const context: AgentConnectionContext = {
+    clientId: "closing-fixture",
+    emit: () => {},
+    addSubscription: () => {},
+  };
+  const pendingRequest = request("page.wait", {
+    pageId: FIXTURE_PAGE_ID,
+    condition: { type: "time", ms: 1000 },
+    timeoutMs: 1000,
+  });
+  const pending = router.handle(pendingRequest, context);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  router.close(context);
+
+  const response = await pending;
+  assert.equal(response.ok, false);
+  assert.equal(response.error?.code, "TRANSPORT_CLOSED");
+  assert.equal(response.error?.retryable, true);
+});
+
 function request<T extends AgentRequest["op"]>(op: T, fields: Record<string, unknown> = {}): AgentRequest {
   return {
     kind: "request",

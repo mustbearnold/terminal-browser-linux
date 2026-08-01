@@ -3,8 +3,10 @@ import {
   AGENT_PROTOCOL_VERSION,
   AgentError,
   SnapshotLocatorResolver,
+  abortableDelay,
   asDocumentId,
   asFrameId,
+  throwIfAborted,
 } from "terminal-browser-agent";
 import type {
   ActionEffect,
@@ -71,9 +73,11 @@ export class ElectronPageBackend implements PageBackend {
     this.controller.onLifecycleEvent = (event) => this.handleLifecycleEvent(event);
   }
 
-  async identity(): Promise<PageIdentity> {
+  async identity(signal?: AbortSignal): Promise<PageIdentity> {
+    throwIfAborted(signal);
     const page = this.state();
-    const scriptState = await this.readScriptState();
+    const scriptState = await this.readScriptState(signal);
+    throwIfAborted(signal);
     return {
       pageId: this.pageId,
       documentId: asDocumentId(scriptState.documentId),
@@ -85,8 +89,9 @@ export class ElectronPageBackend implements PageBackend {
     };
   }
 
-  async snapshot(options?: SnapshotOptions): Promise<CapturedSnapshot> {
-    const scriptState = await this.readScriptState();
+  async snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<CapturedSnapshot> {
+    throwIfAborted(signal);
+    const scriptState = await this.readScriptState(signal);
     const optionsKey = snapshotOptionsKey(options);
     if (
       this.lastSnapshot &&
@@ -94,10 +99,13 @@ export class ElectronPageBackend implements PageBackend {
       this.lastSnapshot.documentId === asDocumentId(scriptState.documentId) &&
       this.lastSnapshot.revision === scriptState.revision
     ) {
+      throwIfAborted(signal);
       return this.lastSnapshot;
     }
 
+    throwIfAborted(signal);
     const value = await this.controller.runJs(snapshotScript(this.agentKey, options));
+    throwIfAborted(signal);
     if (!isSnapshot(value)) throw new AgentError("INTERNAL_ERROR", "page snapshot returned an invalid shape");
     const captured = {
       ...(value as CapturedSnapshot),
@@ -113,16 +121,17 @@ export class ElectronPageBackend implements PageBackend {
     action: AgentAction,
     token?: SnapshotToken,
     expect?: ActionExpectation,
+    signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
     switch (action.type) {
       case "click":
-        return this.click(action, token, expect);
+        return this.click(action, token, expect, signal);
       case "fill":
-        return this.fill(action, token, expect);
+        return this.fill(action, token, expect, signal);
       case "type":
-        return this.typeText(action.text, token, expect);
+        return this.typeText(action.text, token, expect, signal);
       case "press":
-        return this.press(action.key, token, expect);
+        return this.press(action.key, token, expect, signal);
       default:
         throw new AgentError("INVALID_REQUEST", `live adapter does not support ${action.type} yet`);
     }
@@ -132,13 +141,14 @@ export class ElectronPageBackend implements PageBackend {
     action: Extract<AgentAction, { type: "click" }>,
     token?: SnapshotToken,
     expect?: ActionExpectation,
+    signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
 
-    const before = await this.identity();
-    const snapshot = await this.snapshot();
+    const before = await this.identity(signal);
+    const snapshot = await this.snapshot(undefined, signal);
     this.assertToken(token, snapshot.documentId, snapshot.revision);
     const target = this.resolver.resolve(action.target, snapshot);
-    const inspection = await this.inspect(target.ref);
+    const inspection = await this.inspect(target.ref, signal);
     if (!inspection.ok || !inspection.visible || !inspection.enabled || inspection.occluded) {
       throw new AgentError("NOT_INTERACTABLE", "target is not safely clickable", {
         retryable: true,
@@ -148,6 +158,7 @@ export class ElectronPageBackend implements PageBackend {
     this.controller.focusContent();
     const button = action.button ?? "left";
     const clickCount = action.clickCount ?? 1;
+    throwIfAborted(signal);
     await this.controller.cdp("Input.dispatchMouseEvent", {
       type: "mousePressed",
       x: inspection.x,
@@ -155,6 +166,7 @@ export class ElectronPageBackend implements PageBackend {
       button,
       clickCount,
     });
+    throwIfAborted(signal);
     await this.controller.cdp("Input.dispatchMouseEvent", {
       type: "mouseReleased",
       x: inspection.x,
@@ -163,7 +175,7 @@ export class ElectronPageBackend implements PageBackend {
       clickCount,
     });
     this.invalidateSnapshots();
-    const outcome = await this.waitForOutcome(before, expect);
+    const outcome = await this.waitForOutcome(before, expect, signal);
 
     const after = outcome.identity;
     const effects = this.transitionEffects(before, after);
@@ -184,25 +196,28 @@ export class ElectronPageBackend implements PageBackend {
     action: Extract<AgentAction, { type: "fill" }>,
     token?: SnapshotToken,
     expect?: ActionExpectation,
+    signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
-    const before = await this.identity();
-    const snapshot = await this.snapshot();
+    const before = await this.identity(signal);
+    const snapshot = await this.snapshot(undefined, signal);
     this.assertToken(token, snapshot.documentId, snapshot.revision);
     const target = this.resolver.resolve(action.target, snapshot);
-    const inspection = await this.inspect(target.ref);
+    const inspection = await this.inspect(target.ref, signal);
     if (!inspection.ok || !inspection.visible || !inspection.enabled || !inspection.editable) {
       throw new AgentError("NOT_INTERACTABLE", "target is not an editable control", { retryable: true });
     }
 
     this.controller.focusContent();
+    throwIfAborted(signal);
     const value = await this.controller.runJs(fillScript(this.agentKey, target.ref, action.value));
+    throwIfAborted(signal);
     if (!isActiveElementInfo(value) || !value.ok || !value.editable || value.value !== action.value) {
       throw new AgentError("ACTION_UNVERIFIED", "control value did not match the requested fill", {
         retryable: true,
       });
     }
     this.invalidateSnapshots();
-    const outcome = await this.waitForOutcome(before, expect);
+    const outcome = await this.waitForOutcome(before, expect, signal);
     const after = outcome.identity;
     const effects = this.transitionEffects(before, after);
     effects.push({ type: "value.changed", data: { value: value.value } });
@@ -222,19 +237,24 @@ export class ElectronPageBackend implements PageBackend {
     text: string,
     token?: SnapshotToken,
     expect?: ActionExpectation,
+    signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
-    const before = await this.identity();
+    const before = await this.identity(signal);
     this.assertToken(token, before.documentId, before.revision);
-    const activeBefore = await this.activeElement();
+    const activeBefore = await this.activeElement(signal);
     if (!activeBefore.ok || !activeBefore.editable) {
       throw new AgentError("NOT_INTERACTABLE", "the active element is not editable", { retryable: true });
     }
 
     this.controller.focusContent();
+    throwIfAborted(signal);
     await this.controller.cdp("Input.insertText", { text });
     this.invalidateSnapshots();
-    const outcome = await this.waitForOutcome(before, expect);
-    const activeAfter = await this.activeElement().catch(() => activeBefore);
+    const outcome = await this.waitForOutcome(before, expect, signal);
+    const activeAfter = await this.activeElement(signal).catch((error) => {
+      if (signal?.aborted) throw error;
+      return activeBefore;
+    });
     const after = outcome.identity;
     const effects = this.transitionEffects(before, after);
     effects.push({ type: "value.changed", data: { value: activeAfter.value ?? "" } });
@@ -255,8 +275,9 @@ export class ElectronPageBackend implements PageBackend {
     rawKey: string,
     token?: SnapshotToken,
     expect?: ActionExpectation,
+    signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
-    const before = await this.identity();
+    const before = await this.identity(signal);
     this.assertToken(token, before.documentId, before.revision);
     const key = parsePressKey(rawKey);
     this.controller.focusContent();
@@ -267,18 +288,24 @@ export class ElectronPageBackend implements PageBackend {
       nativeVirtualKeyCode: key.keyCode,
       modifiers: key.modifiers,
     };
+    throwIfAborted(signal);
     await this.controller.cdp("Input.dispatchKeyEvent", {
       type: "rawKeyDown",
       ...base,
       autoRepeat: false,
     });
     if (key.text && (key.modifiers & (MODIFIER_ALT | MODIFIER_CTRL | MODIFIER_META)) === 0) {
+      throwIfAborted(signal);
       await this.controller.cdp("Input.dispatchKeyEvent", { type: "char", text: key.text, ...base });
     }
+    throwIfAborted(signal);
     await this.controller.cdp("Input.dispatchKeyEvent", { type: "keyUp", ...base });
     this.invalidateSnapshots();
-    const outcome = await this.waitForOutcome(before, expect);
-    const active = await this.activeElement().catch(() => ({ ok: false } as ActiveElementInfo));
+    const outcome = await this.waitForOutcome(before, expect, signal);
+    const active = await this.activeElement(signal).catch((error) => {
+      if (signal?.aborted) throw error;
+      return { ok: false } as ActiveElementInfo;
+    });
     const after = outcome.identity;
     const effects = this.transitionEffects(before, after);
     const proof: ActionProof = {
@@ -291,22 +318,23 @@ export class ElectronPageBackend implements PageBackend {
     return { verified: hasExpectation(expect) ? outcome.satisfied : true, effects, proof };
   }
 
-  async wait(condition: WaitCondition, timeoutMs = 10_000): Promise<Omit<WaitResult, "snapshot">> {
+  async wait(condition: WaitCondition, timeoutMs = 10_000, signal?: AbortSignal): Promise<Omit<WaitResult, "snapshot">> {
     const started = Date.now();
     const deadline = started + Math.max(0, timeoutMs);
     if (condition.type === "time") {
-      await delay(Math.min(condition.ms, Math.max(0, deadline - Date.now())));
+      await abortableDelay(Math.min(condition.ms, Math.max(0, deadline - Date.now())), signal);
       return { satisfied: Date.now() <= deadline, elapsedMs: Date.now() - started };
     }
 
     let stableRevision: number | null = null;
     let stableSince = Date.now();
     while (Date.now() <= deadline) {
-      const identity = await this.identity();
+      throwIfAborted(signal);
+      const identity = await this.identity(signal);
       let satisfied = false;
       if (condition.type === "url") satisfied = identity.url.includes(condition.value);
       if (condition.type === "text") {
-        const snapshot = await this.snapshot({ interactiveOnly: false });
+        const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
         if (condition.target) {
           try {
             this.resolver.resolve(condition.target, snapshot);
@@ -326,42 +354,57 @@ export class ElectronPageBackend implements PageBackend {
         satisfied = Date.now() - stableSince >= condition.quietMs;
       }
       if (satisfied) return { satisfied: true, elapsedMs: Date.now() - started };
-      await delay(Math.min(25, Math.max(1, deadline - Date.now())));
+      await abortableDelay(Math.min(25, Math.max(1, deadline - Date.now())), signal);
     }
     return { satisfied: false, elapsedMs: Date.now() - started };
   }
 
-  async subscribe(listener: (event: AgentEvent) => void): Promise<() => void> {
+  async subscribe(listener: (event: AgentEvent) => void, signal?: AbortSignal): Promise<() => void> {
+    throwIfAborted(signal);
     this.listeners.add(listener);
-    if (this.listeners.size === 1) this.observationReady = this.startObservation();
-    await this.observationReady;
-    return () => {
+    try {
+      if (this.listeners.size === 1) this.observationReady = this.startObservation(signal);
+      await this.observationReady;
+      throwIfAborted(signal);
+      return () => {
+        this.listeners.delete(listener);
+        if (this.listeners.size === 0) this.observationReady = null;
+      };
+    } catch (error) {
       this.listeners.delete(listener);
       if (this.listeners.size === 0) this.observationReady = null;
-    };
+      throw error;
+    }
   }
 
-  private async startObservation(): Promise<void> {
+  private async startObservation(signal?: AbortSignal): Promise<void> {
     try {
+      throwIfAborted(signal);
       await this.controller.attachCdp();
-      await this.readScriptState();
+      await this.readScriptState(signal);
     } catch {}
   }
 
-  private async readScriptState(): Promise<PageScriptState> {
+  private async readScriptState(signal?: AbortSignal): Promise<PageScriptState> {
+    throwIfAborted(signal);
     const value = await this.controller.runJs(scriptStateScript(this.agentKey));
+    throwIfAborted(signal);
     if (!isScriptState(value)) throw new AgentError("INTERNAL_ERROR", "page state returned an invalid shape");
     return value;
   }
 
-  private async inspect(ref: string): Promise<ElementInspection> {
+  private async inspect(ref: string, signal?: AbortSignal): Promise<ElementInspection> {
+    throwIfAborted(signal);
     const value = await this.controller.runJs(inspectScript(this.agentKey, ref));
+    throwIfAborted(signal);
     if (!isInspection(value)) throw new AgentError("INTERNAL_ERROR", "target inspection returned an invalid shape");
     return value;
   }
 
-  private async activeElement(): Promise<ActiveElementInfo> {
+  private async activeElement(signal?: AbortSignal): Promise<ActiveElementInfo> {
+    throwIfAborted(signal);
     const value = await this.controller.runJs(activeElementScript());
+    throwIfAborted(signal);
     if (!isActiveElementInfo(value)) throw new AgentError("INTERNAL_ERROR", "active element returned an invalid shape");
     return value;
   }
@@ -408,6 +451,7 @@ export class ElectronPageBackend implements PageBackend {
   private async waitForOutcome(
     before: PageIdentity,
     expect?: ActionExpectation,
+    signal?: AbortSignal,
   ): Promise<{ identity: PageIdentity; changed: boolean; satisfied: boolean }> {
     const hasExpectation = !!expect && (expect.url !== undefined || expect.title !== undefined || expect.text !== undefined);
     const timeoutMs = hasExpectation ? expect?.timeoutMs ?? 2_000 : 250;
@@ -417,22 +461,25 @@ export class ElectronPageBackend implements PageBackend {
     let changed = false;
     do {
       try {
-        identity = await this.identity();
+        throwIfAborted(signal);
+        identity = await this.identity(signal);
         changed = identityChanged(before, identity);
-        satisfied = hasExpectation ? await this.matchesExpectation(expect!, identity) : changed;
+        satisfied = hasExpectation ? await this.matchesExpectation(expect!, identity, signal) : changed;
         if (satisfied || (changed && !identity.loading)) return { identity, changed, satisfied };
-      } catch {}
+      } catch (error) {
+        if (signal?.aborted) throw error;
+      }
       if (Date.now() >= deadline) break;
-      await delay(Math.min(25, Math.max(1, deadline - Date.now())));
+      await abortableDelay(Math.min(25, Math.max(1, deadline - Date.now())), signal);
     } while (Date.now() <= deadline);
     return { identity, changed, satisfied };
   }
 
-  private async matchesExpectation(expect: ActionExpectation, identity: PageIdentity): Promise<boolean> {
+  private async matchesExpectation(expect: ActionExpectation, identity: PageIdentity, signal?: AbortSignal): Promise<boolean> {
     if (expect.url !== undefined && !identity.url.includes(expect.url)) return false;
     if (expect.title !== undefined && !identity.title.includes(expect.title)) return false;
     if (expect.text !== undefined) {
-      const snapshot = await this.snapshot({ interactiveOnly: false });
+      const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
       if (
         !snapshot.nodes.some((node) =>
           `${node.name} ${node.text ?? ""}`.toLocaleLowerCase().includes(expect.text!.toLocaleLowerCase()),
@@ -456,10 +503,6 @@ export class ElectronPageBackend implements PageBackend {
     };
     for (const listener of this.listeners) listener(message);
   }
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function identityChanged(before: PageIdentity, after: PageIdentity): boolean {

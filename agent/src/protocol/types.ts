@@ -166,6 +166,7 @@ export interface AgentRequestEnvelope {
   protocol: typeof AGENT_PROTOCOL;
   version: typeof AGENT_PROTOCOL_VERSION;
   requestId: string;
+  deadlineMs?: number;
 }
 
 export type AgentRequest =
@@ -174,6 +175,7 @@ export type AgentRequest =
       clientId: string;
       capabilities?: readonly AgentCapability[];
     })
+  | (AgentRequestEnvelope & { op: "request.cancel"; targetRequestId: string })
   | (AgentRequestEnvelope & { op: "pages.list" })
   | (AgentRequestEnvelope & { op: "pages.open"; url: string })
   | (AgentRequestEnvelope & { op: "pages.close"; pageId: PageId })

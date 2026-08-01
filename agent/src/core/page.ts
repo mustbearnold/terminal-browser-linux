@@ -1,4 +1,5 @@
 import { RevisionLedger } from "./revisions";
+import { throwIfAborted } from "./cancellation";
 import type {
   ActionExpectation,
   ActionResult,
@@ -17,27 +18,28 @@ import type { PageId } from "../protocol/types";
 
 export interface PageBackend {
   readonly pageId: PageId;
-  identity(): Promise<PageIdentity>;
-  snapshot(options?: SnapshotOptions): Promise<Omit<PageSnapshot, "snapshotId">>;
+  identity(signal?: AbortSignal): Promise<PageIdentity>;
+  snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<Omit<PageSnapshot, "snapshotId">>;
   act(
     action: AgentAction,
     token?: SnapshotToken,
     expect?: ActionExpectation,
+    signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">>;
-  wait(condition: WaitCondition, timeoutMs?: number): Promise<Omit<WaitResult, "snapshot">>;
-  subscribe(listener: (event: AgentEvent) => void): Promise<() => void>;
+  wait(condition: WaitCondition, timeoutMs?: number, signal?: AbortSignal): Promise<Omit<WaitResult, "snapshot">>;
+  subscribe(listener: (event: AgentEvent) => void, signal?: AbortSignal): Promise<() => void>;
 }
 
 export interface PageSession {
   readonly pageId: PageId;
-  snapshot(options?: SnapshotOptions): Promise<PageSnapshot>;
+  snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<PageSnapshot>;
   assertFresh(token: SnapshotToken): void;
   currentRevision(): { documentId: DocumentId; revision: number };
   advanceRevision(): { documentId: DocumentId; revision: number };
   navigate(documentId: DocumentId): { documentId: DocumentId; revision: number };
-  act(action: AgentAction, token?: SnapshotToken, expect?: ActionExpectation): Promise<ActionResult>;
-  wait(condition: WaitCondition, timeoutMs?: number): Promise<WaitResult>;
-  subscribe(listener: (event: AgentEvent) => void): Promise<() => void>;
+  act(action: AgentAction, token?: SnapshotToken, expect?: ActionExpectation, signal?: AbortSignal): Promise<ActionResult>;
+  wait(condition: WaitCondition, timeoutMs?: number, signal?: AbortSignal): Promise<WaitResult>;
+  subscribe(listener: (event: AgentEvent) => void, signal?: AbortSignal): Promise<() => void>;
 }
 
 export class RevisionedPageSession implements PageSession {
@@ -53,8 +55,10 @@ export class RevisionedPageSession implements PageSession {
     return this.backend.pageId;
   }
 
-  async snapshot(options?: SnapshotOptions): Promise<PageSnapshot> {
-    const captured = await this.backend.snapshot(options);
+  async snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<PageSnapshot> {
+    throwIfAborted(signal);
+    const captured = await this.backend.snapshot(options, signal);
+    throwIfAborted(signal);
     const state = this.ledger.synchronize(captured.pageId, captured.documentId, captured.revision);
     return {
       ...captured,
@@ -86,29 +90,37 @@ export class RevisionedPageSession implements PageSession {
     action: AgentAction,
     token?: SnapshotToken,
     expect?: ActionExpectation,
+    signal?: AbortSignal,
   ): Promise<ActionResult> {
     return this.enqueueAction(async () => {
-      const before = await this.backend.identity();
+      throwIfAborted(signal);
+      const before = await this.backend.identity(signal);
       this.ledger.synchronize(before.pageId, before.documentId, before.revision);
       if (token) this.ledger.assertFresh(token);
-      const result = await this.backend.act(action, token, expect);
-      const after = await this.backend.identity();
+      const result = await this.backend.act(action, token, expect, signal);
+      throwIfAborted(signal);
+      const after = await this.backend.identity(signal);
       this.ledger.synchronize(after.pageId, after.documentId, after.revision);
-      return { ...result, snapshot: await this.snapshot() };
-    });
+      return { ...result, snapshot: await this.snapshot(undefined, signal) };
+    }, signal);
   }
 
-  async wait(condition: WaitCondition, timeoutMs?: number): Promise<WaitResult> {
-    const result = await this.backend.wait(condition, timeoutMs);
-    return result.satisfied ? { ...result, snapshot: await this.snapshot() } : result;
+  async wait(condition: WaitCondition, timeoutMs?: number, signal?: AbortSignal): Promise<WaitResult> {
+    const result = await this.backend.wait(condition, timeoutMs, signal);
+    return result.satisfied ? { ...result, snapshot: await this.snapshot(undefined, signal) } : result;
   }
 
-  async subscribe(listener: (event: AgentEvent) => void): Promise<() => void> {
-    return this.backend.subscribe(listener);
+  async subscribe(listener: (event: AgentEvent) => void, signal?: AbortSignal): Promise<() => void> {
+    throwIfAborted(signal);
+    return this.backend.subscribe(listener, signal);
   }
 
-  private enqueueAction<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.actionTail.then(operation, operation);
+  private enqueueAction<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const run = () => {
+      throwIfAborted(signal);
+      return operation();
+    };
+    const result = this.actionTail.then(run, run);
     this.actionTail = result.then(
       () => undefined,
       () => undefined,

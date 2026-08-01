@@ -1,4 +1,5 @@
 import { AgentEventBus } from "../core/events";
+import { abortableDelay, throwIfAborted } from "../core/cancellation";
 import { SnapshotLocatorResolver } from "../core/locator";
 import { RevisionedPageSession, type PageBackend, type PageSession } from "../core/page";
 import type { AgentRuntime } from "../core/runtime";
@@ -85,7 +86,8 @@ class FixturePageBackend implements PageBackend {
     this.pageId = pageId;
   }
 
-  async identity(): Promise<PageIdentity> {
+  async identity(signal?: AbortSignal): Promise<PageIdentity> {
+    throwIfAborted(signal);
     return {
       pageId: this.pageId,
       documentId: DOCUMENT_ID,
@@ -97,7 +99,8 @@ class FixturePageBackend implements PageBackend {
     };
   }
 
-  async snapshot(options?: SnapshotOptions): Promise<Omit<PageSnapshot, "snapshotId">> {
+  async snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<Omit<PageSnapshot, "snapshotId">> {
+    throwIfAborted(signal);
     const includeText = options?.includeText !== false;
     const includeGeometry = options?.includeGeometry !== false;
     const interactiveOnly = options?.interactiveOnly ?? true;
@@ -176,16 +179,17 @@ class FixturePageBackend implements PageBackend {
     action: AgentAction,
     token?: SnapshotToken,
     expect?: ActionExpectation,
+    signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
     switch (action.type) {
       case "click":
-        return this.click(action, token, expect);
+        return this.click(action, token, expect, signal);
       case "fill":
-        return this.fill(action, token, expect);
+        return this.fill(action, token, expect, signal);
       case "type":
-        return this.typeText(action.text, token, expect);
+        return this.typeText(action.text, token, expect, signal);
       case "press":
-        return this.press(action.key, token, expect);
+        return this.press(action.key, token, expect, signal);
       default:
         throw new AgentError("INVALID_REQUEST", `fixture does not support ${action.type}`);
     }
@@ -195,18 +199,20 @@ class FixturePageBackend implements PageBackend {
     action: Extract<AgentAction, { type: "click" }>,
     token?: SnapshotToken,
     expect?: ActionExpectation,
+    signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
-    const snapshot = await this.actionSnapshot(token);
+    const snapshot = await this.actionSnapshot(token, signal);
     const target = this.resolver.resolve(action.target, snapshot);
     if (target.node.role !== "button" || target.node.name !== "Continue") {
       throw new AgentError("NOT_INTERACTABLE", "fixture target is not clickable", { retryable: true });
     }
+    throwIfAborted(signal);
     this.ready = true;
     this.revision += 1;
-    const identity = await this.identity();
+    const identity = await this.identity(signal);
     this.emitChanged();
     return {
-      verified: await this.matches(expect, identity),
+      verified: await this.matches(expect, identity, signal),
       effects: [{ type: "dom.changed", data: { revision: this.revision } }],
       proof: {
         target: target.ref,
@@ -222,19 +228,21 @@ class FixturePageBackend implements PageBackend {
     action: Extract<AgentAction, { type: "fill" }>,
     token?: SnapshotToken,
     expect?: ActionExpectation,
+    signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
-    const snapshot = await this.actionSnapshot(token);
+    const snapshot = await this.actionSnapshot(token, signal);
     const target = this.resolver.resolve(action.target, snapshot);
     if (target.node.role !== "textbox") {
       throw new AgentError("NOT_INTERACTABLE", "fixture target is not editable", { retryable: true });
     }
+    throwIfAborted(signal);
     this.value = action.value;
     this.focused = true;
     this.revision += 1;
-    const identity = await this.identity();
+    const identity = await this.identity(signal);
     this.emitChanged();
     return {
-      verified: await this.matches(expect, identity),
+      verified: await this.matches(expect, identity, signal),
       effects: [
         { type: "dom.changed", data: { revision: this.revision } },
         { type: "value.changed", data: { value: this.value } },
@@ -254,15 +262,17 @@ class FixturePageBackend implements PageBackend {
     text: string,
     token?: SnapshotToken,
     expect?: ActionExpectation,
+    signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
-    await this.actionSnapshot(token);
+    await this.actionSnapshot(token, signal);
+    throwIfAborted(signal);
     if (!this.focused) throw new AgentError("NOT_INTERACTABLE", "fixture has no focused editable control", { retryable: true });
     this.value += text;
     this.revision += 1;
-    const identity = await this.identity();
+    const identity = await this.identity(signal);
     this.emitChanged();
     return {
-      verified: await this.matches(expect, identity),
+      verified: await this.matches(expect, identity, signal),
       effects: [
         { type: "dom.changed", data: { revision: this.revision } },
         { type: "value.changed", data: { value: this.value } },
@@ -281,15 +291,17 @@ class FixturePageBackend implements PageBackend {
     key: string,
     token?: SnapshotToken,
     expect?: ActionExpectation,
+    signal?: AbortSignal,
   ): Promise<Omit<ActionResult, "snapshot">> {
-    await this.actionSnapshot(token);
+    await this.actionSnapshot(token, signal);
+    throwIfAborted(signal);
     if (!this.focused) throw new AgentError("NOT_INTERACTABLE", "fixture has no focused control", { retryable: true });
     if (key.toLocaleLowerCase() === "enter") this.ready = true;
     this.revision += 1;
-    const identity = await this.identity();
+    const identity = await this.identity(signal);
     this.emitChanged();
     return {
-      verified: await this.matches(expect, identity),
+      verified: await this.matches(expect, identity, signal),
       effects: [{ type: "dom.changed", data: { revision: this.revision } }],
       proof: {
         role: "textbox",
@@ -301,8 +313,9 @@ class FixturePageBackend implements PageBackend {
     };
   }
 
-  private async actionSnapshot(token?: SnapshotToken): Promise<Omit<PageSnapshot, "snapshotId">> {
-    const snapshot = await this.snapshot({ interactiveOnly: false });
+  private async actionSnapshot(token?: SnapshotToken, signal?: AbortSignal): Promise<Omit<PageSnapshot, "snapshotId">> {
+    const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
+    throwIfAborted(signal);
     if (token && (token.documentId !== snapshot.documentId || token.revision !== snapshot.revision)) {
       throw new AgentError("STALE_SNAPSHOT", "snapshot is no longer current", { retryable: true });
     }
@@ -313,22 +326,23 @@ class FixturePageBackend implements PageBackend {
     this.events.publish(this.event("dom.changed", { revision: this.revision }));
   }
 
-  async wait(condition: WaitCondition, timeoutMs = 1000): Promise<Omit<WaitResult, "snapshot">> {
+  async wait(condition: WaitCondition, timeoutMs = 1000, signal?: AbortSignal): Promise<Omit<WaitResult, "snapshot">> {
     const started = Date.now();
     const deadline = started + Math.max(0, timeoutMs);
     let stableRevision: number | null = null;
     let stableSince = started;
     while (Date.now() <= deadline) {
-      const identity = await this.identity();
+      const identity = await this.identity(signal);
+      throwIfAborted(signal);
       let satisfied = false;
       if (condition.type === "time") {
         const duration = Math.max(0, Math.min(condition.ms, deadline - Date.now()));
-        await delay(duration);
+        await abortableDelay(duration, signal);
         satisfied = Date.now() - started >= condition.ms;
       } else if (condition.type === "url") {
         satisfied = identity.url.includes(condition.value);
       } else if (condition.type === "text") {
-        const snapshot = await this.snapshot({ interactiveOnly: false });
+        const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
         if (condition.target) {
           try {
             this.resolver.resolve(condition.target, snapshot);
@@ -348,21 +362,22 @@ class FixturePageBackend implements PageBackend {
       }
       if (satisfied) return { satisfied: true, elapsedMs: Date.now() - started };
       if (Date.now() >= deadline) break;
-      await delay(Math.min(5, Math.max(1, deadline - Date.now())));
+      await abortableDelay(Math.min(5, Math.max(1, deadline - Date.now())), signal);
     }
     return { satisfied: false, elapsedMs: Date.now() - started };
   }
 
-  async subscribe(listener: (event: AgentEvent) => void): Promise<() => void> {
+  async subscribe(listener: (event: AgentEvent) => void, signal?: AbortSignal): Promise<() => void> {
+    throwIfAborted(signal);
     return this.events.subscribe(listener);
   }
 
-  private async matches(expect: ActionExpectation | undefined, identity: PageIdentity): Promise<boolean> {
+  private async matches(expect: ActionExpectation | undefined, identity: PageIdentity, signal?: AbortSignal): Promise<boolean> {
     if (!expect) return true;
     if (expect.url !== undefined && !identity.url.includes(expect.url)) return false;
     if (expect.title !== undefined && !identity.title.includes(expect.title)) return false;
     if (expect.text !== undefined) {
-      const snapshot = await this.snapshot({ interactiveOnly: false });
+      const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
       if (!snapshot.nodes.some((node) => `${node.name} ${node.text ?? ""}`.includes(expect.text!))) return false;
     }
     return true;
@@ -379,8 +394,4 @@ class FixturePageBackend implements PageBackend {
       data,
     };
   }
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

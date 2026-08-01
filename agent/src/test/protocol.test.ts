@@ -52,6 +52,34 @@ test("rejects unknown and incomplete request operations", () => {
   );
 });
 
+test("validates request deadlines and cancellation operations", () => {
+  const deadline = parseAgentMessage({ ...listRequest(), deadlineMs: 250 });
+  assert.equal(deadline.kind, "request");
+  assert.equal((deadline as AgentRequest).deadlineMs, 250);
+
+  const cancellation = parseAgentMessage({
+    ...listRequest(),
+    requestId: "cancel-1",
+    op: "request.cancel",
+    targetRequestId: "request-1",
+  });
+  assert.equal(cancellation.kind, "request");
+  assert.equal((cancellation as AgentRequest).op, "request.cancel");
+
+  assert.throws(
+    () => parseAgentMessage({ ...listRequest(), deadlineMs: -1 }),
+    (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
+  );
+  assert.throws(
+    () => parseAgentMessage({ ...listRequest(), deadlineMs: 1.5 }),
+    (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
+  );
+  assert.throws(
+    () => parseAgentMessage({ ...listRequest(), op: "request.cancel" }),
+    (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
+  );
+});
+
 test("rejects incomplete transport frames", () => {
   const decoder = new LineJsonDecoder();
   decoder.push(encodeAgentMessage(listRequest()).trimEnd().slice(0, -1));
