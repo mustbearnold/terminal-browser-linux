@@ -37,6 +37,8 @@ export function operationCapability(request: AgentRequest): AgentCapability | un
       return "page.frames";
     case "page.snapshot":
       return "snapshot.read";
+    case "page.snapshot.delta":
+      return "snapshot.delta";
     case "page.capture":
       return "page.capture";
     case "page.read":

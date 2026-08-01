@@ -46,6 +46,7 @@ export class FixtureRuntime implements AgentRuntime {
       "pages.open",
       "pages.close",
       "snapshot.read",
+      "snapshot.delta",
       "page.frames",
       "page.read",
       "page.act",
@@ -132,6 +133,7 @@ class FixturePageBackend implements PageBackend {
     const allNodes = [
       {
         ref: asSnapshotRef("r1"),
+        nodeId: "n1",
         frameId: FRAME_ID,
         parent: null,
         role: "button",
@@ -144,6 +146,7 @@ class FixturePageBackend implements PageBackend {
       },
       {
         ref: asSnapshotRef("r2"),
+        nodeId: "n2",
         frameId: FRAME_ID,
         parent: null,
         role: "textbox",
@@ -158,6 +161,7 @@ class FixturePageBackend implements PageBackend {
       },
       {
         ref: asSnapshotRef("r3"),
+        nodeId: "n3",
         frameId: FRAME_ID,
         parent: null,
         role: "generic",
@@ -172,6 +176,7 @@ class FixturePageBackend implements PageBackend {
         ? [
             {
               ref: asSnapshotRef("r4"),
+              nodeId: "n4",
               frameId: FRAME_ID,
               parent: null,
               role: "status",

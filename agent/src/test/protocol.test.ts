@@ -182,6 +182,21 @@ test("validates page capture options", () => {
   }
 });
 
+test("validates snapshot delta bases", () => {
+  const delta = parseAgentMessage({
+    ...listRequest(),
+    op: "page.snapshot.delta",
+    pageId: "page-1",
+    base: { pageId: "page-1", documentId: "document-1", revision: 2, snapshotId: "snapshot-1" },
+    options: { interactiveOnly: false },
+  });
+  assert.equal(delta.kind, "request");
+  assert.throws(
+    () => parseAgentMessage({ ...listRequest(), op: "page.snapshot.delta", pageId: "page-1", base: { pageId: "page-1" } }),
+    (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
+  );
+});
+
 test("rejects incomplete transport frames", () => {
   const decoder = new LineJsonDecoder();
   decoder.push(encodeAgentMessage(listRequest()).trimEnd().slice(0, -1));

@@ -120,6 +120,8 @@ export class AgentRequestRouter {
         return await this.page(request.pageId).frames(signal);
       case "page.snapshot":
         return await this.page(request.pageId).snapshot(request.options, signal);
+      case "page.snapshot.delta":
+        return await this.page(request.pageId).snapshotDelta(request.base, request.options, signal);
       case "page.capture": {
         const page = this.page(request.pageId);
         if (!page.capture) {

@@ -37,6 +37,7 @@ export type AgentCapability =
   | "page.act.navigate"
   | "page.wait"
   | "page.observe"
+  | "snapshot.delta"
   | "page.capture"
   | "unsafe.eval";
 
@@ -95,6 +96,7 @@ export interface SnapshotBox {
 
 export interface SnapshotNode {
   ref: SnapshotRef;
+  nodeId?: string;
   frameId: FrameId;
   parent: SnapshotRef | null;
   role: string;
@@ -121,6 +123,30 @@ export interface PageSnapshot extends SnapshotToken {
   rootFrameId: FrameId;
   nodes: readonly SnapshotNode[];
   truncated: boolean;
+}
+
+export interface SnapshotDeltaNode {
+  key: string;
+  node: SnapshotNode;
+}
+
+export interface SnapshotReference {
+  key: string;
+  ref: SnapshotRef;
+  parent: SnapshotRef | null;
+}
+
+export interface PageSnapshotDelta extends SnapshotToken {
+  base: SnapshotToken;
+  url: string;
+  title: string;
+  rootFrameId: FrameId;
+  added: readonly SnapshotDeltaNode[];
+  updated: readonly SnapshotDeltaNode[];
+  removed: readonly string[];
+  references: readonly SnapshotReference[];
+  truncated: boolean;
+  reset: boolean;
 }
 
 export type CaptureFormat = "png" | "jpeg" | "webp";
@@ -227,6 +253,12 @@ export type AgentRequest =
   | (AgentRequestEnvelope & { op: "pages.close"; pageId: PageId })
   | (AgentRequestEnvelope & { op: "page.frames"; pageId: PageId })
   | (AgentRequestEnvelope & { op: "page.snapshot"; pageId: PageId; options?: SnapshotOptions })
+  | (AgentRequestEnvelope & {
+      op: "page.snapshot.delta";
+      pageId: PageId;
+      base: SnapshotToken;
+      options?: SnapshotOptions;
+    })
   | (AgentRequestEnvelope & { op: "page.capture"; pageId: PageId; options?: CaptureOptions })
   | (AgentRequestEnvelope & { op: "page.read"; pageId: PageId; target: Target; token?: SnapshotToken })
   | (AgentRequestEnvelope & {

@@ -1230,10 +1230,16 @@ function snapshotScript(key: string, options: SnapshotOptions | undefined, frame
           ref = state.frameId + ":r" + (++state.nextRef);
           state.elementRefs.set(el, ref);
         }
+        let nodeId = state.elementNodeIds.get(el);
+        if (!nodeId) {
+          nodeId = state.frameId + ":" + state.documentId + ":n" + (++state.nextNodeId);
+          state.elementNodeIds.set(el, nodeId);
+        }
         state.refs.set(ref, el);
         const box = boxFor(el);
         nodes.push({
           ref,
+          nodeId,
           frameId: state.frameId,
           parent,
           role,
@@ -1280,8 +1286,10 @@ function agentStateSetupScript(key: string, frameId: string): string {
         frameId,
         revision: 0,
         nextRef: 0,
+        nextNodeId: 0,
         refs: new Map(),
         elementRefs: new WeakMap(),
+        elementNodeIds: new WeakMap(),
         invalidationScheduled: false,
         snapshotRevision: -1,
       };

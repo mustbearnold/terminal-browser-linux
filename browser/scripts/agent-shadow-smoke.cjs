@@ -23,6 +23,7 @@ async function run() {
       timeoutMs: 3_000,
     });
     assert.ok(hello.capabilities.includes("page.capture"), "page capture capability was not advertised");
+    assert.ok(hello.capabilities.includes("snapshot.delta"), "snapshot delta capability was not advertised");
     const captured = await client.capture(pageId, { format: "png" });
     assert.equal(captured.format, "png");
     assert.equal(captured.pageId, pageId);
@@ -34,7 +35,7 @@ async function run() {
       await client.observe(pageId, ["dom.changed"]);
       const initial = await client.call("page.snapshot", {
         pageId,
-        options: { includeGeometry: false },
+        options: { interactiveOnly: false, includeGeometry: false },
       });
       const shadowButton = initial.nodes.find((node) => node.name === "Shadow action");
       const shadowTextbox = initial.nodes.find((node) => node.name === "Shadow name");
@@ -67,6 +68,7 @@ async function run() {
         pageId,
         options: { interactiveOnly: false },
       });
+      const delta = await client.snapshotDelta(pageId, initial);
       const dynamicButton = after.nodes.find((node) => node.name === "Dynamic action");
       assert.equal(filled.verified, true);
       assert.equal(typed.verified, true);
@@ -75,6 +77,9 @@ async function run() {
       assert.ok(dynamicButton, "shadow mutation was not exposed in the next snapshot");
       assert.ok(after.revision > initial.revision, "shadow mutation did not advance the revision");
       assert.ok(events.some((event) => event.event === "dom.changed"), "shadow mutation emitted no event");
+      assert.equal(delta.reset, false);
+      assert.ok(delta.added.some((entry) => entry.node.name === "Dynamic action"), "delta omitted the shadow mutation");
+      assert.ok(delta.updated.some((entry) => entry.node.name === "Clicked"), "delta omitted the status update");
 
       console.log(JSON.stringify({
         protocol: `${hello.protocol}/${hello.version}`,
@@ -82,6 +87,8 @@ async function run() {
         typedValue: typed.proof?.value,
         dynamicNode: dynamicButton.name,
         captureBytes: captured.data.length,
+        deltaAdded: delta.added.length,
+        deltaUpdated: delta.updated.length,
         revisionDelta: after.revision - initial.revision,
         domEvents: events.filter((event) => event.event === "dom.changed").length,
       }));

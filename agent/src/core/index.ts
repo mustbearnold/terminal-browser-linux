@@ -7,6 +7,7 @@ export * from "./locator";
 export * from "./page";
 export * from "./policy";
 export * from "./revisions";
+export * from "./snapshots";
 export * from "./router";
 export * from "./runtime";
 export * from "./trace";

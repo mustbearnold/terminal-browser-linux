@@ -2,6 +2,7 @@ import { RevisionLedger } from "./revisions";
 import { throwIfAborted } from "./cancellation";
 import { SnapshotLocatorResolver } from "./locator";
 import { AgentError } from "../protocol/errors";
+import { diffSnapshots } from "./snapshots";
 import type { EventSubscription, EventSubscriptionOptions } from "./events";
 import type { ResolvedTarget, SnapshotView } from "./locator";
 import type {
@@ -15,6 +16,7 @@ import type {
   PageCapture,
   PageFrameSnapshot,
   PageSnapshot,
+  PageSnapshotDelta,
   SnapshotOptions,
   SnapshotToken,
   Target,
@@ -50,6 +52,7 @@ export interface PageSession {
   resolve?(target: Target, snapshot: PageSnapshot, signal?: AbortSignal): Promise<ResolvedTarget>;
   frames(signal?: AbortSignal): Promise<PageFrameSnapshot>;
   snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<PageSnapshot>;
+  snapshotDelta(base: SnapshotToken, options?: SnapshotOptions, signal?: AbortSignal): Promise<PageSnapshotDelta>;
   capture?(options?: CaptureOptions, signal?: AbortSignal): Promise<PageCapture>;
   assertFresh(token: SnapshotToken): void;
   currentRevision(): { documentId: DocumentId; revision: number };
@@ -66,6 +69,7 @@ export interface PageSession {
 
 export class RevisionedPageSession implements PageSession {
   private snapshotSequence = 0;
+  private readonly snapshotHistory = new Map<string, SnapshotHistoryEntry>();
   private actionTail: Promise<void> = Promise.resolve();
   private readonly snapshotLocator = new SnapshotLocatorResolver();
 
@@ -96,11 +100,36 @@ export class RevisionedPageSession implements PageSession {
     const captured = await this.backend.snapshot(options, signal);
     throwIfAborted(signal);
     const state = this.ledger.synchronize(captured.pageId, captured.documentId, captured.revision);
-    return {
+    const snapshot = {
       ...captured,
       revision: state.revision,
       snapshotId: asSnapshotId(`${this.pageId}:${++this.snapshotSequence}`),
     };
+    this.rememberSnapshot(snapshot, options);
+    return snapshot;
+  }
+
+  async snapshotDelta(base: SnapshotToken, options?: SnapshotOptions, signal?: AbortSignal): Promise<PageSnapshotDelta> {
+    throwIfAborted(signal);
+    const entry = this.snapshotHistory.get(String(base.snapshotId));
+    if (
+      !entry ||
+      entry.snapshot.pageId !== base.pageId ||
+      entry.snapshot.documentId !== base.documentId ||
+      entry.snapshot.revision !== base.revision
+    ) {
+      throw new AgentError("SNAPSHOT_NOT_FOUND", "snapshot is not available for delta reconstruction", {
+        retryable: true,
+        details: { snapshotId: base.snapshotId },
+      });
+    }
+    if (options !== undefined && snapshotOptionsKey(options) !== entry.optionsKey) {
+      throw new AgentError("INVALID_REQUEST", "snapshot delta options must match the base snapshot options", {
+        details: { snapshotId: base.snapshotId },
+      });
+    }
+    const current = await this.snapshot(entry.options, signal);
+    return diffSnapshots(entry.snapshot, current);
   }
 
   async capture(options?: CaptureOptions, signal?: AbortSignal): Promise<PageCapture> {
@@ -179,4 +208,32 @@ export class RevisionedPageSession implements PageSession {
     );
     return result;
   }
+
+  private rememberSnapshot(snapshot: PageSnapshot, options?: SnapshotOptions): void {
+    this.snapshotHistory.set(String(snapshot.snapshotId), {
+      snapshot,
+      options: options === undefined ? undefined : { ...options },
+      optionsKey: snapshotOptionsKey(options),
+    });
+    while (this.snapshotHistory.size > 32) {
+      const oldest = this.snapshotHistory.keys().next().value;
+      if (oldest === undefined) return;
+      this.snapshotHistory.delete(oldest);
+    }
+  }
+}
+
+interface SnapshotHistoryEntry {
+  snapshot: PageSnapshot;
+  options?: SnapshotOptions;
+  optionsKey: string;
+}
+
+function snapshotOptionsKey(options?: SnapshotOptions): string {
+  return JSON.stringify({
+    interactiveOnly: options?.interactiveOnly ?? true,
+    includeGeometry: options?.includeGeometry !== false,
+    includeText: options?.includeText !== false,
+    maxNodes: options?.maxNodes ?? 1000,
+  });
 }

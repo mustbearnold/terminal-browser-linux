@@ -10,6 +10,7 @@ export type AgentErrorCode =
   | "EVENT_GAP"
   | "PAGE_NOT_FOUND"
   | "FRAME_NOT_FOUND"
+  | "SNAPSHOT_NOT_FOUND"
   | "STALE_SNAPSHOT"
   | "TARGET_NOT_FOUND"
   | "AMBIGUOUS_TARGET"

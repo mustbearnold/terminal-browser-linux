@@ -15,8 +15,11 @@ import {
   type PageIdentity,
   type PageFrameSnapshot,
   type PageSnapshot,
+  type PageSnapshotDelta,
   type PageId,
   type SnapshotNode,
+  type SnapshotOptions,
+  type SnapshotToken,
   type WaitResult,
 } from "./protocol/types";
 import { MAX_REQUEST_DEADLINE_MS, throwIfAborted } from "./core/cancellation";
@@ -56,6 +59,7 @@ export interface AgentOperationResults {
   "pages.close": { pageId: PageId };
   "page.frames": PageFrameSnapshot;
   "page.snapshot": PageSnapshot;
+  "page.snapshot.delta": PageSnapshotDelta;
   "page.capture": PageCapture;
   "page.read": SnapshotNode;
   "page.act": ActionResult;
@@ -142,6 +146,19 @@ export class AgentClient {
     return this.call("page.capture", {
       pageId,
       ...(captureOptions === undefined ? {} : { options: captureOptions }),
+    }, options);
+  }
+
+  snapshotDelta(
+    pageId: PageId,
+    base: SnapshotToken,
+    snapshotOptions?: SnapshotOptions,
+    options?: AgentCallOptions,
+  ): Promise<PageSnapshotDelta> {
+    return this.call("page.snapshot.delta", {
+      pageId,
+      base,
+      ...(snapshotOptions === undefined ? {} : { options: snapshotOptions }),
     }, options);
   }
 

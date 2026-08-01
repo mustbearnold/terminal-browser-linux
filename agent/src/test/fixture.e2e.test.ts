@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { AgentRequestRouter, type AgentConnectionContext } from "../core/router";
-import type { AgentEvent, AgentRequest, AgentResponse, PageSnapshot, SnapshotNode } from "../protocol/types";
+import type {
+  AgentEvent,
+  AgentRequest,
+  AgentResponse,
+  PageSnapshot,
+  PageSnapshotDelta,
+  SnapshotNode,
+} from "../protocol/types";
 import {
   AGENT_PROTOCOL,
   AGENT_PROTOCOL_VERSION,
@@ -147,6 +154,36 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(pressed.proof?.value, "Ada Lovelace");
   assert.equal(pressed.snapshot?.nodes.some((node) => node.name === "Ready"), true);
   assert.deepEqual(events.map((event) => event.event), ["dom.changed", "dom.changed", "dom.changed"]);
+
+  const delta = result<PageSnapshotDelta>(
+    await router.handle(
+      request("page.snapshot.delta", { pageId: FIXTURE_PAGE_ID, base: token(snapshot) }),
+      context,
+    ),
+  );
+  assert.equal(delta.reset, false);
+  assert.ok(delta.updated.some((entry) => entry.node.nodeId === "n2"));
+  assert.ok(delta.added.some((entry) => entry.node.nodeId === "n4"));
+  assert.equal(delta.references.length, 4);
+
+  const mismatchedOptions = await router.handle(
+    request("page.snapshot.delta", {
+      pageId: FIXTURE_PAGE_ID,
+      base: token(snapshot),
+      options: { includeGeometry: true },
+    }),
+    context,
+  );
+  assert.equal(mismatchedOptions.error?.code, "INVALID_REQUEST");
+
+  const missingBase = await router.handle(
+    request("page.snapshot.delta", {
+      pageId: FIXTURE_PAGE_ID,
+      base: { ...token(snapshot), snapshotId: "missing-snapshot" },
+    }),
+    context,
+  );
+  assert.equal(missingBase.error?.code, "SNAPSHOT_NOT_FOUND");
 
   const waited = result<{ satisfied: boolean; snapshot?: PageSnapshot }>(
     await router.handle(

@@ -247,6 +247,7 @@ function validateRequest(message: Record<string, unknown>): void {
     case "pages.close":
     case "page.frames":
     case "page.snapshot":
+    case "page.snapshot.delta":
     case "page.capture":
     case "page.read":
     case "page.act":
@@ -259,6 +260,10 @@ function validateRequest(message: Record<string, unknown>): void {
   }
 
   if (op === "page.snapshot" && message.options !== undefined) validateSnapshotOptions(message.options);
+  if (op === "page.snapshot.delta") {
+    validateSnapshotToken(message.base, "base");
+    if (message.options !== undefined) validateSnapshotOptions(message.options);
+  }
   if (op === "page.capture" && message.options !== undefined) validateCaptureOptions(message.options);
   if (op === "page.read") {
     validateTarget(message.target, "target");
