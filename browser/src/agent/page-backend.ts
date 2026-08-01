@@ -11,6 +11,7 @@ import {
   diffSnapshots,
   matchesSnapshotNodeText,
   matchesWaitElementState,
+  targetResolutionDetails,
   throwIfAborted,
 } from "terminal-browser-agent";
 import type {
@@ -186,17 +187,21 @@ export class ElectronPageBackend implements PageBackend {
       nodes = nodesForRefs(refs, candidateSnapshot, includeHidden);
     }
     if (refs.length === 0) {
-      throw new AgentError("TARGET_NOT_FOUND", "CSS locator matched no snapshot nodes", { retryable: true });
+      throw new AgentError("TARGET_NOT_FOUND", "CSS locator matched no snapshot nodes", {
+        retryable: true,
+        details: targetResolutionDetails([], { snapshotTruncated: candidateSnapshot.truncated }),
+      });
     }
     if (refs.some((ref) => !candidateSnapshot.nodes.some((node) => String(node.ref) === ref))) {
       throw new AgentError("TARGET_NOT_FOUND", "CSS locator matched a node outside the current snapshot", {
         retryable: true,
+        details: targetResolutionDetails(nodes, { snapshotTruncated: candidateSnapshot.truncated }),
       });
     }
     if (nodes.length > 1) {
       throw new AgentError("AMBIGUOUS_TARGET", "CSS locator matched multiple snapshot nodes", {
         retryable: true,
-        details: { refs: nodes.map((node) => node.ref) },
+        details: targetResolutionDetails(nodes, { snapshotTruncated: candidateSnapshot.truncated }),
       });
     }
     return { ref: nodes[0].ref, node: nodes[0] };

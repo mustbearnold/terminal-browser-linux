@@ -83,10 +83,30 @@ test("resolves hidden locator candidates only when requested", () => {
     visible: false,
   };
   const target = { locator: { kind: "role" as const, role: "button", name: "Hidden action", exact: true } };
+  let hiddenError: AgentError | undefined;
   assert.throws(
     () => new SnapshotLocatorResolver().resolve(target, { nodes: [hidden] }),
-    (error: unknown) => error instanceof AgentError && error.code === "TARGET_NOT_FOUND",
+    (error: unknown) => {
+      hiddenError = error instanceof AgentError ? error : undefined;
+      return hiddenError?.code === "TARGET_NOT_FOUND";
+    },
   );
+  assert.deepEqual(hiddenError?.details, {
+    candidateCount: 0,
+    candidateRefs: [],
+    candidates: [],
+    hiddenCandidateCount: 1,
+    hiddenCandidates: [{
+      ref: "hidden",
+      frameId: "frame-1",
+      role: "button",
+      name: "Hidden action",
+      visible: false,
+      enabled: true,
+      focusable: true,
+    }],
+    snapshotTruncated: false,
+  });
   const result = new SnapshotLocatorResolver().resolve(target, { nodes: [hidden] }, { includeHidden: true });
   assert.equal(result.ref, "hidden");
 });
@@ -127,14 +147,36 @@ test("matches the complete semantic wait state", () => {
 });
 
 test("fails instead of guessing when a locator is ambiguous", () => {
+  let ambiguousError: AgentError | undefined;
   assert.throws(
     () =>
       new SnapshotLocatorResolver().resolve(
         { locator: { kind: "text", text: "Continue" } },
         snapshot(),
       ),
-    (error: unknown) => error instanceof AgentError && error.code === "AMBIGUOUS_TARGET",
+    (error: unknown) => {
+      ambiguousError = error instanceof AgentError ? error : undefined;
+      return ambiguousError?.code === "AMBIGUOUS_TARGET";
+    },
   );
+  const details = ambiguousError?.details as { candidateCount: number; candidates: Array<{ ref: string }> };
+  assert.equal(details.candidateCount, 2);
+  assert.deepEqual(details.candidates.map((candidate) => candidate.ref), ["r1", "r2"]);
+});
+
+test("marks truncated snapshots in not-found diagnostics", () => {
+  let error: AgentError | undefined;
+  assert.throws(
+    () => new SnapshotLocatorResolver().resolve(
+      { locator: { kind: "role", role: "textbox", name: "Missing", exact: true } },
+      { nodes: [], truncated: true },
+    ),
+    (candidate: unknown) => {
+      error = candidate instanceof AgentError ? candidate : undefined;
+      return error?.code === "TARGET_NOT_FOUND";
+    },
+  );
+  assert.equal((error?.details as { snapshotTruncated: boolean }).snapshotTruncated, true);
 });
 
 test("requires a live resolver for CSS locators", () => {

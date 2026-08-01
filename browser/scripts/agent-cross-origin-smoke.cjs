@@ -65,7 +65,13 @@ async function run() {
       assert.equal(cssRead.ref, frameButton.ref, "CSS locator did not resolve the cross-origin frame button");
       await assert.rejects(
         client.call("page.read", { pageId, target: { locator: { kind: "css", value: "button" } } }),
-        (error) => error?.code === "AMBIGUOUS_TARGET",
+        (error) => {
+          assert.equal(error?.code, "AMBIGUOUS_TARGET");
+          assert.ok(error.details.candidateCount > 1, "ambiguous locator omitted candidate count");
+          assert.ok(error.details.candidates.length > 1, "ambiguous locator omitted candidate diagnostics");
+          assert.equal(error.details.snapshotTruncated, false);
+          return true;
+        },
         "ambiguous CSS locator was not rejected",
       );
       await assert.rejects(

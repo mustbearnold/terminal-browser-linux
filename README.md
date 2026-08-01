@@ -40,6 +40,10 @@ Actions return a full post-action snapshot by default. Set `output.snapshot` to
 Use `expect.element` for target-specific post-action verification; its optional
 state uses the same semantic fields as `page.wait`.
 
+Locator failures include bounded candidate summaries, hidden-candidate counts,
+and whether the snapshot was truncated so an agent can recover without blindly
+repeating the same lookup.
+
 The default agent runtime keeps action deduplication and event history in
 memory. Set `TERMINAL_BROWSER_AGENT_JOURNAL=/absolute/path/to/journal` to opt
 into durable action outcomes and per-page event history.
