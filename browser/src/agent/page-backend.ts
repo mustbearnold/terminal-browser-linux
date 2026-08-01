@@ -125,6 +125,17 @@ type LiveLocatorResult = {
   candidatesTruncated?: boolean;
   hiddenCandidatesTruncated?: boolean;
 };
+type LiveLocatorRequest = {
+  locator: Locator;
+  includeHidden: boolean;
+  maxCandidates: number;
+  frameId?: string;
+};
+type LiveLocatorBatchResult = {
+  ok: boolean;
+  invalid?: boolean;
+  results?: LiveLocatorResult[];
+};
 type LiveTextResult = { ok: boolean; matches?: boolean };
 
 const AGENT_STATE_KEY = "__terminalBrowserAgent";
@@ -313,65 +324,86 @@ export class ElectronPageBackend implements PageBackend {
     maxCandidates = LIVE_LOCATOR_MAX_CANDIDATES,
     frameId?: string,
   ): Promise<LiveLocatorResult> {
+    const [result] = await this.liveLocatorBatchMatches([{
+      locator,
+      includeHidden: options?.includeHidden === true,
+      maxCandidates,
+      frameId,
+    }], signal);
+    return result ?? emptyLiveLocatorResult();
+  }
+
+  private async liveLocatorBatchMatches(
+    queries: readonly LiveLocatorRequest[],
+    signal?: AbortSignal,
+  ): Promise<LiveLocatorResult[]> {
     const frames = (await this.controller.agentFrames()).filter((frame) => {
-      if (frameId === undefined) return true;
+      if (queries.some((query) => query.frameId === undefined)) return true;
       const protocolFrameId = frame.parentId === null ? "main" : frame.id;
-      return protocolFrameId === String(frameId);
+      return queries.some((query) => String(query.frameId) === protocolFrameId);
     });
-    const includeHidden = options?.includeHidden === true;
+    const aggregate = queries.map(() => emptyLiveLocatorResult());
     const values = await Promise.all(frames.map(async (frame) => {
       throwIfAborted(signal);
-      const frameId = frame.parentId === null ? "main" : frame.id;
-      const source = liveLocatorScript(
+      const protocolFrameId = frame.parentId === null ? "main" : frame.id;
+      const entries = queries.flatMap((query, index) => (
+        query.frameId === undefined || String(query.frameId) === protocolFrameId
+          ? [{ index, query }]
+          : []
+      ));
+      if (entries.length === 0) return null;
+      const source = liveLocatorBatchScript(
         this.agentKey,
-        locator,
-        frameId,
-        includeHidden,
-        maxCandidates,
+        entries.map(({ query }) => query),
+        protocolFrameId,
       );
       try {
         const raw = frame.parentId === null
           ? await this.controller.runJs(source)
           : await this.controller.runJsInFrame(frame.id, source);
         throwIfAborted(signal);
-        if (!isLiveLocatorResult(raw)) return null;
-        if (raw.invalid) return raw;
-        return raw.ok ? raw : null;
+        if (!isLiveLocatorBatchResult(raw)) return null;
+        return { entries, raw };
       } catch (error) {
         if (signal?.aborted) throw error;
         if (error instanceof AgentError && error.code === "INVALID_REQUEST") throw error;
         return null;
       }
     }));
-    const candidates: SnapshotNode[] = [];
-    const hiddenCandidates: SnapshotNode[] = [];
-    let candidateCount = 0;
-    let hiddenCandidateCount = 0;
-    let candidatesTruncated = false;
-    let hiddenCandidatesTruncated = false;
     for (const value of values) {
       if (!value) continue;
-      if (value.invalid) return value;
-      candidateCount += value.candidateCount ?? value.candidates?.length ?? 0;
-      hiddenCandidateCount += value.hiddenCandidateCount ?? value.hiddenCandidates?.length ?? 0;
-      candidatesTruncated ||= value.candidatesTruncated === true;
-      hiddenCandidatesTruncated ||= value.hiddenCandidatesTruncated === true;
-      for (const node of value.candidates ?? []) {
-        if (candidates.length < maxCandidates) candidates.push(node);
+      if (value.raw.invalid) {
+        for (const { index } of value.entries) aggregate[index] = { ok: false, invalid: true };
+        continue;
       }
-      for (const node of value.hiddenCandidates ?? []) {
-        if (hiddenCandidates.length < maxCandidates) hiddenCandidates.push(node);
+      for (const [localIndex, { index }] of value.entries.entries()) {
+        const result = value.raw.results?.[localIndex];
+        if (!result) continue;
+        if (result.invalid) {
+          aggregate[index] = { ok: false, invalid: true };
+          continue;
+        }
+        const target = aggregate[index];
+        target.candidateCount = (target.candidateCount ?? 0) + (result.candidateCount ?? result.candidates?.length ?? 0);
+        target.hiddenCandidateCount = (target.hiddenCandidateCount ?? 0) + (result.hiddenCandidateCount ?? result.hiddenCandidates?.length ?? 0);
+        target.candidatesTruncated ||= result.candidatesTruncated === true;
+        target.hiddenCandidatesTruncated ||= result.hiddenCandidatesTruncated === true;
+        for (const node of result.candidates ?? []) {
+          if ((target.candidates?.length ?? 0) < queries[index].maxCandidates) target.candidates?.push(node);
+        }
+        for (const node of result.hiddenCandidates ?? []) {
+          if ((target.hiddenCandidates?.length ?? 0) < queries[index].maxCandidates) target.hiddenCandidates?.push(node);
+        }
       }
     }
-    return {
-      ok: true,
-      candidates,
-      hiddenCandidates,
-      candidateCount,
-      hiddenCandidateCount,
-      candidatesTruncated: candidatesTruncated || candidateCount > candidates.length,
-      hiddenCandidatesTruncated: hiddenCandidatesTruncated || hiddenCandidateCount > hiddenCandidates.length,
-    };
+    return aggregate.map((result) => ({
+      ...result,
+      candidatesTruncated: result.candidatesTruncated === true
+        || (result.candidateCount ?? 0) > (result.candidates?.length ?? 0),
+      hiddenCandidatesTruncated: result.hiddenCandidatesTruncated === true
+        || (result.hiddenCandidateCount ?? 0) > (result.hiddenCandidates?.length ?? 0),
+      ...(result.invalid === true ? {} : { ok: true }),
+    }));
   }
 
   async frames(signal?: AbortSignal): Promise<PageFrameSnapshot> {
@@ -444,17 +476,13 @@ export class ElectronPageBackend implements PageBackend {
   ): Promise<Omit<PageQueryBatchResult, "snapshotId">> {
     throwIfAborted(signal);
     const before = await this.identity(signal);
-    const captured = await Promise.all(queries.map(async ({ locator, options }) => {
-      const matches = await this.liveLocatorMatches(
-        locator,
-        { includeHidden: options?.includeHidden === true },
-        signal,
-        options?.limit ?? LIVE_LOCATOR_MAX_CANDIDATES,
-        options?.frameId,
-      );
-      if (matches.invalid) throw new AgentError("INVALID_REQUEST", "invalid CSS locator");
-      return { locator, matches };
-    }));
+    const matches = await this.liveLocatorBatchMatches(queries.map(({ locator, options }) => ({
+      locator,
+      includeHidden: options?.includeHidden === true,
+      maxCandidates: options?.limit ?? LIVE_LOCATOR_MAX_CANDIDATES,
+      frameId: options?.frameId,
+    })), signal);
+    if (matches.some((result) => result.invalid)) throw new AgentError("INVALID_REQUEST", "invalid CSS locator");
     throwIfAborted(signal);
     const after = await this.identity(signal);
     if (before.documentId !== after.documentId || before.revision !== after.revision) {
@@ -469,14 +497,14 @@ export class ElectronPageBackend implements PageBackend {
       url: after.url,
       title: after.title,
       rootFrameId: MAIN_FRAME_ID,
-      queries: captured.map(({ locator, matches }) => ({
+      queries: queries.map(({ locator }, index) => ({
         locator,
-        nodes: matches.candidates ?? [],
-        matchCount: matches.candidateCount ?? 0,
-        hiddenNodes: matches.hiddenCandidates ?? [],
-        hiddenMatchCount: matches.hiddenCandidateCount ?? 0,
-        truncated: matches.candidatesTruncated === true,
-        hiddenTruncated: matches.hiddenCandidatesTruncated === true,
+        nodes: matches[index].candidates ?? [],
+        matchCount: matches[index].candidateCount ?? 0,
+        hiddenNodes: matches[index].hiddenCandidates ?? [],
+        hiddenMatchCount: matches[index].hiddenCandidateCount ?? 0,
+        truncated: matches[index].candidatesTruncated === true,
+        hiddenTruncated: matches[index].hiddenCandidatesTruncated === true,
       })),
     };
   }
@@ -2186,7 +2214,8 @@ function semanticHelpersScript(): string {
       if (hiddenFor(el)) return false;
       const style = styleFor(el);
       const rect = el.getBoundingClientRect();
-      return style.display === "contents" || (rect.width > 0 && rect.height > 0);
+      const tag = String(el.tagName || "").toLocaleUpperCase();
+      return tag === "BODY" || tag === "HTML" || style.display === "contents" || (rect.width > 0 && rect.height > 0);
     };
     const disabledFor = (el) => {
       let current = el;
@@ -2556,18 +2585,14 @@ function refNodeScript(key: string, ref: string): string {
   })()`;
 }
 
-function liveLocatorScript(
+function liveLocatorBatchScript(
   key: string,
-  locator: Locator,
+  queries: readonly LiveLocatorRequest[],
   frameId: string,
-  includeHidden: boolean,
-  maxCandidates: number,
 ): string {
   return `(() => {
     ${agentStateSetupScript(key, frameId)}
-    const locator = ${JSON.stringify(locator)};
-    const includeHidden = ${JSON.stringify(includeHidden)};
-    const maxCandidates = ${JSON.stringify(maxCandidates)};
+    const queries = ${JSON.stringify(queries.map(({ locator, includeHidden, maxCandidates }) => ({ locator, includeHidden, maxCandidates })))};
     const interactiveOnly = false;
     const includeGeometry = true;
     const includeText = true;
@@ -2647,7 +2672,7 @@ function liveLocatorScript(
       }
       return false;
     };
-    const matchesLocator = (el) => {
+    const matchesLocator = (el, locator) => {
       if (locator.kind === "css") {
         return locator.within === undefined || matchesWithin(el, locator.within);
       }
@@ -2669,49 +2694,58 @@ function liveLocatorScript(
         }
       }
     }
-    let matches = elements;
-    if (locator.kind === "css") {
-      matches = [];
-      const seen = new Set();
-      try {
-        for (const root of roots) {
-          for (const element of root.querySelectorAll(locator.value)) {
-            if (seen.has(element)) continue;
-            seen.add(element);
-            matches.push(element);
-          }
-        }
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "SyntaxError") return { ok: false, invalid: true };
-        return { ok: false };
-      }
-    }
-    const candidates = [];
-    const hiddenCandidates = [];
-    let candidateCount = 0;
-    let hiddenCandidateCount = 0;
-    for (const el of matches) {
-      if (!matchesLocator(el)) continue;
-      const captured = captureNode(el, null, true);
-      if (!captured.included || !captured.node) continue;
-      if (captured.node.visible || includeHidden) {
-        candidateCount += 1;
-        if (candidates.length < maxCandidates) candidates.push(captured.node);
-      } else {
-        hiddenCandidateCount += 1;
-        if (hiddenCandidates.length < maxCandidates) hiddenCandidates.push(captured.node);
-      }
-    }
-    if (invalid) return { ok: false, invalid: true };
-    return {
-      ok: true,
-      candidates,
-      hiddenCandidates,
-      candidateCount,
-      hiddenCandidateCount,
-      candidatesTruncated: candidateCount > candidates.length,
-      hiddenCandidatesTruncated: hiddenCandidateCount > hiddenCandidates.length,
+    const capturedNodes = new Map();
+    const capture = (el) => {
+      if (!capturedNodes.has(el)) capturedNodes.set(el, captureNode(el, null, true));
+      return capturedNodes.get(el);
     };
+    const results = queries.map(({ locator, includeHidden, maxCandidates }) => {
+      invalid = false;
+      let matches = elements;
+      if (locator.kind === "css") {
+        matches = [];
+        const seen = new Set();
+        try {
+          for (const root of roots) {
+            for (const element of root.querySelectorAll(locator.value)) {
+              if (seen.has(element)) continue;
+              seen.add(element);
+              matches.push(element);
+            }
+          }
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "SyntaxError") return { ok: false, invalid: true };
+          return { ok: false };
+        }
+      }
+      const candidates = [];
+      const hiddenCandidates = [];
+      let candidateCount = 0;
+      let hiddenCandidateCount = 0;
+      for (const el of matches) {
+        if (!matchesLocator(el, locator)) continue;
+        const captured = capture(el);
+        if (!captured.included || !captured.node) continue;
+        if (captured.node.visible || includeHidden) {
+          candidateCount += 1;
+          if (candidates.length < maxCandidates) candidates.push(captured.node);
+        } else {
+          hiddenCandidateCount += 1;
+          if (hiddenCandidates.length < maxCandidates) hiddenCandidates.push(captured.node);
+        }
+      }
+      if (invalid) return { ok: false, invalid: true };
+      return {
+        ok: true,
+        candidates,
+        hiddenCandidates,
+        candidateCount,
+        hiddenCandidateCount,
+        candidatesTruncated: candidateCount > candidates.length,
+        hiddenCandidatesTruncated: hiddenCandidateCount > hiddenCandidates.length,
+      };
+    });
+    return { ok: true, results };
   })()`;
 }
 
@@ -3022,6 +3056,28 @@ function isLiveRefResult(value: unknown): value is LiveRefResult {
   if (!value || typeof value !== "object") return false;
   const result = value as Record<string, unknown>;
   return result.ok === false || (result.ok === true && !!result.node && typeof result.node === "object");
+}
+
+function emptyLiveLocatorResult(): LiveLocatorResult {
+  return {
+    ok: true,
+    candidates: [],
+    hiddenCandidates: [],
+    candidateCount: 0,
+    hiddenCandidateCount: 0,
+    candidatesTruncated: false,
+    hiddenCandidatesTruncated: false,
+  };
+}
+
+function isLiveLocatorBatchResult(value: unknown): value is LiveLocatorBatchResult {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Record<string, unknown>;
+  return (
+    typeof result.ok === "boolean" &&
+    (result.invalid === undefined || typeof result.invalid === "boolean") &&
+    (result.results === undefined || (Array.isArray(result.results) && result.results.every(isLiveLocatorResult)))
+  );
 }
 
 function isLiveLocatorResult(value: unknown): value is LiveLocatorResult {

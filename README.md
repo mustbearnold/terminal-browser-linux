@@ -73,7 +73,8 @@ Use `page.query.batch` when several locator result sets are needed. It evaluates
 up to 32 bounded queries against one revision and returns one shared token, so
 an agent can inspect related controls without separate round trips or mixed
 page state. Each query can independently use `options.frameId` for precise
-cross-frame matching.
+cross-frame matching. In the live Electron backend, queries in one batch share
+frame discovery, DOM traversal, and captured-node work.
 
 Use `page.read` when one control is expected. The result contains the node plus
 the document, revision, and read token that prove which page state was observed;

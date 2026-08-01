@@ -64,6 +64,7 @@ async function run() {
           { locator: { kind: "role", role: "button" }, options: { frameId: frameButton.frameId, limit: 8 } },
           { locator: { kind: "role", role: "textbox", name: "Frame name", exact: true }, options: { frameId: frameButton.frameId, limit: 1 } },
           { locator: { kind: "role", role: "checkbox", name: "Frame enabled", exact: true, state: { checked: false } }, options: { frameId: frameButton.frameId, limit: 1 } },
+          { locator: { kind: "role", role: "button", name: "Parent action", exact: true }, options: { limit: 1 } },
         ],
       });
       assert.equal(queryBatch.revision, initial.revision);
@@ -74,6 +75,8 @@ async function run() {
       assert.equal(queryBatch.queries[0].nodes[0]?.frameId, queryBatch.queries[1].nodes[0]?.frameId);
       assert.equal(queryBatch.queries[2].nodes[0]?.name, "Frame enabled");
       assert.equal(queryBatch.queries[2].nodes[0]?.state?.checked, false);
+      assert.equal(queryBatch.queries[3].nodes[0]?.name, "Parent action");
+      assert.equal(queryBatch.queries[3].nodes[0]?.frameId, "main");
       const cssRead = await client.call("page.read", {
         pageId,
         target: { locator: { kind: "css", value: 'button[aria-label="Frame action"]' } },
@@ -314,6 +317,7 @@ async function run() {
         frameScopedQueryVerified: queryBatch.queries[0].matchCount === 3
           && queryBatch.queries[0].nodes.every((node) => node.frameId === frameButton.frameId),
         stateLocatorVerified: queryBatch.queries[2].nodes[0]?.state?.checked === false,
+        mixedFrameBatchVerified: queryBatch.queries[3].nodes[0]?.frameId === "main",
         idempotentReplayVerified: scrolledRetry.replayed === true,
         frameLifecycleVerified: events.some((event) => event.event === "frame.lifecycle"),
       }));
