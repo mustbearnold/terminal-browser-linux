@@ -62,6 +62,9 @@ directly across frames and shadow roots. This keeps locator and text search
 independent of the first snapshot's node cap; ambiguous matches fail with
 bounded diagnostics instead of being guessed.
 
+Set `expect.quietMs` when a verified post-action state must remain unchanged for
+that revision interval before the action is reported complete.
+
 The default agent runtime keeps action deduplication and event history in
 memory. Set `TERMINAL_BROWSER_AGENT_JOURNAL=/absolute/path/to/journal` to opt
 into durable action outcomes and per-page event history.

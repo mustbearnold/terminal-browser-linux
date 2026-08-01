@@ -55,7 +55,7 @@ const frameHtml = `<!doctype html><meta charset="utf-8"><title>Frame evaluation 
 const crossOriginChildHtml = `<!doctype html><label>Frame name <input aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input type="checkbox" aria-label="Frame enabled">Frame enabled</label><div role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
 const navigationStartHtml = `<!doctype html><meta charset="utf-8"><title>Navigation start</title><button aria-label="Start action">Start action</button><output>Navigation start</output>`;
 const navigationNextHtml = `<!doctype html><meta charset="utf-8"><title>Navigation next</title><label>Recovered name <input aria-label="Recovered name"></label><button aria-label="Next action" onclick="document.querySelector('output').textContent='Next clicked'">Next action</button><output>Next ready</output>`;
-const eventHtml = `<!doctype html><meta charset="utf-8"><title>Native event fixture</title><button aria-label="Emit console" onclick="console.warn('agent console probe')">Emit console</button><button aria-label="Emit dialog" onclick="alert('agent dialog probe')">Emit dialog</button><button aria-label="Emit confirm" onclick="document.querySelector('#dialog-status').textContent = confirm('agent confirm probe') ? 'Confirmed' : 'Dismissed'">Emit confirm</button><button id="unlock" aria-label="Unlock" disabled>Unlock</button><button aria-label="Schedule update" onclick="setTimeout(() => { document.querySelector('#async-status').textContent = 'Asynchronous update'; document.querySelector('#unlock').disabled = false }, 180)">Schedule update</button><span id="dialog-status">Idle</span><span id="async-status">Idle</span>`;
+const eventHtml = `<!doctype html><meta charset="utf-8"><title>Native event fixture</title><button aria-label="Emit console" onclick="console.warn('agent console probe')">Emit console</button><button aria-label="Emit dialog" onclick="alert('agent dialog probe')">Emit dialog</button><button aria-label="Emit confirm" onclick="document.querySelector('#dialog-status').textContent = confirm('agent confirm probe') ? 'Confirmed' : 'Dismissed'">Emit confirm</button><button id="unlock" aria-label="Unlock" disabled>Unlock</button><button aria-label="Schedule update" onclick="setTimeout(() => { document.querySelector('#async-status').textContent = 'Asynchronous update'; document.querySelector('#unlock').disabled = false; setTimeout(() => { document.querySelector('#async-status').textContent = 'Settled' }, 80) }, 180)">Schedule update</button><span id="dialog-status">Idle</span><span id="async-status">Idle</span>`;
 const largeWindowHtml = `<!doctype html><meta charset="utf-8"><title>Large window fixture</title><output id="status">Idle</output><div id="controls">${Array.from({ length: 1099 }, (_, index) => `<button id="large-${index}" aria-label="Large ${index}">Large ${index}</button>`).join("")}<button id="tail" aria-label="Tail action" onclick="document.querySelector('#status').textContent='Tail clicked'">Tail action</button></div>`;
 
 async function expectCode(promise, code) {
@@ -808,14 +808,11 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
           condition: { type: "text", value: "Dismissed" },
           timeoutMs: 1_000,
         });
-        await client.call("page.act", {
-          pageId: eventPageId,
-          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Schedule update", exact: true } } },
-        });
         const externalWaitCall = client.call("page.wait", {
           pageId: eventPageId,
-          condition: { type: "text", value: "Asynchronous update" },
+          condition: { type: "text", value: "Settled" },
           timeoutMs: 2_000,
+          output: { snapshot: "none" },
         });
         const enabledWaitCall = client.call("page.wait", {
           pageId: eventPageId,
@@ -825,7 +822,24 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
             state: { visible: true, enabled: true },
           },
           timeoutMs: 2_000,
+          output: { snapshot: "none" },
         });
+        const quietActionStarted = Date.now();
+        const quietAction = await client.call("page.act", {
+          pageId: eventPageId,
+          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Schedule update", exact: true } } },
+          expect: {
+            text: "Settled",
+            element: {
+              target: { locator: { kind: "role", role: "button", name: "Unlock", exact: true } },
+              state: { visible: true, enabled: true },
+            },
+            timeoutMs: 2_000,
+            quietMs: 100,
+          },
+          output: { snapshot: "none" },
+        });
+        const quietActionElapsedMs = Date.now() - quietActionStarted;
         const [externalWait, enabledWait] = await Promise.all([externalWaitCall, enabledWaitCall]);
         const stableWait = await client.call("page.wait", {
           pageId: eventPageId,
@@ -862,6 +876,8 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
           && dialogAfterNavigation?.data?.handled === "pending"
           && dialogAfterNavigationResult?.handled === "accepted"
           && confirmResult?.handled === "dismissed"
+          && quietAction.verified === true
+          && quietActionElapsedMs >= 300
           && externalWait.satisfied === true
           && enabledWait.satisfied === true
           && stableWait.satisfied === true
@@ -876,6 +892,8 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
           metrics: {
             consoleEvents: events.filter((event) => event.event === "console").length,
             dialogEvents: events.filter((event) => event.event === "dialog").length,
+            quietExpectationVerified: Number(quietAction.verified),
+            quietExpectationElapsedMs: quietActionElapsedMs,
             externalWaitMs: externalWait.elapsedMs,
             elementWaitMs: enabledWait.elapsedMs,
             stableWaitMs: stableWait.elapsedMs,

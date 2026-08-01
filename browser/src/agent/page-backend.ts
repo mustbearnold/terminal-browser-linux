@@ -1589,24 +1589,37 @@ export class ElectronPageBackend implements PageBackend {
     expect?: ActionExpectation,
     signal?: AbortSignal,
   ): Promise<{ identity: PageIdentity; changed: boolean; satisfied: boolean }> {
-    const hasExpectation = !!expect && (
-      expect.url !== undefined ||
-      expect.title !== undefined ||
-      expect.text !== undefined ||
-      expect.element !== undefined
-    );
-    const timeoutMs = hasExpectation ? expect?.timeoutMs ?? 2_000 : 250;
+    const hasPostActionExpectation = hasExpectation(expect);
+    const timeoutMs = hasPostActionExpectation ? expect?.timeoutMs ?? 2_000 : 250;
     const deadline = Date.now() + Math.max(0, timeoutMs);
     let last = { identity: before, changed: false, satisfied: false };
+    let matchedRevision: number | null = null;
+    let matchedSince: number | null = null;
     return this.waitForUpdates(deadline, signal, async () => {
       try {
         throwIfAborted(signal);
         const identity = await this.identity(signal);
         const changed = identityChanged(before, identity);
-        const satisfied = hasExpectation ? await this.matchesExpectation(expect!, identity, signal) : changed;
+        const matched = hasPostActionExpectation ? await this.matchesExpectation(expect!, identity, signal) : false;
+        let satisfied = changed;
+        if (hasPostActionExpectation) {
+          if (!matched) {
+            matchedRevision = null;
+            matchedSince = null;
+            satisfied = false;
+          } else if (expect?.quietMs === undefined) {
+            satisfied = true;
+          } else {
+            if (matchedRevision !== identity.revision) {
+              matchedRevision = identity.revision;
+              matchedSince = Date.now();
+            }
+            satisfied = Date.now() - (matchedSince ?? Date.now()) >= expect.quietMs;
+          }
+        }
         last = { identity, changed, satisfied };
         return {
-          done: satisfied || (changed && !identity.loading),
+          done: satisfied || (!hasPostActionExpectation && changed && !identity.loading),
           value: last,
         };
       } catch (error) {
@@ -2784,7 +2797,8 @@ function hasExpectation(expect: ActionExpectation | undefined): boolean {
     expect.url !== undefined ||
     expect.title !== undefined ||
     expect.text !== undefined ||
-    expect.element !== undefined
+    expect.element !== undefined ||
+    expect.quietMs !== undefined
   );
 }
 
