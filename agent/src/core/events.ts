@@ -59,8 +59,19 @@ export class AgentEventBus {
   }
 
   private replay(afterSequence: number | undefined): AgentEvent[] {
-    if (afterSequence === undefined || afterSequence >= this.latest) return [];
-    const earliestSequence = this.history[0]?.sequence ?? this.latest + 1;
+    if (afterSequence === undefined) return [];
+    const earliestSequence = this.history[0]?.sequence ?? (this.latest > 0 ? this.latest + 1 : 1);
+    if (afterSequence > this.latest) {
+      throw new AgentError("EVENT_GAP", "event cursor is ahead of the current stream", {
+        retryable: true,
+        details: {
+          afterSequence,
+          earliestSequence,
+          latestSequence: this.latest,
+        },
+      });
+    }
+    if (afterSequence === this.latest) return [];
     if (afterSequence < earliestSequence - 1) {
       throw new AgentError("EVENT_GAP", "event history no longer contains the requested cursor", {
         retryable: true,

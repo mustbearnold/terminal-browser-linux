@@ -46,6 +46,23 @@ test("rejects a cursor older than retained event history", () => {
   subscription.unsubscribe();
 });
 
+test("rejects a cursor from a newer event stream", () => {
+  const bus = new AgentEventBus();
+
+  assert.throws(
+    () => bus.subscribe(() => {}, { afterSequence: 1 }),
+    (error: unknown) => {
+      assert.equal((error as { code?: string }).code, "EVENT_GAP");
+      assert.deepEqual((error as { details?: unknown }).details, {
+        afterSequence: 1,
+        earliestSequence: 1,
+        latestSequence: 0,
+      });
+      return true;
+    },
+  );
+});
+
 function event(sequence: number): AgentEvent {
   return {
     kind: "event",
