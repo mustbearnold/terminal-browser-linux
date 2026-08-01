@@ -33,6 +33,8 @@ import type {
   PageDialogResult,
   PageId,
   PageIdentity,
+  PageQueryOptions,
+  PageQueryResult,
   PageSnapshot,
   PageSnapshotWindow,
   SnapshotDeltaCapture,
@@ -283,6 +285,7 @@ export class ElectronPageBackend implements PageBackend {
     locator: Locator,
     options?: LocatorResolutionOptions,
     signal?: AbortSignal,
+    maxCandidates = LIVE_LOCATOR_MAX_CANDIDATES,
   ): Promise<LiveLocatorResult> {
     const frames = await this.controller.agentFrames();
     const includeHidden = options?.includeHidden === true;
@@ -294,7 +297,7 @@ export class ElectronPageBackend implements PageBackend {
         locator,
         frameId,
         includeHidden,
-        LIVE_LOCATOR_MAX_CANDIDATES,
+        maxCandidates,
       );
       try {
         const raw = frame.parentId === null
@@ -324,10 +327,10 @@ export class ElectronPageBackend implements PageBackend {
       candidatesTruncated ||= value.candidatesTruncated === true;
       hiddenCandidatesTruncated ||= value.hiddenCandidatesTruncated === true;
       for (const node of value.candidates ?? []) {
-        if (candidates.length < LIVE_LOCATOR_MAX_CANDIDATES) candidates.push(node);
+        if (candidates.length < maxCandidates) candidates.push(node);
       }
       for (const node of value.hiddenCandidates ?? []) {
-        if (hiddenCandidates.length < LIVE_LOCATOR_MAX_CANDIDATES) hiddenCandidates.push(node);
+        if (hiddenCandidates.length < maxCandidates) hiddenCandidates.push(node);
       }
     }
     return {
@@ -363,6 +366,44 @@ export class ElectronPageBackend implements PageBackend {
         url: frame.url,
         origin: frame.origin,
       })),
+    };
+  }
+
+  async query(
+    locator: Locator,
+    options?: PageQueryOptions,
+    signal?: AbortSignal,
+  ): Promise<Omit<PageQueryResult, "snapshotId">> {
+    throwIfAborted(signal);
+    const before = await this.identity(signal);
+    const matches = await this.liveLocatorMatches(
+      locator,
+      { includeHidden: options?.includeHidden === true },
+      signal,
+      options?.limit ?? LIVE_LOCATOR_MAX_CANDIDATES,
+    );
+    if (matches.invalid) throw new AgentError("INVALID_REQUEST", "invalid CSS locator");
+    throwIfAborted(signal);
+    const after = await this.identity(signal);
+    if (before.documentId !== after.documentId || before.revision !== after.revision) {
+      throw new AgentError("STALE_SNAPSHOT", "page changed while the live query was being read", {
+        retryable: true,
+      });
+    }
+    return {
+      pageId: this.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
+      locator,
+      url: after.url,
+      title: after.title,
+      rootFrameId: MAIN_FRAME_ID,
+      nodes: matches.candidates ?? [],
+      matchCount: matches.candidateCount ?? 0,
+      hiddenNodes: matches.hiddenCandidates ?? [],
+      hiddenMatchCount: matches.hiddenCandidateCount ?? 0,
+      truncated: matches.candidatesTruncated === true,
+      hiddenTruncated: matches.hiddenCandidatesTruncated === true,
     };
   }
 

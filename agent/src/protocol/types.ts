@@ -26,6 +26,7 @@ export type AgentCapability =
   | "snapshot.read"
   | "snapshot.window"
   | "page.frames"
+  | "page.query"
   | "page.read"
   | "page.act"
   | "page.act.batch"
@@ -84,6 +85,11 @@ export interface SnapshotOptions {
   maxNodes?: number;
 }
 
+export interface PageQueryOptions {
+  includeHidden?: boolean;
+  limit?: number;
+}
+
 export interface SnapshotWindowOptions {
   interactiveOnly?: boolean;
   includeGeometry?: boolean;
@@ -125,6 +131,19 @@ export interface SnapshotNode {
   enabled: boolean;
   focusable: boolean;
   attributes?: Record<string, string>;
+}
+
+export interface PageQueryResult extends SnapshotToken {
+  locator: Locator;
+  url: string;
+  title: string;
+  rootFrameId: FrameId;
+  nodes: readonly SnapshotNode[];
+  matchCount: number;
+  hiddenNodes: readonly SnapshotNode[];
+  hiddenMatchCount: number;
+  truncated: boolean;
+  hiddenTruncated: boolean;
 }
 
 export interface SnapshotToken {
@@ -372,6 +391,12 @@ export type AgentRequest =
   | (AgentRequestEnvelope & { op: "pages.activate"; pageId: PageId })
   | (AgentRequestEnvelope & { op: "pages.close"; pageId: PageId })
   | (AgentRequestEnvelope & { op: "page.frames"; pageId: PageId })
+  | (AgentRequestEnvelope & {
+      op: "page.query";
+      pageId: PageId;
+      locator: Locator;
+      options?: PageQueryOptions;
+    })
   | (AgentRequestEnvelope & { op: "page.snapshot"; pageId: PageId; options?: SnapshotOptions })
   | (AgentRequestEnvelope & {
       op: "page.snapshot.window";

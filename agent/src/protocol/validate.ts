@@ -82,6 +82,17 @@ function validateSnapshotOptions(value: unknown): void {
   if (options.maxNodes !== undefined) requirePositiveInteger(options.maxNodes, "options.maxNodes");
 }
 
+function validatePageQueryOptions(value: unknown): void {
+  const options = requireObject(value, "options");
+  optionalBoolean(options, "includeHidden", "options.includeHidden");
+  if (options.limit !== undefined) {
+    requirePositiveInteger(options.limit, "options.limit");
+    if (Number(options.limit) > 256) {
+      throw new AgentError("INVALID_MESSAGE", "options.limit must be at most 256");
+    }
+  }
+}
+
 function validateSnapshotWindowOptions(value: unknown): void {
   const options = requireObject(value, "options");
   optionalBoolean(options, "interactiveOnly", "options.interactiveOnly");
@@ -315,6 +326,7 @@ function validateRequest(message: Record<string, unknown>): void {
     case "pages.activate":
     case "pages.close":
     case "page.frames":
+    case "page.query":
     case "page.snapshot":
     case "page.snapshot.window":
     case "page.snapshot.delta":
@@ -333,6 +345,10 @@ function validateRequest(message: Record<string, unknown>): void {
   }
 
   if (op === "page.snapshot" && message.options !== undefined) validateSnapshotOptions(message.options);
+  if (op === "page.query") {
+    validateLocator(message.locator, "locator");
+    if (message.options !== undefined) validatePageQueryOptions(message.options);
+  }
   if (op === "page.snapshot.window") {
     if (message.options !== undefined) validateSnapshotWindowOptions(message.options);
     if (message.cursor !== undefined) validateSnapshotWindowCursor(message.cursor, "cursor");

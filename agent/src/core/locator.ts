@@ -12,6 +12,15 @@ export interface SnapshotView {
   truncated?: boolean;
 }
 
+export interface SnapshotQueryResult {
+  candidates: readonly SnapshotNode[];
+  candidateCount: number;
+  hiddenCandidates: readonly SnapshotNode[];
+  hiddenCandidateCount: number;
+  candidatesTruncated: boolean;
+  hiddenCandidatesTruncated: boolean;
+}
+
 export interface ResolvedTarget {
   ref: SnapshotRef;
   node: SnapshotNode;
@@ -23,6 +32,31 @@ export interface LocatorResolutionOptions {
 
 export interface LocatorResolver {
   resolve(target: Target, snapshot: SnapshotView, options?: LocatorResolutionOptions): ResolvedTarget;
+}
+
+export function querySnapshot(
+  locator: Locator,
+  snapshot: SnapshotView,
+  options: LocatorResolutionOptions & { limit?: number } = {},
+): SnapshotQueryResult {
+  const limit = options.limit ?? 32;
+  const matchesInSnapshot = snapshot.nodes.filter((node) => matches(locator, node));
+  const hiddenMatches = matchesInSnapshot.filter((node) => !node.visible);
+  const visibleMatches = options.includeHidden === true
+    ? matchesInSnapshot
+    : matchesInSnapshot.filter((node) => node.visible);
+  const candidates = visibleMatches.slice(0, limit);
+  const hiddenCandidates = options.includeHidden === true ? [] : hiddenMatches.slice(0, limit);
+  return {
+    candidates,
+    candidateCount: visibleMatches.length,
+    hiddenCandidates,
+    hiddenCandidateCount: options.includeHidden === true ? 0 : hiddenMatches.length,
+    candidatesTruncated: candidates.length < visibleMatches.length || snapshot.truncated === true,
+    hiddenCandidatesTruncated: options.includeHidden === true
+      ? false
+      : hiddenCandidates.length < hiddenMatches.length || snapshot.truncated === true,
+  };
 }
 
 export class SnapshotLocatorResolver implements LocatorResolver {

@@ -162,6 +162,15 @@ test("validates nested agent request shapes at the wire boundary", () => {
   });
   assert.equal(window.kind, "request");
 
+  const query = parseAgentMessage({
+    ...listRequest(),
+    op: "page.query",
+    pageId: "page-1",
+    locator: { kind: "role", role: "button", name: "Continue", exact: true },
+    options: { includeHidden: true, limit: 16 },
+  });
+  assert.equal(query.kind, "request");
+
   assert.throws(
     () => parseAgentMessage({
       ...listRequest(),
@@ -264,6 +273,8 @@ test("validates nested agent request shapes at the wire boundary", () => {
   invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, output: { snapshot: "delta" } });
   invalid({ op: "page.act.batch", pageId: "page-1", steps: [] });
   invalid({ op: "page.act.batch", pageId: "page-1", steps: [{ action: { type: "click" } }] });
+  invalid({ op: "page.query", pageId: "page-1" });
+  invalid({ op: "page.query", pageId: "page-1", locator: { kind: "role", role: "button" }, options: { limit: 257 } });
   invalid({
     op: "page.act",
     pageId: "page-1",

@@ -1,6 +1,6 @@
 import { RevisionLedger } from "./revisions";
 import { throwIfAborted } from "./cancellation";
-import { SnapshotLocatorResolver } from "./locator";
+import { querySnapshot, SnapshotLocatorResolver } from "./locator";
 import { AgentError } from "../protocol/errors";
 import { applySnapshotDelta, diffSnapshots } from "./snapshots";
 import type { EventSubscription, EventSubscriptionOptions } from "./events";
@@ -22,10 +22,13 @@ import type {
   PageCapture,
   PageDialogResult,
   PageFrameSnapshot,
+  PageQueryOptions,
+  PageQueryResult,
   PageSnapshot,
   PageSnapshotWindow,
   PageSnapshotDelta,
   PageOutputOptions,
+  Locator,
   SnapshotOptions,
   SnapshotToken,
   SnapshotWindowCursor,
@@ -64,6 +67,11 @@ export interface PageBackend {
     options?: SnapshotOptions,
     signal?: AbortSignal,
   ): Promise<SnapshotDeltaCapture | undefined>;
+  query?(
+    locator: Locator,
+    options?: PageQueryOptions,
+    signal?: AbortSignal,
+  ): Promise<Omit<PageQueryResult, "snapshotId">>;
   capture?(options?: CaptureOptions, signal?: AbortSignal): Promise<PageCapture>;
   act(
     action: AgentAction,
@@ -97,6 +105,11 @@ export interface PageSession {
     options?: LocatorResolutionOptions,
   ): Promise<ResolvedTarget>;
   frames(signal?: AbortSignal): Promise<PageFrameSnapshot>;
+  query(
+    locator: Locator,
+    options?: PageQueryOptions,
+    signal?: AbortSignal,
+  ): Promise<PageQueryResult>;
   snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<PageSnapshot>;
   snapshotWindow?(
     options?: SnapshotWindowOptions,
@@ -192,6 +205,36 @@ export class RevisionedPageSession implements PageSession {
     return frames;
   }
 
+  async query(
+    locator: Locator,
+    options?: PageQueryOptions,
+    signal?: AbortSignal,
+  ): Promise<PageQueryResult> {
+    throwIfAborted(signal);
+    const normalizedOptions = normalizePageQueryOptions(options);
+    const captured = this.backend.query
+      ? await this.backend.query(locator, normalizedOptions, signal)
+      : await this.queryFromSnapshot(locator, normalizedOptions, signal);
+    throwIfAborted(signal);
+    const state = this.ledger.synchronize(captured.pageId, captured.documentId, captured.revision);
+    if (
+      captured.pageId !== this.pageId ||
+      captured.nodes.length > normalizedOptions.limit ||
+      captured.hiddenNodes.length > normalizedOptions.limit ||
+      captured.matchCount < captured.nodes.length ||
+      captured.hiddenMatchCount < captured.hiddenNodes.length
+    ) {
+      throw new AgentError("INTERNAL_ERROR", "query backend returned an invalid result");
+    }
+    return {
+      ...captured,
+      pageId: this.pageId,
+      documentId: state.documentId,
+      revision: state.revision,
+      snapshotId: asSnapshotId(`${this.pageId}:query:${++this.snapshotSequence}`),
+    };
+  }
+
   async snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<PageSnapshot> {
     throwIfAborted(signal);
     const captured = await this.backend.snapshot(options, signal);
@@ -204,6 +247,30 @@ export class RevisionedPageSession implements PageSession {
     };
     this.rememberSnapshot(snapshot, options);
     return snapshot;
+  }
+
+  private async queryFromSnapshot(
+    locator: Locator,
+    options: PageQueryOptions & { limit: number },
+    signal?: AbortSignal,
+  ): Promise<Omit<PageQueryResult, "snapshotId">> {
+    const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
+    const matches = querySnapshot(locator, snapshot, options);
+    return {
+      pageId: snapshot.pageId,
+      documentId: snapshot.documentId,
+      revision: snapshot.revision,
+      locator,
+      url: snapshot.url,
+      title: snapshot.title,
+      rootFrameId: snapshot.rootFrameId,
+      nodes: matches.candidates,
+      matchCount: matches.candidateCount,
+      hiddenNodes: matches.hiddenCandidates,
+      hiddenMatchCount: matches.hiddenCandidateCount,
+      truncated: matches.candidatesTruncated,
+      hiddenTruncated: matches.hiddenCandidatesTruncated,
+    };
   }
 
   async snapshotWindow(
@@ -602,6 +669,19 @@ function normalizeBatchError(error: unknown) {
 
 const DEFAULT_SNAPSHOT_WINDOW_LIMIT = 128;
 const MAX_SNAPSHOT_WINDOW_LIMIT = 1000;
+const DEFAULT_PAGE_QUERY_LIMIT = 32;
+const MAX_PAGE_QUERY_LIMIT = 256;
+
+function normalizePageQueryOptions(options?: PageQueryOptions): PageQueryOptions & { limit: number } {
+  const limit = options?.limit ?? DEFAULT_PAGE_QUERY_LIMIT;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_PAGE_QUERY_LIMIT) {
+    throw new AgentError("INVALID_REQUEST", `page query limit must be between 1 and ${MAX_PAGE_QUERY_LIMIT}`);
+  }
+  return {
+    includeHidden: options?.includeHidden === true,
+    limit,
+  };
+}
 
 function snapshotOptionsKey(options?: SnapshotOptions): string {
   return JSON.stringify({

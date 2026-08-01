@@ -41,6 +41,8 @@ export function operationCapability(request: AgentRequest): AgentCapability | un
       return "pages.close";
     case "page.frames":
       return "page.frames";
+    case "page.query":
+      return "page.query";
     case "page.snapshot":
       return "snapshot.read";
     case "page.snapshot.window":

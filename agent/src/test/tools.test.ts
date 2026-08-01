@@ -36,6 +36,14 @@ test("validates and dispatches structured calls through the typed client", async
   assert.equal(snapshot.pageId, FIXTURE_PAGE_ID);
   assert.equal(snapshot.nodes.some((node) => node.name === "Fixture content"), true);
 
+  const query = await tools.callTool("terminal_browser_page_query", {
+    pageId: String(FIXTURE_PAGE_ID),
+    locator: { kind: "role", role: "textbox", name: "Name", exact: true },
+    options: { limit: 1 },
+  });
+  assert.equal(query.matchCount, 1);
+  assert.equal(query.nodes.length, 1);
+
   const node = await tools.callTool("terminal_browser_page_read", {
     pageId: String(FIXTURE_PAGE_ID),
     target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } },

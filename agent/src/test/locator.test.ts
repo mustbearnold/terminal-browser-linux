@@ -11,7 +11,7 @@ import {
   asSnapshotRef,
   type PageSnapshot,
 } from "../protocol/types";
-import { SnapshotLocatorResolver } from "../core/locator";
+import { querySnapshot, SnapshotLocatorResolver } from "../core/locator";
 
 function snapshot(): PageSnapshot {
   const pageId = asPageId("page-1");
@@ -109,6 +109,23 @@ test("resolves hidden locator candidates only when requested", () => {
   });
   const result = new SnapshotLocatorResolver().resolve(target, { nodes: [hidden] }, { includeHidden: true });
   assert.equal(result.ref, "hidden");
+});
+
+test("bounds snapshot query results while preserving hidden-match counts", () => {
+  const base = snapshot();
+  const hidden = { ...base.nodes[0], ref: asSnapshotRef("hidden"), visible: false };
+  const target = { kind: "role" as const, role: "button", name: "Continue", exact: true };
+  const bounded = querySnapshot(target, { nodes: [base.nodes[0], hidden] }, { limit: 1 });
+  assert.equal(bounded.candidateCount, 1);
+  assert.equal(bounded.candidates.length, 1);
+  assert.equal(bounded.hiddenCandidateCount, 1);
+  assert.equal(bounded.hiddenCandidates.length, 1);
+  assert.equal(bounded.candidatesTruncated, false);
+  const inclusive = querySnapshot(target, { nodes: [base.nodes[0], hidden] }, { includeHidden: true, limit: 2 });
+  assert.equal(inclusive.candidateCount, 2);
+  assert.equal(inclusive.candidates.length, 2);
+  assert.equal(inclusive.hiddenCandidateCount, 0);
+  assert.equal(inclusive.hiddenCandidatesTruncated, false);
 });
 
 test("matches the complete semantic wait state", () => {

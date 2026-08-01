@@ -46,6 +46,7 @@ export interface AgentToolOperationMap {
   terminal_browser_pages_activate: "pages.activate";
   terminal_browser_pages_close: "pages.close";
   terminal_browser_page_frames: "page.frames";
+  terminal_browser_page_query: "page.query";
   terminal_browser_page_snapshot: "page.snapshot";
   terminal_browser_page_snapshot_window: "page.snapshot.window";
   terminal_browser_page_snapshot_delta: "page.snapshot.delta";
@@ -97,6 +98,11 @@ export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
   tool("terminal_browser_pages_activate", "Make a browser page the active page.", "pages.activate", "pages.activate", pageInput()),
   tool("terminal_browser_pages_close", "Close a browser page.", "pages.close", "pages.close", pageInput()),
   tool("terminal_browser_page_frames", "Read the current frame tree for a page.", "page.frames", "page.frames", pageInput()),
+  tool("terminal_browser_page_query", "Find a bounded set of live semantic DOM matches at one revision.", "page.query", "page.query", object({
+    pageId: string("Page identifier."),
+    locator: locatorSchema(),
+    options: pageQueryOptions(),
+  }, ["pageId", "locator"])),
   tool("terminal_browser_page_snapshot", "Read a semantic DOM snapshot.", "page.snapshot", "snapshot.read", object({
     pageId: string("Page identifier."),
     options: snapshotOptions(),
@@ -319,6 +325,13 @@ function snapshotOptions(): AgentToolSchema {
     includeGeometry: boolean("Include element geometry."),
     includeText: boolean("Include element text."),
     maxNodes: number("Maximum nodes to include."),
+  });
+}
+
+function pageQueryOptions(): AgentToolSchema {
+  return object({
+    includeHidden: boolean("Include hidden matches in nodes."),
+    limit: number("Maximum matches to return."),
   });
 }
 

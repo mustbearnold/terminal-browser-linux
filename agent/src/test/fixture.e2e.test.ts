@@ -9,6 +9,7 @@ import type {
   PageSnapshot,
   PageSnapshotWindow,
   PageSnapshotDelta,
+  PageQueryResult,
   SnapshotNode,
 } from "../protocol/types";
 import {
@@ -108,6 +109,19 @@ test("runs the deterministic agent control contract", async () => {
   );
   assert.equal(snapshot.nodes.some((node) => node.role === "generic"), true);
 
+  const query = result<PageQueryResult>(await router.handle(
+    request("page.query", {
+      pageId: FIXTURE_PAGE_ID,
+      locator: { kind: "role", role: "textbox", name: "Name", exact: true },
+      options: { limit: 1 },
+    }),
+    context,
+  ));
+  assert.equal(query.matchCount, 1);
+  assert.equal(query.nodes.length, 1);
+  assert.equal(query.nodes[0].name, "Name");
+  assert.equal(query.truncated, false);
+
   const firstWindow = result<PageSnapshotWindow>(await router.handle(
     request("page.snapshot.window", {
       pageId: FIXTURE_PAGE_ID,
@@ -183,8 +197,8 @@ test("runs the deterministic agent control contract", async () => {
     await router.handle(
       request("page.read", {
         pageId: FIXTURE_PAGE_ID,
-        target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } },
-        token: token(snapshot),
+        target: { ref: query.nodes[0].ref },
+        token: token(query),
       }),
       context,
     ),

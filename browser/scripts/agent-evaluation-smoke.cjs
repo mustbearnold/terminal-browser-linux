@@ -253,6 +253,48 @@ function batchScenarios(pageId) {
   }];
 }
 
+function queryScenarios(pageId) {
+  return [{
+    id: "live-query-bounds-dynamic-candidates",
+    name: "live-query-bounds-dynamic-candidates",
+    async run(client) {
+      const broad = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "Large", exact: false },
+        options: { limit: 5 },
+      });
+      const tail = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "Tail action", exact: true },
+        options: { limit: 1 },
+      });
+      const clicked = await client.call("page.act", {
+        pageId,
+        token: snapshotToken(tail),
+        action: { type: "click", target: { ref: tail.nodes[0]?.ref } },
+        expect: { text: "Tail clicked", timeoutMs: 1_000 },
+        output: { snapshot: "none" },
+      });
+      return {
+        passed: broad.matchCount === 1099
+          && broad.nodes.length === 5
+          && broad.truncated === true
+          && broad.hiddenMatchCount === 0
+          && tail.matchCount === 1
+          && tail.nodes.length === 1
+          && tail.truncated === false
+          && clicked.verified === true,
+        metrics: {
+          queryMatchCount: broad.matchCount,
+          queryCandidates: broad.nodes.length,
+          queryTruncated: Number(broad.truncated),
+          queryAction: Number(clicked.verified),
+        },
+      };
+    },
+  }];
+}
+
 function semanticScenarios(pageId) {
   return [
     {
@@ -1031,6 +1073,7 @@ async function run() {
     const scenarios = [
       ...fixtureScenarios(pageId),
       ...largeWindowScenarios(largePageId),
+      ...queryScenarios(largePageId),
       ...batchScenarios(pageId),
       ...semanticScenarios(pageId),
       ...shadowScenarios(shadowPageId),

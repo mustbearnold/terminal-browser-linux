@@ -61,6 +61,11 @@ Locator failures include bounded candidate summaries, hidden-candidate counts,
 and whether the snapshot was truncated so an agent can recover without blindly
 repeating the same lookup.
 
+Use `page.query` when a locator is expected to match several controls. It reads
+the live DOM at one revision, returns a bounded candidate set plus total and
+hidden-match counts, and gives each returned ref a token that can be passed to
+the next action.
+
 In the live Electron runtime, semantic and CSS locators used by `page.read`,
 `page.act`, `page.wait`, and post-action expectations search the current DOM
 directly across frames and shadow roots. This keeps locator and text search

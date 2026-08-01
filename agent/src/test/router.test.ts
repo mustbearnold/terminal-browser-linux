@@ -61,6 +61,22 @@ function page(): PageSession {
       revision: identity.revision,
       frames: [{ frameId: asFrameId("main"), parentFrameId: null, url: identity.url, origin: "https://example.com" }],
     }),
+    query: async (locator) => ({
+      pageId,
+      documentId: identity.documentId,
+      revision: identity.revision,
+      snapshotId: asSnapshotId("query-1"),
+      locator,
+      url: identity.url,
+      title: identity.title,
+      rootFrameId: asFrameId("main"),
+      nodes: pageSnapshot.nodes,
+      matchCount: pageSnapshot.nodes.length,
+      hiddenNodes: [],
+      hiddenMatchCount: 0,
+      truncated: false,
+      hiddenTruncated: false,
+    }),
     snapshot: async () => pageSnapshot,
     snapshotDelta: async (base) => ({
       pageId,
@@ -112,6 +128,7 @@ function runtime(): AgentRuntime {
       "snapshot.read",
       "snapshot.delta",
       "page.frames",
+      "page.query",
       "page.capture",
       "page.read",
       "page.act",
@@ -216,6 +233,49 @@ test("routes page reads through a live page target resolver when available", asy
   assert.equal(response.ok, true);
   assert.equal(resolved, true);
   assert.equal((response.result as { ref: string }).ref, "r1");
+});
+
+test("routes bounded page queries through the live page resolver", async () => {
+  let receivedLocator: string | undefined;
+  const queriedPage: PageSession = {
+    ...page(),
+    query: async (locator) => {
+      receivedLocator = locator.kind;
+      return {
+        pageId,
+        documentId: identity.documentId,
+        revision: identity.revision,
+        snapshotId: asSnapshotId("query-1"),
+        locator,
+        url: identity.url,
+        title: identity.title,
+        rootFrameId: asFrameId("main"),
+        nodes: pageSnapshot.nodes,
+        matchCount: 4,
+        hiddenNodes: [],
+        hiddenMatchCount: 0,
+        truncated: true,
+        hiddenTruncated: false,
+      };
+    },
+  };
+  const queriedRuntime: AgentRuntime = {
+    ...runtime(),
+    capabilities: () => [...runtime().capabilities(), "page.query"],
+    getPage: (candidate) => (candidate === pageId ? queriedPage : undefined),
+  };
+  const router = new AgentRequestRouter(queriedRuntime);
+  const response = await router.handle(envelope({
+    op: "page.query",
+    pageId,
+    locator: { kind: "role", role: "button", name: "Continue", exact: true },
+    options: { limit: 1 },
+  }));
+
+  assert.equal(response.ok, true);
+  assert.equal(receivedLocator, "role");
+  assert.equal((response.result as { matchCount: number }).matchCount, 4);
+  assert.equal((response.result as { nodes: readonly unknown[] }).nodes.length, 1);
 });
 
 test("rejects actions that the runtime does not advertise", async () => {

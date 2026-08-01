@@ -21,10 +21,13 @@ import {
   type PageDialogResult,
   type PageIdentity,
   type PageFrameSnapshot,
+  type PageQueryOptions,
+  type PageQueryResult,
   type PageSnapshot,
   type PageSnapshotWindow,
   type PageSnapshotDelta,
   type PageId,
+  type Locator,
   type SnapshotNode,
   type SnapshotOptions,
   type SnapshotToken,
@@ -72,6 +75,7 @@ export interface AgentOperationResults {
   "pages.activate": PageIdentity;
   "pages.close": { pageId: PageId };
   "page.frames": PageFrameSnapshot;
+  "page.query": PageQueryResult;
   "page.snapshot": PageSnapshot;
   "page.snapshot.window": PageSnapshotWindow;
   "page.snapshot.delta": PageSnapshotDelta;
@@ -154,6 +158,19 @@ export class AgentClient {
     options?: AgentCallOptions,
   ): Promise<ActionStatusResult> {
     return this.call("page.act.status", { pageId, idempotencyKey }, options);
+  }
+
+  query(
+    pageId: PageId,
+    locator: Locator,
+    queryOptions?: PageQueryOptions,
+    options?: AgentCallOptions,
+  ): Promise<PageQueryResult> {
+    return this.call("page.query", {
+      pageId,
+      locator,
+      ...(queryOptions === undefined ? {} : { options: queryOptions }),
+    }, options);
   }
 
   actBatch(

@@ -121,6 +121,8 @@ export class AgentRequestRouter {
         return { pageId: request.pageId };
       case "page.frames":
         return await this.page(request.pageId).frames(signal);
+      case "page.query":
+        return await this.page(request.pageId).query(request.locator, request.options, signal);
       case "page.snapshot":
         return await this.page(request.pageId).snapshot(request.options, signal);
       case "page.snapshot.window": {
