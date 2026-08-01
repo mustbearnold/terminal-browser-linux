@@ -1,5 +1,6 @@
 export const AGENT_PROTOCOL = "terminal-browser.agent" as const;
 export const AGENT_PROTOCOL_VERSION = 1 as const;
+export const MAX_TARGET_INDEX = 255 as const;
 
 type Brand<T, Name extends string> = T & { readonly __brand: Name };
 
@@ -250,7 +251,9 @@ export type Locator =
   | { kind: "testid"; value: string }
   | { kind: "css"; value: string };
 
-export type Target = { ref: SnapshotRef } | { locator: Locator };
+export type Target =
+  | { ref: SnapshotRef }
+  | { locator: Locator; index?: number; frameId?: FrameId };
 
 export type AgentAction =
   | { type: "click"; target: Target; button?: "left" | "middle" | "right"; clickCount?: number }

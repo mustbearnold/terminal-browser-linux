@@ -2,6 +2,7 @@ import { AgentError } from "./errors";
 import {
   AGENT_PROTOCOL,
   AGENT_PROTOCOL_VERSION,
+  MAX_TARGET_INDEX,
   type AgentMessage,
 } from "./types";
 
@@ -167,8 +168,19 @@ function validateTarget(value: unknown, field: string): void {
   if (hasRef === hasLocator) {
     throw new AgentError("INVALID_MESSAGE", `${field} must contain exactly one of ref or locator`);
   }
-  if (hasRef) requireString(target.ref, `${field}.ref`);
-  else validateLocator(target.locator, `${field}.locator`);
+  if (hasRef) {
+    requireString(target.ref, `${field}.ref`);
+    if (target.index !== undefined || target.frameId !== undefined) {
+      throw new AgentError("INVALID_MESSAGE", `${field}.index and ${field}.frameId require a locator`);
+    }
+    return;
+  }
+  validateLocator(target.locator, `${field}.locator`);
+  optionalNonNegativeInteger(target, "index", `${field}.index`);
+  if (target.index !== undefined && Number(target.index) > MAX_TARGET_INDEX) {
+    throw new AgentError("INVALID_MESSAGE", `${field}.index must be at most ${MAX_TARGET_INDEX}`);
+  }
+  if (target.frameId !== undefined) requireString(target.frameId, `${field}.frameId`);
 }
 
 function validateAction(value: unknown): void {

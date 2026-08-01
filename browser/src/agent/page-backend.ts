@@ -3,6 +3,7 @@ import {
   AGENT_PROTOCOL_VERSION,
   AgentError,
   AgentEventBus,
+  MAX_TARGET_INDEX,
   SnapshotLocatorResolver,
   abortableDelay,
   asDocumentId,
@@ -195,7 +196,7 @@ export class ElectronPageBackend implements PageBackend {
       if (live) return live;
       return this.resolver.resolve(target, snapshot, options);
     }
-    return this.liveLocatorTarget(target.locator, options, signal);
+    return this.liveLocatorTarget(target.locator, options, signal, target.index, target.frameId);
   }
 
   async resolveTarget(
@@ -240,15 +241,23 @@ export class ElectronPageBackend implements PageBackend {
         retryable: true,
       });
     }
-    return this.liveLocatorTarget(target.locator, options, signal);
+    return this.liveLocatorTarget(target.locator, options, signal, target.index, target.frameId);
   }
 
   private async liveLocatorTarget(
     locator: Locator,
     options?: LocatorResolutionOptions,
     signal?: AbortSignal,
+    index?: number,
+    frameId?: string,
   ): Promise<ResolvedTarget> {
-    const matches = await this.liveLocatorMatches(locator, options, signal);
+    if (index !== undefined && (!Number.isSafeInteger(index) || index < 0 || index > MAX_TARGET_INDEX)) {
+      throw new AgentError("INVALID_REQUEST", `target.index must be between 0 and ${MAX_TARGET_INDEX}`);
+    }
+    const maxCandidates = index === undefined
+      ? LIVE_LOCATOR_MAX_CANDIDATES
+      : Math.max(LIVE_LOCATOR_MAX_CANDIDATES, index + 1);
+    const matches = await this.liveLocatorMatches(locator, options, signal, maxCandidates, frameId);
     if (matches.invalid) throw new AgentError("INVALID_REQUEST", "invalid CSS locator");
     const candidates = matches.candidates ?? [];
     const candidateCount = matches.candidateCount ?? candidates.length;
@@ -261,12 +270,25 @@ export class ElectronPageBackend implements PageBackend {
       candidatesTruncated: matches.candidatesTruncated,
       hiddenCandidatesTruncated: matches.hiddenCandidatesTruncated,
       snapshotTruncated: false,
+      targetIndex: index,
+      frameId,
     });
     if (candidateCount === 0) {
-      throw new AgentError("TARGET_NOT_FOUND", "locator matched no live elements", {
-        retryable: true,
-        details,
-      });
+      throw new AgentError(
+        "TARGET_NOT_FOUND",
+        index === undefined ? "locator matched no live elements" : `locator index ${index} matched no live element`,
+        { retryable: true, details },
+      );
+    }
+    if (index !== undefined) {
+      const node = candidates[index];
+      if (!node) {
+        throw new AgentError("TARGET_NOT_FOUND", `locator index ${index} matched no live element`, {
+          retryable: true,
+          details,
+        });
+      }
+      return { ref: node.ref, node };
     }
     if (candidateCount > 1) {
       throw new AgentError("AMBIGUOUS_TARGET", "locator matched multiple live elements", {
@@ -286,8 +308,13 @@ export class ElectronPageBackend implements PageBackend {
     options?: LocatorResolutionOptions,
     signal?: AbortSignal,
     maxCandidates = LIVE_LOCATOR_MAX_CANDIDATES,
+    frameId?: string,
   ): Promise<LiveLocatorResult> {
-    const frames = await this.controller.agentFrames();
+    const frames = (await this.controller.agentFrames()).filter((frame) => {
+      if (frameId === undefined) return true;
+      const protocolFrameId = frame.parentId === null ? "main" : frame.id;
+      return protocolFrameId === String(frameId);
+    });
     const includeHidden = options?.includeHidden === true;
     const values = await Promise.all(frames.map(async (frame) => {
       throwIfAborted(signal);
@@ -1493,7 +1520,7 @@ export class ElectronPageBackend implements PageBackend {
   ): Promise<ResolvedTarget> {
     this.assertToken(token, before.documentId, before.revision);
     if ("locator" in target) {
-      const live = await this.liveLocatorTarget(target.locator, undefined, signal);
+      const live = await this.liveLocatorTarget(target.locator, undefined, signal, target.index, target.frameId);
       const current = await this.identity(signal);
       this.assertToken(token, current.documentId, current.revision);
       return live;

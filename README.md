@@ -69,6 +69,8 @@ the next action.
 Use `page.read` when one control is expected. The result contains the node plus
 the document, revision, and read token that prove which page state was observed;
 that token can be passed to the next action to reject a changed page.
+When a locator is intentionally broad, pass its zero-based `index` and optionally
+the candidate `frameId` from `page.query` to select one match deterministically.
 
 In the live Electron runtime, semantic and CSS locators used by `page.read`,
 `page.act`, `page.wait`, and post-action expectations search the current DOM

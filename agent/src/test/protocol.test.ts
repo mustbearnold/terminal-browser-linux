@@ -125,7 +125,11 @@ test("validates nested agent request shapes at the wire boundary", () => {
     pageId: "page-1",
     action: {
       type: "click",
-      target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } },
+      target: {
+        locator: { kind: "role", role: "button", name: "Continue", exact: true },
+        index: 0,
+        frameId: "frame-1",
+      },
       button: "left",
       clickCount: 2,
     },
@@ -262,6 +266,10 @@ test("validates nested agent request shapes at the wire boundary", () => {
   };
 
   invalid({ op: "page.read", pageId: "page-1", target: { ref: "r1", locator: { kind: "css", value: "button" } } });
+  invalid({ op: "page.read", pageId: "page-1", target: { ref: "r1", index: 0 } });
+  invalid({ op: "page.read", pageId: "page-1", target: { locator: { kind: "role", role: "button" }, index: -1 } });
+  invalid({ op: "page.read", pageId: "page-1", target: { locator: { kind: "role", role: "button" }, index: 256 } });
+  invalid({ op: "page.read", pageId: "page-1", target: { locator: { kind: "role", role: "button" }, frameId: "" } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "scroll", direction: "diagonal" } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "fill", target: { ref: "r1" } } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "reload", bypassCache: "yes" } });

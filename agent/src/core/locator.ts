@@ -62,27 +62,40 @@ export function querySnapshot(
 export class SnapshotLocatorResolver implements LocatorResolver {
   resolve(target: Target, snapshot: SnapshotView, options?: LocatorResolutionOptions): ResolvedTarget {
     if ("ref" in target) return this.resolveRef(target.ref, snapshot);
-    const matchesInSnapshot = snapshot.nodes.filter((node) => matches(target.locator, node));
+    const locatorMatches = snapshot.nodes.filter((node) => matches(target.locator, node));
+    const matchesInSnapshot = target.frameId === undefined
+      ? locatorMatches
+      : locatorMatches.filter((node) => node.frameId === target.frameId);
     const hiddenCandidates = matchesInSnapshot.filter((node) => !node.visible);
     const candidates = options?.includeHidden === true
       ? matchesInSnapshot
       : matchesInSnapshot.filter((node) => node.visible);
+    const details = targetResolutionDetails(candidates, {
+      hiddenCandidates: options?.includeHidden === true ? [] : hiddenCandidates,
+      snapshotTruncated: snapshot.truncated === true,
+      targetIndex: target.index,
+      frameId: target.frameId,
+    });
     if (candidates.length === 0) {
       throw new AgentError("TARGET_NOT_FOUND", "locator matched no snapshot nodes", {
         retryable: true,
-        details: targetResolutionDetails(candidates, {
-          hiddenCandidates: options?.includeHidden === true ? [] : hiddenCandidates,
-          snapshotTruncated: snapshot.truncated === true,
-        }),
+        details,
       });
+    }
+    if (target.index !== undefined) {
+      const candidate = candidates[target.index];
+      if (!candidate) {
+        throw new AgentError("TARGET_NOT_FOUND", `locator index ${target.index} matched no snapshot node`, {
+          retryable: true,
+          details,
+        });
+      }
+      return { ref: candidate.ref, node: candidate };
     }
     if (candidates.length > 1) {
       throw new AgentError("AMBIGUOUS_TARGET", "locator matched multiple snapshot nodes", {
         retryable: true,
-        details: targetResolutionDetails(candidates, {
-          hiddenCandidates: options?.includeHidden === true ? [] : hiddenCandidates,
-          snapshotTruncated: snapshot.truncated === true,
-        }),
+        details,
       });
     }
     return { ref: candidates[0].ref, node: candidates[0] };
@@ -110,6 +123,8 @@ export function targetResolutionDetails(
     hiddenCandidateCount?: number;
     candidatesTruncated?: boolean;
     hiddenCandidatesTruncated?: boolean;
+    targetIndex?: number;
+    frameId?: string;
   } = {},
 ): JsonValue {
   const hiddenCandidates = options.hiddenCandidates ?? [];
@@ -120,6 +135,8 @@ export function targetResolutionDetails(
     hiddenCandidateCount: options.hiddenCandidateCount ?? hiddenCandidates.length,
     hiddenCandidates: hiddenCandidates.slice(0, MAX_DIAGNOSTIC_CANDIDATES).map(candidateDetails),
     snapshotTruncated: options.snapshotTruncated === true,
+    ...(options.targetIndex === undefined ? {} : { targetIndex: options.targetIndex }),
+    ...(options.frameId === undefined ? {} : { frameId: options.frameId }),
     ...(options.candidatesTruncated || candidates.length > MAX_DIAGNOSTIC_CANDIDATES ? { candidatesTruncated: true } : {}),
     ...(options.hiddenCandidatesTruncated || hiddenCandidates.length > MAX_DIAGNOSTIC_CANDIDATES ? { hiddenCandidatesTruncated: true } : {}),
   };

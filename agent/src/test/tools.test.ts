@@ -46,7 +46,11 @@ test("validates and dispatches structured calls through the typed client", async
 
   const read = await tools.callTool("terminal_browser_page_read", {
     pageId: String(FIXTURE_PAGE_ID),
-    target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } },
+    target: {
+      locator: { kind: "role", role: "textbox", name: "Name", exact: true },
+      index: 0,
+      frameId: String(query.nodes[0].frameId),
+    },
   });
   assert.equal(read.node.name, "Name");
   assert.equal(read.revision, 0);

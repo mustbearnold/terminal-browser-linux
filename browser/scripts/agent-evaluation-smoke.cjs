@@ -263,6 +263,13 @@ function queryScenarios(pageId) {
         locator: { kind: "role", role: "button", name: "Large", exact: false },
         options: { limit: 5 },
       });
+      const indexed = await client.call("page.read", {
+        pageId,
+        target: {
+          locator: { kind: "role", role: "button", name: "Large", exact: false },
+          index: 4,
+        },
+      });
       const tail = await client.call("page.query", {
         pageId,
         locator: { kind: "role", role: "button", name: "Tail action", exact: true },
@@ -284,6 +291,7 @@ function queryScenarios(pageId) {
         passed: broad.matchCount === 1099
           && broad.nodes.length === 5
           && broad.truncated === true
+          && indexed.node.attributes?.id === "large-4"
           && broad.hiddenMatchCount === 0
           && tail.matchCount === 1
           && tail.nodes.length === 1
@@ -295,6 +303,7 @@ function queryScenarios(pageId) {
           queryMatchCount: broad.matchCount,
           queryCandidates: broad.nodes.length,
           queryTruncated: Number(broad.truncated),
+          indexedLocatorRead: Number(indexed.node.attributes?.id === "large-4"),
           queryAction: Number(clicked.verified),
           readRevisionBound: Number(read.revision === tail.revision),
         },
@@ -636,6 +645,14 @@ function crossOriginScenarios(pageId) {
       const initial = await client.call("page.snapshot", { pageId, options: { includeGeometry: true } });
       const frameButton = initial.nodes.find((node) => node.name === "Frame action");
       const frameTextbox = initial.nodes.find((node) => node.name === "Frame name");
+      const frameScopedRead = await client.call("page.read", {
+        pageId,
+        target: {
+          locator: { kind: "css", value: "button" },
+          index: 0,
+          frameId: frameButton?.frameId,
+        },
+      });
       const hovered = await client.call("page.act", {
         pageId,
         action: { type: "hover", target: { locator: { kind: "css", value: 'button[aria-label="Frame action"]' } } },
@@ -703,6 +720,7 @@ function crossOriginScenarios(pageId) {
         const lifecycleTransitions = lifecycleEvents.filter((event) => ["navigated", "detached", "attached"].includes(event.data?.type));
         const passed = Boolean(childFrame && frameButton?.frameId && frameButton.frameId !== "main")
           && frameTextbox?.frameId === frameButton.frameId && frameButton.box?.width > 0
+          && frameScopedRead.node.ref === frameButton.ref
           && hovered.verified && scrolled.verified && selected.proof?.value === "two"
           && checked.proof?.value === "true" && filled.verified && typed.proof?.value === "Ada Lovelace"
           && clicked.verified && retry.replayed === true && dynamic?.frameId === frameButton.frameId
@@ -712,6 +730,7 @@ function crossOriginScenarios(pageId) {
           passed,
           metrics: {
             crossOriginControls: [frameButton, frameTextbox].filter(Boolean).length,
+            frameScopedIndexedRead: Number(frameScopedRead.node.ref === frameButton?.ref),
             verifiedActions: [hovered, scrolled, selected, checked, filled, typed, clicked].filter((action) => action.verified).length,
             replayedActions: retry.replayed === true ? 1 : 0,
             lifecycleTransitions: lifecycleTransitions.length,

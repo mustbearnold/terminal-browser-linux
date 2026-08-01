@@ -63,6 +63,16 @@ async function run() {
         target: { locator: { kind: "css", value: 'button[aria-label="Frame action"]' } },
       });
       assert.equal(cssRead.node.ref, frameButton.ref, "CSS locator did not resolve the cross-origin frame button");
+      const frameScopedRead = await client.call("page.read", {
+        pageId,
+        target: {
+          locator: { kind: "css", value: "button" },
+          index: 0,
+          frameId: frameButton.frameId,
+        },
+      });
+      assert.equal(frameScopedRead.node.ref, frameButton.ref, "frame-scoped indexed locator did not resolve the frame button");
+      assert.equal(frameScopedRead.revision, initial.revision);
       await assert.rejects(
         client.call("page.read", { pageId, target: { locator: { kind: "css", value: "button" } } }),
         (error) => {

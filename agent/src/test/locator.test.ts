@@ -57,6 +57,69 @@ test("resolves an unambiguous semantic locator", () => {
   assert.equal(result.ref, "r1");
 });
 
+test("selects an indexed locator match within a frame", () => {
+  const base = snapshot();
+  const sameFrame = { ...base.nodes[0], ref: asSnapshotRef("r3") };
+  const otherFrame = { ...base.nodes[0], ref: asSnapshotRef("r4"), frameId: asFrameId("frame-2") };
+  const resolver = new SnapshotLocatorResolver();
+
+  const sameFrameResult = resolver.resolve(
+    {
+      locator: { kind: "role", role: "button", name: "Continue", exact: true },
+      index: 1,
+      frameId: asFrameId("frame-1"),
+    },
+    { nodes: [...base.nodes, sameFrame, otherFrame] },
+  );
+  assert.equal(sameFrameResult.ref, "r3");
+
+  const otherFrameResult = resolver.resolve(
+    {
+      locator: { kind: "role", role: "button", name: "Continue", exact: true },
+      index: 0,
+      frameId: asFrameId("frame-2"),
+    },
+    { nodes: [...base.nodes, sameFrame, otherFrame] },
+  );
+  assert.equal(otherFrameResult.ref, "r4");
+});
+
+test("reports the selector when an indexed locator match is missing", () => {
+  let error: AgentError | undefined;
+  assert.throws(
+    () => new SnapshotLocatorResolver().resolve(
+      {
+        locator: { kind: "role", role: "button", name: "Continue", exact: true },
+        index: 2,
+        frameId: asFrameId("frame-1"),
+      },
+      snapshot(),
+    ),
+    (candidate: unknown) => {
+      error = candidate instanceof AgentError ? candidate : undefined;
+      return error?.code === "TARGET_NOT_FOUND";
+    },
+  );
+  assert.deepEqual(error?.details, {
+    candidateCount: 1,
+    candidateRefs: ["r1"],
+    candidates: [{
+      ref: "r1",
+      frameId: "frame-1",
+      role: "button",
+      name: "Continue",
+      visible: true,
+      enabled: true,
+      focusable: true,
+    }],
+    hiddenCandidateCount: 0,
+    hiddenCandidates: [],
+    snapshotTruncated: false,
+    targetIndex: 2,
+    frameId: "frame-1",
+  });
+});
+
 test("normalizes whitespace and ignores hidden locator candidates", () => {
   const base = snapshot();
   const result = new SnapshotLocatorResolver().resolve(

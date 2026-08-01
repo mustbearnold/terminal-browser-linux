@@ -377,7 +377,11 @@ function targetSchema(): AgentToolSchema {
   return {
     oneOf: [
       object({ ref: string("Snapshot reference.") }, ["ref"]),
-      object({ locator: locatorSchema() }, ["locator"]),
+      object({
+        locator: locatorSchema(),
+        index: number("Zero-based matching candidate index."),
+        frameId: string("Frame identifier returned by page.query or page.frames."),
+      }, ["locator"]),
     ],
   };
 }
