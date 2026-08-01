@@ -50,7 +50,7 @@ const frameHtml = `<!doctype html><meta charset="utf-8"><title>Frame evaluation 
 const crossOriginChildHtml = `<!doctype html><label>Frame name <input aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input type="checkbox" aria-label="Frame enabled">Frame enabled</label><div role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
 const navigationStartHtml = `<!doctype html><meta charset="utf-8"><title>Navigation start</title><button aria-label="Start action">Start action</button><output>Navigation start</output>`;
 const navigationNextHtml = `<!doctype html><meta charset="utf-8"><title>Navigation next</title><label>Recovered name <input aria-label="Recovered name"></label><button aria-label="Next action" onclick="document.querySelector('output').textContent='Next clicked'">Next action</button><output>Next ready</output>`;
-const eventHtml = `<!doctype html><meta charset="utf-8"><title>Native event fixture</title><button aria-label="Emit console" onclick="console.warn('agent console probe')">Emit console</button>`;
+const eventHtml = `<!doctype html><meta charset="utf-8"><title>Native event fixture</title><button aria-label="Emit console" onclick="console.warn('agent console probe')">Emit console</button><button aria-label="Emit dialog" onclick="alert('agent dialog probe')">Emit dialog</button>`;
 
 async function expectCode(promise, code) {
   await assert.rejects(promise, (error) => error && error.code === code);
@@ -441,12 +441,12 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
       const events = [];
       let downloadedPath;
       const unsubscribe = client.onEvent((event) => {
-        if (["console", "download", "page.error"].includes(event.event)) events.push(event);
+        if (["console", "dialog", "download", "page.error"].includes(event.event)) events.push(event);
       });
       try {
         await client.call("page.wait", { pageId: eventPageId, condition: { type: "text", value: "Emit console" }, timeoutMs: 3_000 });
         await client.call("page.wait", { pageId: downloadPageId, condition: { type: "text", value: "Download file" }, timeoutMs: 3_000 });
-        await client.observe(eventPageId, ["console", "page.error"]);
+        await client.observe(eventPageId, ["console", "dialog", "page.error"]);
         await client.observe(downloadPageId, ["download"]);
         await client.call("pages.activate", { pageId: eventPageId });
         await client.call("page.act", {
@@ -456,6 +456,27 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
         const consoleEvent = await waitFor(() => events.find(
           (event) => event.event === "console" && event.data?.message === "agent console probe",
         ));
+        await client.call("page.act", {
+          pageId: eventPageId,
+          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Emit dialog", exact: true } } },
+        });
+        const dialogEvent = await waitFor(() => events.find(
+          (event) => event.event === "dialog" && event.data?.message === "agent dialog probe",
+        ));
+        const dialogCountBeforeNavigation = events.filter((event) => event.event === "dialog").length;
+        await client.call("page.act", {
+          pageId: eventPageId,
+          action: { type: "navigate", url: dataUrl(eventHtml) },
+          expect: { title: "Native event fixture", text: "Emit dialog", timeoutMs: 5_000 },
+        });
+        await client.call("page.act", {
+          pageId: eventPageId,
+          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Emit dialog", exact: true } } },
+        });
+        const dialogAfterNavigation = await waitFor(() => {
+          const dialogs = events.filter((event) => event.event === "dialog");
+          return dialogs.length > dialogCountBeforeNavigation ? dialogs[dialogs.length - 1] : undefined;
+        });
         await client.call("pages.activate", { pageId: downloadPageId });
         await client.call("page.act", {
           pageId: downloadPageId,
@@ -475,6 +496,9 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
           (event) => event.event === "page.error" && event.data?.kind === "load",
         ));
         const passed = consoleEvent?.data?.level === "warning"
+          && dialogEvent?.data?.dialogType === "alert"
+          && dialogEvent?.data?.handled === "dismissed"
+          && dialogAfterNavigation?.data?.handled === "dismissed"
           && downloadEvent?.data?.filename === "agent-control-download.txt"
           && downloadEvent?.data?.receivedBytes > 0
           && errorEvent?.data?.mainFrame === true
@@ -483,6 +507,7 @@ function nativeEventScenarios(eventPageId, downloadPageId, failureUrl) {
           passed,
           metrics: {
             consoleEvents: events.filter((event) => event.event === "console").length,
+            dialogEvents: events.filter((event) => event.event === "dialog").length,
             downloadStates: new Set(events.filter((event) => event.event === "download").map((event) => event.data?.state)).size,
             pageErrors: events.filter((event) => event.event === "page.error").length,
           },

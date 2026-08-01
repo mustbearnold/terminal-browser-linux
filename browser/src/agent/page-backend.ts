@@ -1148,6 +1148,10 @@ export class ElectronPageBackend implements PageBackend {
   private handlePageEvent(value: unknown): void {
     if (!value || typeof value !== "object") return;
     const event = value as { event?: unknown; data?: AgentEvent["data"] };
+    if (event.event === "dialog") {
+      this.emit("dialog", event.data);
+      return;
+    }
     if (event.event !== "dom.changed") return;
     const data = event.data && typeof event.data === "object"
       ? event.data as Record<string, unknown>

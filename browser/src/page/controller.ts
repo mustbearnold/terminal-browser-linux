@@ -78,6 +78,16 @@ export type BrowserAgentEvent =
         state: "progressing" | "done" | "failed";
         mimeType: string;
       };
+    }
+  | {
+      type: "dialog";
+      data: {
+        dialogType: "alert" | "confirm" | "prompt" | "beforeunload";
+        message: string;
+        url: string;
+        defaultPrompt?: string;
+        handled: "dismissed";
+      };
     };
 
 export class BrowserController {
@@ -103,6 +113,8 @@ export class BrowserController {
   private readonly frameContexts = new Map<string, number>();
   private cachedTargetId: string | null = null;
   private emitHandlers = new Map<string, (data: unknown) => void>();
+  private dialogInterceptorReady: Promise<void> | null = null;
+  private dialogInterceptorInstalled = false;
   private device: DeviceSpec | null = null;
   private defaultUserAgent = "";
   private readonly onDisplayChange = () => {
@@ -166,7 +178,7 @@ export class BrowserController {
         sandbox: true,
         nodeIntegration: false,
         contextIsolation: true,
-        disableDialogs: true,
+        disableDialogs: false,
         backgroundThrottling: false,
       },
     });
@@ -194,12 +206,15 @@ export class BrowserController {
       }
     });
     this.window.webContents.on("did-start-loading", () => {
+      this.dialogInterceptorReady = null;
+      this.dialogInterceptorInstalled = false;
       this.updateState({ loading: true });
       this.onLifecycleEvent?.({ type: "load", loading: true, url: this.state.url });
     });
     this.window.webContents.on("did-stop-loading", () => {
       this.updateNavigation(false);
       this.onLifecycleEvent?.({ type: "load", loading: false, url: this.state.url });
+      void this.installDialogInterceptor().catch(() => {});
     });
     this.window.webContents.on("did-navigate", (_event, url) => {
       if (urlHost(url) !== urlHost(this.state.url)) this.updateState({ favicon: null });
@@ -415,6 +430,24 @@ export class BrowserController {
         this.frameContexts.clear();
         const frameId = (params as { frameId?: string }).frameId;
         if (frameId) this.onFrameLifecycle?.({ type: "detached", frameId });
+      } else if (method === "Page.javascriptDialogOpening") {
+        const dialog = params as {
+          type?: "alert" | "confirm" | "prompt" | "beforeunload";
+          message?: string;
+          url?: string;
+          defaultPrompt?: string;
+        };
+        this.emitAgentEvent({
+          type: "dialog",
+          data: {
+            dialogType: dialog.type ?? "alert",
+            message: dialog.message ?? "",
+            url: dialog.url ?? "",
+            ...(dialog.defaultPrompt === undefined ? {} : { defaultPrompt: dialog.defaultPrompt }),
+            handled: "dismissed",
+          },
+        });
+        void this.cdp("Page.handleJavaScriptDialog", { accept: false }).catch(() => {});
       }
       if (method !== "Runtime.bindingCalled") return;
       const call = params as { name: string; payload: string };
@@ -445,6 +478,21 @@ export class BrowserController {
     });
   }
 
+  private async installDialogInterceptor(): Promise<void> {
+    if (this.dialogInterceptorInstalled) return;
+    if (!this.dialogInterceptorReady) {
+      this.dialogInterceptorReady = (async () => {
+        await this.attachCdp();
+        await this.window.webContents.executeJavaScript(agentDialogInterceptorScript(), true);
+        this.dialogInterceptorInstalled = true;
+      })().catch((error) => {
+        this.dialogInterceptorReady = null;
+        throw error;
+      });
+    }
+    await this.dialogInterceptorReady;
+  }
+
   cdp(method: string, params?: Record<string, unknown>): Promise<Record<string, unknown>> {
     return this.window.webContents.debugger.sendCommand(method, params) as Promise<
       Record<string, unknown>
@@ -464,7 +512,8 @@ export class BrowserController {
     if (!this.stopped) this.onAgentEvent?.(event);
   }
 
-  runJs(source: string): Promise<unknown> {
+  async runJs(source: string): Promise<unknown> {
+    await this.installDialogInterceptor();
     return this.window.webContents.executeJavaScript(source, true);
   }
 
@@ -486,7 +535,7 @@ export class BrowserController {
   }
 
   async runJsInFrame(frameId: string, source: string): Promise<unknown> {
-    await this.attachCdp();
+    await this.installDialogInterceptor();
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         let contextId = this.frameContexts.get(frameId);
@@ -763,7 +812,38 @@ interface CdpFrameTree {
 }
 
 function consoleLevel(level: number): "verbose" | "info" | "warning" | "error" {
-  return ["verbose", "info", "warning", "error"][level] as "verbose" | "info" | "warning" | "error" ?? "info";
+  const levels = ["verbose", "info", "warning", "error"] as const;
+  return levels[level] ?? "info";
+}
+
+function agentDialogInterceptorScript(): string {
+  return `(() => {
+    const installed = "__terminalBrowserAgentDialogsInstalled";
+    if (window[installed]) return;
+    Object.defineProperty(window, installed, { value: true });
+    const emit = (dialogType, message, defaultPrompt) => {
+      const binding = window.__pixelEmit;
+      if (typeof binding !== "function") return;
+      try {
+        binding(JSON.stringify({
+          channel: "terminal-browser.agent",
+          data: {
+            event: "dialog",
+            data: {
+              dialogType,
+              message: String(message ?? ""),
+              url: location.href,
+              ...(defaultPrompt === undefined ? {} : { defaultPrompt: String(defaultPrompt) }),
+              handled: "dismissed",
+            },
+          },
+        }));
+      } catch {}
+    };
+    window.alert = (message) => { emit("alert", message); };
+    window.confirm = (message) => { emit("confirm", message); return false; };
+    window.prompt = (message, defaultPrompt) => { emit("prompt", message, defaultPrompt); return null; };
+  })()`;
 }
 
 function browserRenderScale(layout: BrowserSurfaceLayout) {
