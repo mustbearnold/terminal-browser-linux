@@ -80,9 +80,11 @@ requiring a full snapshot.
 
 Pass `options.diagnostics: "summary"` when an agent needs bounded search
 telemetry. The result reports whether matching used the live DOM or snapshot
-fallback, plus frames searched, shadow roots searched, and elements scanned. In
-a query batch those counts describe the shared evaluation and are not additive
-per query.
+fallback, plus frames searched, shadow roots searched, and elements scanned. It
+also includes per-query entries with the number of candidate elements evaluated
+and visible or hidden matches found. In a query batch those shared search counts
+are not additive per query; each entry's `index` identifies the requested query,
+and entries are returned only for queries that requested diagnostics.
 
 Use `page.read` when one control is expected. The result contains the node plus
 the document, revision, and read token that prove which page state was observed;

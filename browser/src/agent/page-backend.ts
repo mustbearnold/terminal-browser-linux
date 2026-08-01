@@ -34,6 +34,7 @@ import type {
   PageDialogResult,
   PageId,
   PageIdentity,
+  PageQueryDiagnostic,
   PageQueryDiagnostics,
   PageQueryOptions,
   PageQueryBatchResult,
@@ -137,6 +138,13 @@ type LiveLocatorRequest = {
 type LiveLocatorRuntimeDiagnostics = {
   elementsScanned: number;
   shadowRootsSearched: number;
+  queries: LiveLocatorRuntimeQueryDiagnostics[];
+};
+type LiveLocatorRuntimeQueryDiagnostics = {
+  index: number;
+  elementsEvaluated: number;
+  matchCount: number;
+  hiddenMatchCount: number;
 };
 type LiveLocatorBatchResult = {
   ok: boolean;
@@ -388,11 +396,25 @@ export class ElectronPageBackend implements PageBackend {
     const diagnosticsRequested = queries.some((query) => query.diagnostics);
     let elementsScanned = 0;
     let shadowRootsSearched = 0;
+    const queryDiagnostics = queries.map((query, index): PageQueryDiagnostic | null => (
+      query.diagnostics
+        ? { index, elementsEvaluated: 0, matchCount: 0, hiddenMatchCount: 0 }
+        : null
+    ));
     for (const value of values) {
       if (!value) continue;
       if (diagnosticsRequested && value.raw.diagnostics) {
         elementsScanned += value.raw.diagnostics.elementsScanned;
         shadowRootsSearched += value.raw.diagnostics.shadowRootsSearched;
+        for (const diagnostic of value.raw.diagnostics.queries) {
+          const entry = value.entries[diagnostic.index];
+          if (!entry) continue;
+          const aggregateDiagnostic = queryDiagnostics[entry.index];
+          if (!aggregateDiagnostic) continue;
+          aggregateDiagnostic.elementsEvaluated += diagnostic.elementsEvaluated;
+          aggregateDiagnostic.matchCount += diagnostic.matchCount;
+          aggregateDiagnostic.hiddenMatchCount += diagnostic.hiddenMatchCount;
+        }
       }
       if (value.raw.invalid) {
         for (const { index } of value.entries) aggregate[index] = { ok: false, invalid: true };
@@ -435,6 +457,7 @@ export class ElectronPageBackend implements PageBackend {
           framesSearched: frames.length,
           shadowRootsSearched,
           elementsScanned,
+          queries: queryDiagnostics.filter((diagnostic): diagnostic is PageQueryDiagnostic => diagnostic !== null),
         },
       } : {}),
     };
@@ -2752,7 +2775,8 @@ function liveLocatorBatchScript(
       capturedNodes.set(el, captured);
       return captured;
     };
-    const results = queries.map(({ locator, includeHidden, maxCandidates }) => {
+    const queryDiagnostics = [];
+    const results = queries.map(({ locator, includeHidden, maxCandidates, diagnostics }, queryIndex) => {
       invalid = false;
       let matches = elements;
       if (locator.kind === "css") {
@@ -2788,7 +2812,7 @@ function liveLocatorBatchScript(
         }
       }
       if (invalid) return { ok: false, invalid: true };
-      return {
+      const result = {
         ok: true,
         candidates,
         hiddenCandidates,
@@ -2797,6 +2821,15 @@ function liveLocatorBatchScript(
         candidatesTruncated: candidateCount > candidates.length,
         hiddenCandidatesTruncated: hiddenCandidateCount > hiddenCandidates.length,
       };
+      if (diagnostics) {
+        queryDiagnostics.push({
+          index: queryIndex,
+          elementsEvaluated: matches.length,
+          matchCount: candidateCount,
+          hiddenMatchCount: hiddenCandidateCount,
+        });
+      }
+      return result;
     });
     return {
       ok: true,
@@ -2805,6 +2838,7 @@ function liveLocatorBatchScript(
         diagnostics: {
           elementsScanned: elements.length,
           shadowRootsSearched: Math.max(0, roots.length - 1),
+          queries: queryDiagnostics,
         },
       } : {}),
     };
@@ -3148,6 +3182,17 @@ function isLiveLocatorRuntimeDiagnostics(value: unknown): value is LiveLocatorRu
   const diagnostics = value as Record<string, unknown>;
   return [diagnostics.elementsScanned, diagnostics.shadowRootsSearched].every((entry) =>
     Number.isSafeInteger(entry) && Number(entry) >= 0,
+  ) && Array.isArray(diagnostics.queries) && diagnostics.queries.every(isLiveLocatorRuntimeQueryDiagnostics);
+}
+
+function isLiveLocatorRuntimeQueryDiagnostics(value: unknown): value is LiveLocatorRuntimeQueryDiagnostics {
+  if (!value || typeof value !== "object") return false;
+  const diagnostics = value as Record<string, unknown>;
+  return (
+    Number.isSafeInteger(diagnostics.index) && Number(diagnostics.index) >= 0 &&
+    Number.isSafeInteger(diagnostics.elementsEvaluated) && Number(diagnostics.elementsEvaluated) >= 0 &&
+    Number.isSafeInteger(diagnostics.matchCount) && Number(diagnostics.matchCount) >= 0 &&
+    Number.isSafeInteger(diagnostics.hiddenMatchCount) && Number(diagnostics.hiddenMatchCount) >= 0
   );
 }
 

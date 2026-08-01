@@ -53,6 +53,8 @@ test("validates and dispatches structured calls through the typed client", async
   assert.equal(query.nodes.length, 1);
   assert.equal(query.diagnostics?.mode, "snapshot");
   assert.ok((query.diagnostics?.elementsScanned ?? 0) > 0);
+  assert.equal(query.diagnostics?.queries[0]?.index, 0);
+  assert.equal(query.diagnostics?.queries[0]?.matchCount, 1);
 
   const queryBatch = await tools.callTool("terminal_browser_page_query_batch", {
     pageId: String(FIXTURE_PAGE_ID),
@@ -73,6 +75,8 @@ test("validates and dispatches structured calls through the typed client", async
   assert.equal(queryBatch.queries[0].nodes[0].frameId, queryBatch.queries[1].nodes[0].frameId);
   assert.equal(queryBatch.diagnostics?.mode, "snapshot");
   assert.equal(queryBatch.diagnostics?.queriesEvaluated, 2);
+  assert.deepEqual(queryBatch.diagnostics?.queries.map(({ index }) => index), [0]);
+  assert.equal(queryBatch.diagnostics?.queries[0]?.matchCount, 1);
 
   const read = await tools.callTool("terminal_browser_page_read", {
     pageId: String(FIXTURE_PAGE_ID),

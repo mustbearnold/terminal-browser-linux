@@ -72,6 +72,9 @@ async function run() {
       assert.equal(queryBatch.diagnostics?.queriesEvaluated, 4);
       assert.equal(queryBatch.diagnostics?.framesSearched, 2);
       assert.ok((queryBatch.diagnostics?.elementsScanned ?? 0) > 0);
+      assert.deepEqual(queryBatch.diagnostics?.queries.map(({ index }) => index), [0]);
+      assert.equal(queryBatch.diagnostics?.queries[0]?.matchCount, 3);
+      assert.ok((queryBatch.diagnostics?.queries[0]?.elementsEvaluated ?? 0) > 0);
       assert.equal(queryBatch.queries[0].matchCount, 3);
       assert.equal(queryBatch.queries[0].nodes.every((node) => node.frameId === frameButton.frameId), true);
       assert.equal(queryBatch.queries[0].nodes.some((node) => node.name === "Parent action"), false);
@@ -92,6 +95,8 @@ async function run() {
       assert.equal(diagnosticQuery.diagnostics?.queriesEvaluated, 1);
       assert.equal(diagnosticQuery.diagnostics?.framesSearched, 1);
       assert.ok((diagnosticQuery.diagnostics?.elementsScanned ?? 0) > 0);
+      assert.equal(diagnosticQuery.diagnostics?.queries[0]?.index, 0);
+      assert.equal(diagnosticQuery.diagnostics?.queries[0]?.matchCount, 1);
       const cssRead = await client.call("page.read", {
         pageId,
         target: { locator: { kind: "css", value: 'button[aria-label="Frame action"]' } },

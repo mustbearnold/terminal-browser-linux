@@ -129,6 +129,9 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(query.diagnostics?.mode, "snapshot");
   assert.equal(query.diagnostics?.queriesEvaluated, 1);
   assert.ok((query.diagnostics?.elementsScanned ?? 0) > 0);
+  assert.deepEqual(query.diagnostics?.queries.map(({ index }) => index), [0]);
+  assert.equal(query.diagnostics?.queries[0]?.matchCount, 1);
+  assert.ok((query.diagnostics?.queries[0]?.elementsEvaluated ?? 0) > 0);
 
   const frameScopedQuery = result<PageQueryResult>(await router.handle(
     request("page.query", {
@@ -193,6 +196,8 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(queryBatch.diagnostics?.mode, "snapshot");
   assert.equal(queryBatch.diagnostics?.queriesEvaluated, 2);
   assert.ok((queryBatch.diagnostics?.elementsScanned ?? 0) > 0);
+  assert.deepEqual(queryBatch.diagnostics?.queries.map(({ index }) => index), [0]);
+  assert.equal(queryBatch.diagnostics?.queries[0]?.matchCount, 1);
 
   const firstWindow = result<PageSnapshotWindow>(await router.handle(
     request("page.snapshot.window", {

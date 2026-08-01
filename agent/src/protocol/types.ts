@@ -99,12 +99,20 @@ export interface PageQueryOptions {
   diagnostics?: "summary";
 }
 
+export interface PageQueryDiagnostic {
+  index: number;
+  elementsEvaluated: number;
+  matchCount: number;
+  hiddenMatchCount: number;
+}
+
 export interface PageQueryDiagnostics {
   mode: "live" | "snapshot";
   queriesEvaluated: number;
   framesSearched: number;
   shadowRootsSearched: number;
   elementsScanned: number;
+  queries: readonly PageQueryDiagnostic[];
 }
 
 export interface SnapshotWindowOptions {

@@ -25,6 +25,7 @@ import type {
   PageReadResult,
   PageQueryOptions,
   PageQueryBatchResult,
+  PageQueryDiagnostic,
   PageQueryDiagnostics,
   PageQuerySpec,
   PageQueryResult,
@@ -354,7 +355,15 @@ export class RevisionedPageSession implements PageSession {
       hiddenMatchCount: matches.hiddenCandidateCount,
       truncated: matches.candidatesTruncated,
       hiddenTruncated: matches.hiddenCandidatesTruncated,
-      ...(options.diagnostics === "summary" ? { diagnostics: snapshotQueryDiagnostics(snapshot, 1) } : {}),
+      ...(options.diagnostics === "summary"
+        ? {
+            diagnostics: snapshotQueryDiagnostics(snapshot, 1, [{
+              index: 0,
+              matchCount: matches.candidateCount,
+              hiddenMatchCount: matches.hiddenCandidateCount,
+            }]),
+          }
+        : {}),
     };
   }
 
@@ -363,8 +372,24 @@ export class RevisionedPageSession implements PageSession {
     signal?: AbortSignal,
   ): Promise<Omit<PageQueryBatchResult, "snapshotId">> {
     const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
+    const results = queries.map(({ locator, options }) => {
+      const matches = querySnapshot(locator, snapshot, options);
+      return {
+        locator,
+        nodes: matches.candidates,
+        matchCount: matches.candidateCount,
+        hiddenNodes: matches.hiddenCandidates,
+        hiddenMatchCount: matches.hiddenCandidateCount,
+        truncated: matches.candidatesTruncated,
+        hiddenTruncated: matches.hiddenCandidatesTruncated,
+      };
+    });
     const diagnostics = queries.some(({ options }) => options.diagnostics === "summary")
-      ? snapshotQueryDiagnostics(snapshot, queries.length)
+      ? snapshotQueryDiagnostics(snapshot, queries.length, queries.flatMap(({ options }, index) => (
+          options.diagnostics === "summary"
+            ? [{ index, matchCount: results[index].matchCount, hiddenMatchCount: results[index].hiddenMatchCount }]
+            : []
+        )))
       : undefined;
     return {
       pageId: snapshot.pageId,
@@ -373,18 +398,7 @@ export class RevisionedPageSession implements PageSession {
       url: snapshot.url,
       title: snapshot.title,
       rootFrameId: snapshot.rootFrameId,
-      queries: queries.map(({ locator, options }) => {
-        const matches = querySnapshot(locator, snapshot, options);
-        return {
-          locator,
-          nodes: matches.candidates,
-          matchCount: matches.candidateCount,
-          hiddenNodes: matches.hiddenCandidates,
-          hiddenMatchCount: matches.hiddenCandidateCount,
-          truncated: matches.candidatesTruncated,
-          hiddenTruncated: matches.hiddenCandidatesTruncated,
-        };
-      }),
+      queries: results,
       ...(diagnostics === undefined ? {} : { diagnostics }),
     };
   }
@@ -809,6 +823,7 @@ function normalizePageQueryOptions(options?: PageQueryOptions): PageQueryOptions
 function snapshotQueryDiagnostics(
   snapshot: Pick<PageSnapshot, "nodes" | "rootFrameId">,
   queriesEvaluated: number,
+  queries: readonly Pick<PageQueryDiagnostic, "index" | "matchCount" | "hiddenMatchCount">[],
 ): PageQueryDiagnostics {
   return {
     mode: "snapshot",
@@ -816,6 +831,10 @@ function snapshotQueryDiagnostics(
     framesSearched: new Set([String(snapshot.rootFrameId), ...snapshot.nodes.map((node) => String(node.frameId))]).size,
     shadowRootsSearched: 0,
     elementsScanned: snapshot.nodes.length,
+    queries: queries.map((query) => ({
+      ...query,
+      elementsEvaluated: snapshot.nodes.length,
+    })),
   };
 }
 
