@@ -1,8 +1,15 @@
 import { AgentClient, type AgentClientOptions } from "../client";
 import { AgentRequestRouter, type AgentConnectionContext } from "../core/router";
+import { MemoryTrace, TraceRecorder } from "../core/trace";
 import type { AgentMessage } from "../protocol/types";
 import { FixtureRuntime } from "../test/fixture";
 import type { AgentTransport } from "../transport/types";
+
+export interface FixtureAgentHarness {
+  client: AgentClient;
+  router: AgentRequestRouter;
+  trace: MemoryTrace;
+}
 
 class RouterLoopbackTransport implements AgentTransport {
   private readonly messageListeners = new Set<(message: AgentMessage) => void>();
@@ -67,5 +74,15 @@ class RouterLoopbackTransport implements AgentTransport {
 }
 
 export function createFixtureAgentClient(options: AgentClientOptions = {}): AgentClient {
-  return new AgentClient(new RouterLoopbackTransport(new AgentRequestRouter(new FixtureRuntime())), options);
+  return createFixtureAgentHarness(options).client;
+}
+
+export function createFixtureAgentHarness(options: AgentClientOptions = {}): FixtureAgentHarness {
+  const trace = new MemoryTrace();
+  const router = new AgentRequestRouter(new FixtureRuntime(), new TraceRecorder(trace));
+  return {
+    client: new AgentClient(new RouterLoopbackTransport(router), options),
+    router,
+    trace,
+  };
 }

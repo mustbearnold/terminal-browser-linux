@@ -1,7 +1,8 @@
 import { fixtureScenarios, runAgentEvaluation } from "./evaluation";
-import { createFixtureAgentClient } from "./evaluation/loopback";
+import { createFixtureAgentHarness } from "./evaluation/loopback";
 
-const client = createFixtureAgentClient({ clientId: "evaluation" });
+const harness = createFixtureAgentHarness({ clientId: "evaluation" });
+const client = harness.client;
 
 void (async () => {
   try {
@@ -9,7 +10,10 @@ void (async () => {
     const pages = await client.call("pages.list", {});
     const page = pages.pages[0];
     if (!page) throw new Error("evaluation target did not expose a page");
-    const report = await runAgentEvaluation(client, fixtureScenarios(page.pageId));
+    const report = await runAgentEvaluation(client, fixtureScenarios(page.pageId), {
+      trace: harness.trace,
+      includeTrace: process.argv.includes("--trace"),
+    });
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     if (report.failed > 0) process.exitCode = 1;
   } catch (error) {
