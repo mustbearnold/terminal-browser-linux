@@ -38,8 +38,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Configure Electron sandbox
         run: |
-          ELECTRON_PATH="$(pnpm --filter terminal-browser exec node -p 'require("electron")')"
-          SANDBOX_PATH="$(dirname "$ELECTRON_PATH")/chrome-sandbox"
+          ELECTRON_MODULE="$(pnpm --filter terminal-browser exec node -p 'require.resolve("electron")')"
+          SANDBOX_PATH="$(dirname "$ELECTRON_MODULE")/dist/chrome-sandbox"
           sudo chown root:root "$SANDBOX_PATH"
           sudo chmod 4755 "$SANDBOX_PATH"
       - run: xvfb-run -a pnpm agent:live-smoke
