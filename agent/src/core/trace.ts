@@ -86,7 +86,7 @@ export async function replayTrace(
       throw new Error("agent trace sequence must be strictly increasing");
     }
     previousSequence = entry.sequence;
-    if (entry.direction !== "inbound" || entry.message.kind !== "request") continue;
+    if (entry.message.kind !== "request") continue;
     responses.push(await handle(entry.message));
   }
   return responses;

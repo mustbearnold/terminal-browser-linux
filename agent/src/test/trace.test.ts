@@ -63,6 +63,28 @@ test("records versioned requests, responses, and events that can be replayed", a
   assert.ok(replayed.every((response) => response.ok));
 });
 
+test("replays client-oriented traces as well as server-oriented traces", async () => {
+  const requestMessage = request("pages.list");
+  const response: AgentResponse = {
+    kind: "response",
+    protocol: AGENT_PROTOCOL,
+    version: AGENT_PROTOCOL_VERSION,
+    requestId: requestMessage.requestId,
+    ok: true,
+    result: { pages: [] },
+  };
+  const trace = new MemoryTrace();
+  const recorder = new TraceRecorder(trace, () => 1234);
+  recorder.record("outbound", requestMessage);
+  recorder.record("inbound", response);
+
+  const replayed = await replayTrace(trace.document(), async (replayRequest) => {
+    assert.equal(replayRequest.requestId, requestMessage.requestId);
+    return response;
+  });
+  assert.deepEqual(replayed, [response]);
+});
+
 test("rejects traces from a different version", async () => {
   const requestMessage = request("pages.list");
   const response: AgentResponse = {
