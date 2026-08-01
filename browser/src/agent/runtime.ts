@@ -36,6 +36,7 @@ export class BrowserAgentRuntime implements AgentRuntime {
     return [
       "pages.list",
       "pages.open",
+      "pages.activate",
       "pages.close",
       "snapshot.read",
       "snapshot.delta",
@@ -70,6 +71,13 @@ export class BrowserAgentRuntime implements AgentRuntime {
 
   async openPage(url: string): Promise<PageIdentity> {
     const tab = this.openTab(url);
+    return this.entry(tab).backend.identity();
+  }
+
+  async activatePage(pageId: PageId): Promise<PageIdentity> {
+    const tab = this.tabFor(pageId);
+    if (!tab) throw new AgentError("PAGE_NOT_FOUND", `unknown page: ${pageId}`);
+    this.tabs.activate(tab.id);
     return this.entry(tab).backend.identity();
   }
 

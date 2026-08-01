@@ -100,6 +100,7 @@ function runtime(): AgentRuntime {
   return {
     capabilities: () => [
       "pages.list",
+      "pages.activate",
       "snapshot.read",
       "snapshot.delta",
       "page.frames",
@@ -115,6 +116,7 @@ function runtime(): AgentRuntime {
     listPages: async () => [identity],
     getPage: (candidate) => (candidate === pageId ? page() : undefined),
     openPage: async () => identity,
+    activatePage: async () => identity,
     closePage: async () => {},
   };
 }
@@ -141,6 +143,7 @@ test("routes the first agent vertical slice", async () => {
     base: pageSnapshot,
   }));
   const capture = await router.handle(envelope({ op: "page.capture", pageId, options: { format: "png" } }));
+  const activated = await router.handle(envelope({ op: "pages.activate", pageId }));
   const action = await router.handle(
     envelope({ op: "page.act", pageId, action: { type: "click", target: { ref: asSnapshotRef("r1") } } }),
   );
@@ -167,6 +170,7 @@ test("routes the first agent vertical slice", async () => {
     format: "png",
     data: "fixture-image",
   });
+  assert.deepEqual(activated.result, identity);
   assert.equal((action.result as { verified: boolean }).verified, true);
   assert.equal((wait.result as { satisfied: boolean }).satisfied, true);
 });

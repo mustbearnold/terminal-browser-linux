@@ -58,6 +58,7 @@ export interface AgentOperationResults {
   "request.cancel": { requestId: string; canceled: boolean };
   "pages.list": { pages: readonly PageIdentity[] };
   "pages.open": PageIdentity;
+  "pages.activate": PageIdentity;
   "pages.close": { pageId: PageId };
   "page.frames": PageFrameSnapshot;
   "page.snapshot": PageSnapshot;

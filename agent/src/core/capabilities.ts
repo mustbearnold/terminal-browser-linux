@@ -35,6 +35,8 @@ export function operationCapability(request: AgentRequest): AgentCapability | un
       return "pages.list";
     case "pages.open":
       return "pages.open";
+    case "pages.activate":
+      return "pages.activate";
     case "pages.close":
       return "pages.close";
     case "page.frames":

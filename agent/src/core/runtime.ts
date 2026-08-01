@@ -6,5 +6,6 @@ export interface AgentRuntime {
   listPages(): Promise<readonly PageIdentity[]>;
   getPage(pageId: PageId): PageSession | undefined;
   openPage(url: string): Promise<PageIdentity>;
+  activatePage(pageId: PageId): Promise<PageIdentity>;
   closePage(pageId: PageId): Promise<void>;
 }

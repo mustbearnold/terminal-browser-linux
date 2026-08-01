@@ -21,6 +21,7 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue
 export type AgentCapability =
   | "pages.list"
   | "pages.open"
+  | "pages.activate"
   | "pages.close"
   | "snapshot.read"
   | "page.frames"
@@ -258,6 +259,7 @@ export type AgentRequest =
   | (AgentRequestEnvelope & { op: "request.cancel"; targetRequestId: string })
   | (AgentRequestEnvelope & { op: "pages.list" })
   | (AgentRequestEnvelope & { op: "pages.open"; url: string })
+  | (AgentRequestEnvelope & { op: "pages.activate"; pageId: PageId })
   | (AgentRequestEnvelope & { op: "pages.close"; pageId: PageId })
   | (AgentRequestEnvelope & { op: "page.frames"; pageId: PageId })
   | (AgentRequestEnvelope & { op: "page.snapshot"; pageId: PageId; options?: SnapshotOptions })

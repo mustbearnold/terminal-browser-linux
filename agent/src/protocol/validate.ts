@@ -250,6 +250,7 @@ function validateRequest(message: Record<string, unknown>): void {
     case "pages.open":
       requireString(message.url, "url");
       return;
+    case "pages.activate":
     case "pages.close":
     case "page.frames":
     case "page.snapshot":

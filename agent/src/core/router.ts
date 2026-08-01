@@ -113,6 +113,8 @@ export class AgentRequestRouter {
         return { pages: await this.runtime.listPages() };
       case "pages.open":
         return await this.runtime.openPage(request.url);
+      case "pages.activate":
+        return await this.runtime.activatePage(request.pageId);
       case "pages.close":
         await this.runtime.closePage(request.pageId);
         return { pageId: request.pageId };

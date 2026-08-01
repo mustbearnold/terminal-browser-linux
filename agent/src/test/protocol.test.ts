@@ -136,6 +136,13 @@ test("validates nested agent request shapes at the wire boundary", () => {
   });
   assert.equal(history.kind, "request");
 
+  const activate = parseAgentMessage({
+    ...listRequest(),
+    op: "pages.activate",
+    pageId: "page-1",
+  });
+  assert.equal(activate.kind, "request");
+
   const invalid = (body: Record<string, unknown>) => {
     assert.throws(
       () => parseAgentMessage({ ...listRequest(), ...body }),

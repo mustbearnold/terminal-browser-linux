@@ -398,6 +398,39 @@ function topLevelNavigationScenarios(pageId, urls) {
   }];
 }
 
+function tabActivationScenarios(pageId, otherPageId) {
+  return [{
+    id: "tab-activation-reports-active-page",
+    name: "tab-activation-reports-active-page",
+    async run(client) {
+      const before = await client.call("pages.list", {});
+      const target = before.pages.find((page) => page.pageId === pageId);
+      const other = before.pages.find((page) => page.pageId === otherPageId);
+      if (!target || !other || target.pageId === other.pageId) {
+        return { passed: false, reason: "evaluation did not expose two distinct pages", metrics: { pages: before.pages.length } };
+      }
+      const activated = await client.call("pages.activate", { pageId });
+      const after = await client.call("pages.list", {});
+      const activeTarget = after.pages.find((page) => page.pageId === pageId);
+      const inactiveOther = after.pages.find((page) => page.pageId === otherPageId);
+      const restored = await client.call("pages.activate", { pageId: otherPageId });
+      const final = await client.call("pages.list", {});
+      const inactiveTarget = final.pages.find((page) => page.pageId === pageId);
+      const activeOther = final.pages.find((page) => page.pageId === otherPageId);
+      const passed = activated.active && restored.active
+        && activeTarget?.active === true && inactiveOther?.active === false
+        && inactiveTarget?.active === false && activeOther?.active === true;
+      return {
+        passed,
+        metrics: {
+          pages: before.pages.length,
+          activeReadbacks: Number(activated.active) + Number(restored.active),
+        },
+      };
+    },
+  }];
+}
+
 async function run() {
   const existing = new Set(listSockets());
   const { host, output } = launchHost();
@@ -437,6 +470,7 @@ async function run() {
       ...topLevelNavigationScenarios(navigationPageId, {
         next: `http://127.0.0.1:${navigationServer.port}/next.html`,
       }),
+      ...tabActivationScenarios(pageId, navigationPageId),
     ];
     const report = await runAgentEvaluation(client, scenarios, {
       trace,

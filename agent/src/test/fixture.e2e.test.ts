@@ -40,6 +40,7 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(hello.capabilities.includes("page.act.click"), true);
   assert.equal(hello.capabilities.includes("page.act.fill"), true);
   assert.equal(hello.capabilities.includes("page.act.history"), true);
+  assert.equal(hello.capabilities.includes("pages.activate"), true);
   assert.equal(hello.capabilities.includes("page.act.select"), false);
 
   const negotiated = result<{
@@ -68,6 +69,12 @@ test("runs the deterministic agent control contract", async () => {
 
   const pages = result<{ pages: PageIdentity[] }>(await router.handle(request("pages.list"), context));
   assert.equal(pages.pages[0].pageId, FIXTURE_PAGE_ID);
+
+  const activated = result<PageIdentity>(await router.handle(
+    request("pages.activate", { pageId: FIXTURE_PAGE_ID }),
+    context,
+  ));
+  assert.equal(activated.active, true);
 
   const frames = result<{
     pageId: string;

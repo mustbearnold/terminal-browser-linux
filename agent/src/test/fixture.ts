@@ -46,6 +46,7 @@ export class FixtureRuntime implements AgentRuntime {
     return [
       "pages.list",
       "pages.open",
+      "pages.activate",
       "pages.close",
       "snapshot.read",
       "snapshot.delta",
@@ -74,6 +75,13 @@ export class FixtureRuntime implements AgentRuntime {
   async openPage(url: string): Promise<PageIdentity> {
     if (url !== FIXTURE_URL) throw new AgentError("INVALID_REQUEST", `fixture only accepts ${FIXTURE_URL}`);
     this.closed = false;
+    return this.backend.identity();
+  }
+
+  async activatePage(pageId: PageId): Promise<PageIdentity> {
+    if (pageId !== FIXTURE_PAGE_ID || this.closed) {
+      throw new AgentError("PAGE_NOT_FOUND", `unknown page: ${pageId}`);
+    }
     return this.backend.identity();
   }
 
