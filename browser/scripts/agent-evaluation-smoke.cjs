@@ -239,21 +239,58 @@ function crossOriginScenarios(pageId) {
         idempotencyKey: "evaluation-cross-origin-scroll-1",
         action: { type: "scroll", target: { locator: { kind: "role", role: "region", name: "Frame scroll area", exact: true } }, direction: "down", amount: 60 },
       });
-      const after = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: true } });
-      const dynamic = after.nodes.find((node) => node.name === "Frame dynamic");
-      const passed = Boolean(childFrame && frameButton?.frameId && frameButton.frameId !== "main")
-        && frameTextbox?.frameId === frameButton.frameId && frameButton.box?.width > 0
-        && hovered.verified && scrolled.verified && selected.proof?.value === "two"
-        && checked.proof?.value === "true" && filled.verified && typed.proof?.value === "Ada Lovelace"
-        && clicked.verified && retry.replayed === true && dynamic?.frameId === frameButton.frameId;
-      return {
-        passed,
-        metrics: {
-          crossOriginControls: [frameButton, frameTextbox].filter(Boolean).length,
-          verifiedActions: [hovered, scrolled, selected, checked, filled, typed, clicked].filter((action) => action.verified).length,
-          replayedActions: retry.replayed === true ? 1 : 0,
-        },
-      };
+      const mutated = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
+      const dynamic = mutated.nodes.find((node) => node.name === "Frame dynamic");
+      const lifecycleEvents = [];
+      const unsubscribe = client.onEvent((event) => {
+        if (event.event === "frame.lifecycle") lifecycleEvents.push(event);
+      });
+      try {
+        await client.observe(pageId, ["frame.lifecycle"]);
+        await client.call("page.act", {
+          pageId,
+          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Navigate frame", exact: true } } },
+        });
+        const navigatedFrame = await waitFor(async () => {
+          const tree = await client.frames(pageId);
+          return tree.frames.find((frame) => frame.parentFrameId !== null && frame.url.endsWith("/frame-next.html"));
+        });
+        await client.call("page.act", {
+          pageId,
+          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Remove frame", exact: true } } },
+        });
+        await waitFor(async () => {
+          const tree = await client.frames(pageId);
+          return tree.frames.every((frame) => frame.parentFrameId === null) ? tree : undefined;
+        });
+        await client.call("page.act", {
+          pageId,
+          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Add frame", exact: true } } },
+        });
+        const restoredFrame = await waitFor(async () => {
+          const tree = await client.frames(pageId);
+          return tree.frames.find((frame) => frame.parentFrameId !== null && frame.url.endsWith("/frame-restored.html"));
+        });
+        const lifecycleTransitions = lifecycleEvents.filter((event) => ["navigated", "detached", "attached"].includes(event.data?.type));
+        const passed = Boolean(childFrame && frameButton?.frameId && frameButton.frameId !== "main")
+          && frameTextbox?.frameId === frameButton.frameId && frameButton.box?.width > 0
+          && hovered.verified && scrolled.verified && selected.proof?.value === "two"
+          && checked.proof?.value === "true" && filled.verified && typed.proof?.value === "Ada Lovelace"
+          && clicked.verified && retry.replayed === true && dynamic?.frameId === frameButton.frameId
+          && navigatedFrame?.url.endsWith("/frame-next.html") && restoredFrame?.url.endsWith("/frame-restored.html")
+          && lifecycleTransitions.length >= 3;
+        return {
+          passed,
+          metrics: {
+            crossOriginControls: [frameButton, frameTextbox].filter(Boolean).length,
+            verifiedActions: [hovered, scrolled, selected, checked, filled, typed, clicked].filter((action) => action.verified).length,
+            replayedActions: retry.replayed === true ? 1 : 0,
+            lifecycleTransitions: lifecycleTransitions.length,
+          },
+        };
+      } finally {
+        unsubscribe();
+      }
     },
   }];
 }
@@ -270,7 +307,7 @@ async function run() {
   let crossOriginPageId;
   try {
     childServer = await serve(crossOriginChildHtml);
-    parentServer = await serve(`<!doctype html><meta charset="utf-8"><title>Cross-origin evaluation fixture</title><iframe title="Control frame" src="http://127.0.0.1:${childServer.port}/frame.html"></iframe>`);
+    parentServer = await serve(`<!doctype html><meta charset="utf-8"><title>Cross-origin evaluation fixture</title><button aria-label="Navigate frame" onclick="document.querySelector('iframe').src='http://127.0.0.1:${childServer.port}/frame-next.html'">Navigate frame</button><button aria-label="Remove frame" onclick="document.querySelector('iframe').remove()">Remove frame</button><button aria-label="Add frame" onclick="const frame=document.createElement('iframe');frame.title='Control frame';frame.src='http://127.0.0.1:${childServer.port}/frame-restored.html';document.body.append(frame)">Add frame</button><iframe title="Control frame" src="http://127.0.0.1:${childServer.port}/frame.html"></iframe>`);
     const socket = await waitForSocket(existing, 15_000, output);
     const trace = new MemoryTrace();
     client = await AgentClient.connect(socket, {
@@ -341,6 +378,16 @@ function serve(body) {
 
 function closeServer(entry) {
   return new Promise((resolve) => entry.server.close(() => resolve()));
+}
+
+async function waitFor(check, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    const value = await check();
+    if (value) return value;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error("timed out waiting for evaluation state");
 }
 
 run().catch((error) => {
