@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "agent:build": "pnpm --filter terminal-browser-agent build",
-    "agent:browser-deps": "pnpm --filter pixel-react exec tsc -p tsconfig.json && pnpm --filter pixel-store build && pnpm --filter pixel-terminals build",
+    "agent:browser-deps": "pnpm --filter pixel-react build && pnpm --filter pixel-store build && pnpm --filter pixel-terminals build",
     "agent:check": "pnpm --filter terminal-browser-agent check",
     "agent:e2e": "pnpm --filter terminal-browser-agent test:fixture",
     "agent:eval": "pnpm --filter terminal-browser-agent evaluate",
