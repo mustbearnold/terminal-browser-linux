@@ -598,6 +598,11 @@ function shadowScenarios(pageId) {
       const initial = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
       const shadowButton = initial.nodes.find((node) => node.name === "Shadow action");
       const shadowTextbox = initial.nodes.find((node) => node.name === "Shadow name");
+      const liveShadow = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "Shadow action", exact: true },
+      });
+      const liveShadowButton = liveShadow.nodes[0];
       const filled = await client.call("page.act", {
         pageId,
         action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Shadow name", exact: true } }, value: "Ada" },
@@ -618,8 +623,16 @@ function shadowScenarios(pageId) {
       const after = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
       const dynamic = after.nodes.find((node) => node.name === "Dynamic action");
       const passed = shadowButton?.frameId === "main" && shadowTextbox?.frameId === "main"
+        && Boolean(liveShadowButton?.parent)
         && filled.verified && typed.proof?.value === "Ada Lovelace" && clicked.verified && Boolean(dynamic);
-      return { passed, metrics: { shadowControls: [shadowButton, shadowTextbox].filter(Boolean).length, shadowMutations: dynamic ? 1 : 0 } };
+      return {
+        passed,
+        metrics: {
+          shadowControls: [shadowButton, shadowTextbox].filter(Boolean).length,
+          shadowMutations: dynamic ? 1 : 0,
+          shadowAncestry: Number(Boolean(liveShadowButton?.parent)),
+        },
+      };
     },
   }];
 }

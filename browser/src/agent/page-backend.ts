@@ -2578,7 +2578,16 @@ function refNodeScript(key: string, ref: string): string {
     const includeGeometry = true;
     const includeText = true;
     ${snapshotNodeHelpersScript()}
-    const captured = captureNode(el, null, true);
+    const capturedNodes = new Map();
+    const capture = (candidate) => {
+      if (capturedNodes.has(candidate)) return capturedNodes.get(candidate);
+      const parent = parentFor(candidate);
+      const parentCaptured = parent && parent.nodeType === 1 ? capture(parent) : null;
+      const captured = captureNode(candidate, parentCaptured?.ref ?? null, parentCaptured?.visible ?? true);
+      capturedNodes.set(candidate, captured);
+      return captured;
+    };
+    const captured = capture(el);
     return captured.included && captured.node
       ? { ok: true, node: captured.node }
       : { ok: false };
@@ -2696,8 +2705,12 @@ function liveLocatorBatchScript(
     }
     const capturedNodes = new Map();
     const capture = (el) => {
-      if (!capturedNodes.has(el)) capturedNodes.set(el, captureNode(el, null, true));
-      return capturedNodes.get(el);
+      if (capturedNodes.has(el)) return capturedNodes.get(el);
+      const parent = parentFor(el);
+      const parentCaptured = parent && parent.nodeType === 1 ? capture(parent) : null;
+      const captured = captureNode(el, parentCaptured?.ref ?? null, parentCaptured?.visible ?? true);
+      capturedNodes.set(el, captured);
+      return captured;
     };
     const results = queries.map(({ locator, includeHidden, maxCandidates }) => {
       invalid = false;

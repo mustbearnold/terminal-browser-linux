@@ -74,7 +74,9 @@ up to 32 bounded queries against one revision and returns one shared token, so
 an agent can inspect related controls without separate round trips or mixed
 page state. Each query can independently use `options.frameId` for precise
 cross-frame matching. In the live Electron backend, queries in one batch share
-frame discovery, DOM traversal, and captured-node work.
+frame discovery, DOM traversal, and captured-node work. Live result nodes retain
+composed DOM parent refs, including shadow-root hosts, for local context without
+requiring a full snapshot.
 
 Use `page.read` when one control is expected. The result contains the node plus
 the document, revision, and read token that prove which page state was observed;

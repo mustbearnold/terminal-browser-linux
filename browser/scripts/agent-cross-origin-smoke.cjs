@@ -73,15 +73,18 @@ async function run() {
       assert.equal(queryBatch.queries[0].nodes.some((node) => node.name === "Parent action"), false);
       assert.equal(queryBatch.queries[1].nodes[0]?.ref, frameTextbox.ref);
       assert.equal(queryBatch.queries[0].nodes[0]?.frameId, queryBatch.queries[1].nodes[0]?.frameId);
+      assert.ok(queryBatch.queries[0].nodes[0]?.parent, "live query omitted the child control parent");
       assert.equal(queryBatch.queries[2].nodes[0]?.name, "Frame enabled");
       assert.equal(queryBatch.queries[2].nodes[0]?.state?.checked, false);
       assert.equal(queryBatch.queries[3].nodes[0]?.name, "Parent action");
       assert.equal(queryBatch.queries[3].nodes[0]?.frameId, "main");
+      assert.ok(queryBatch.queries[3].nodes[0]?.parent, "live query omitted the parent control parent");
       const cssRead = await client.call("page.read", {
         pageId,
         target: { locator: { kind: "css", value: 'button[aria-label="Frame action"]' } },
       });
       assert.equal(cssRead.node.ref, frameButton.ref, "CSS locator did not resolve the cross-origin frame button");
+      assert.ok(cssRead.node.parent, "live read omitted the child control parent");
       const frameScopedRead = await client.call("page.read", {
         pageId,
         target: {
@@ -316,6 +319,8 @@ async function run() {
         targetedPressVerified: pressed.verified && pressed.proof?.target !== undefined,
         frameScopedQueryVerified: queryBatch.queries[0].matchCount === 3
           && queryBatch.queries[0].nodes.every((node) => node.frameId === frameButton.frameId),
+        liveAncestryVerified: Boolean(queryBatch.queries[0].nodes[0]?.parent)
+          && Boolean(queryBatch.queries[3].nodes[0]?.parent),
         stateLocatorVerified: queryBatch.queries[2].nodes[0]?.state?.checked === false,
         mixedFrameBatchVerified: queryBatch.queries[3].nodes[0]?.frameId === "main",
         idempotentReplayVerified: scrolledRetry.replayed === true,
