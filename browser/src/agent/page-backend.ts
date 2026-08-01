@@ -463,6 +463,8 @@ export class ElectronPageBackend implements PageBackend {
         return this.press(action.key, token, expect, signal);
       case "navigate":
         return this.navigate(action, token, expect, signal);
+      case "history":
+        return this.history(action, token, expect, signal);
       case "reload":
         return this.reload(action, token, expect, signal);
       default:
@@ -755,6 +757,32 @@ export class ElectronPageBackend implements PageBackend {
     const after = outcome.identity;
     const proof: ActionProof = { url: after.url, title: after.title };
     return { verified: outcome.satisfied, effects: this.transitionEffects(before, after), proof };
+  }
+
+  private async history(
+    action: Extract<AgentAction, { type: "history" }>,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+    signal?: AbortSignal,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    const before = await this.identity(signal);
+    this.assertToken(token ?? undefined, before.documentId, before.revision);
+    throwIfAborted(signal);
+    const moved = action.direction === "back" ? this.controller.back() : this.controller.forward();
+    if (!moved) {
+      throw new AgentError("HISTORY_UNAVAILABLE", `cannot go ${action.direction} from the current page`, {
+        details: { direction: action.direction },
+      });
+    }
+    this.invalidateSnapshots();
+    const outcome = await this.waitForOutcome(before, expect, signal);
+    const after = outcome.identity;
+    const proof: ActionProof = { url: after.url, title: after.title };
+    return {
+      verified: hasExpectation(expect) ? outcome.satisfied : outcome.changed,
+      effects: this.transitionEffects(before, after),
+      proof,
+    };
   }
 
   private async hover(

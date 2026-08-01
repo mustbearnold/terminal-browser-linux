@@ -31,9 +31,11 @@ import {
 
 export const FIXTURE_PAGE_ID = asPageId("fixture/tab/1");
 export const FIXTURE_URL = "fixture://agent-control";
+export const FIXTURE_PREVIOUS_URL = "fixture://agent-control/previous";
 
 const DOCUMENT_ID = asDocumentId("fixture-document-1");
 const FRAME_ID = asFrameId("main");
+const HISTORY_URLS = [FIXTURE_PREVIOUS_URL, FIXTURE_URL] as const;
 
 export class FixtureRuntime implements AgentRuntime {
   private readonly backend = new FixturePageBackend(FIXTURE_PAGE_ID);
@@ -55,6 +57,7 @@ export class FixtureRuntime implements AgentRuntime {
       "page.act.type",
       "page.act.press",
       "page.act.reload",
+      "page.act.history",
       "page.wait",
       "page.observe",
     ];
@@ -89,6 +92,7 @@ class FixturePageBackend implements PageBackend {
   private revision = 0;
   private documentId = DOCUMENT_ID;
   private documentSequence = 1;
+  private historyIndex = HISTORY_URLS.length - 1;
   private nextSequence = 0;
   private ready = false;
   private value = "";
@@ -100,11 +104,12 @@ class FixturePageBackend implements PageBackend {
 
   async identity(signal?: AbortSignal): Promise<PageIdentity> {
     throwIfAborted(signal);
+    const url = HISTORY_URLS[this.historyIndex];
     return {
       pageId: this.pageId,
       documentId: this.documentId,
       revision: this.revision,
-      url: FIXTURE_URL,
+      url,
       title: "Agent control fixture",
       active: true,
       loading: false,
@@ -121,7 +126,7 @@ class FixturePageBackend implements PageBackend {
       frames: [{
         frameId: FRAME_ID,
         parentFrameId: null,
-        url: FIXTURE_URL,
+        url: identity.url,
         origin: FIXTURE_URL,
       }],
     };
@@ -133,6 +138,7 @@ class FixturePageBackend implements PageBackend {
     const includeGeometry = options?.includeGeometry !== false;
     const interactiveOnly = options?.interactiveOnly ?? true;
     const maxNodes = options?.maxNodes ?? 1000;
+    const url = HISTORY_URLS[this.historyIndex];
     const allNodes = [
       {
         ref: asSnapshotRef("r1"),
@@ -199,7 +205,7 @@ class FixturePageBackend implements PageBackend {
       pageId: this.pageId,
       documentId: this.documentId,
       revision: this.revision,
-      url: FIXTURE_URL,
+      url,
       title: "Agent control fixture",
       rootFrameId: FRAME_ID,
       nodes,
@@ -224,6 +230,8 @@ class FixturePageBackend implements PageBackend {
         return this.press(action.key, token, expect, signal);
       case "reload":
         return this.reload(action, token, expect, signal);
+      case "history":
+        return this.history(action, token, expect, signal);
       default:
         throw new AgentError("INVALID_REQUEST", `fixture does not support ${action.type}`);
     }
@@ -355,6 +363,35 @@ class FixturePageBackend implements PageBackend {
   ): Promise<Omit<ActionResult, "snapshot">> {
     await this.actionSnapshot(token, signal);
     throwIfAborted(signal);
+    this.documentId = asDocumentId(`fixture-document-${++this.documentSequence}`);
+    this.revision = 0;
+    this.ready = false;
+    this.value = "";
+    this.focused = false;
+    const identity = await this.identity(signal);
+    this.events.publish(this.event("navigation", { url: identity.url, inPage: false }));
+    return {
+      verified: await this.matches(expect, identity, signal),
+      effects: [{ type: "navigation", data: { url: identity.url } }],
+      proof: { url: identity.url, title: identity.title },
+    };
+  }
+
+  private async history(
+    action: Extract<AgentAction, { type: "history" }>,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+    signal?: AbortSignal,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    await this.actionSnapshot(token, signal);
+    throwIfAborted(signal);
+    const nextIndex = this.historyIndex + (action.direction === "back" ? -1 : 1);
+    if (nextIndex < 0 || nextIndex >= HISTORY_URLS.length) {
+      throw new AgentError("HISTORY_UNAVAILABLE", `cannot go ${action.direction} from the current page`, {
+        details: { direction: action.direction },
+      });
+    }
+    this.historyIndex = nextIndex;
     this.documentId = asDocumentId(`fixture-document-${++this.documentSequence}`);
     this.revision = 0;
     this.ready = false;

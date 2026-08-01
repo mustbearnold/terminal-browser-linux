@@ -36,6 +36,7 @@ export type AgentCapability =
   | "page.act.scroll"
   | "page.act.navigate"
   | "page.act.reload"
+  | "page.act.history"
   | "page.wait"
   | "page.observe"
   | "snapshot.delta"
@@ -195,6 +196,7 @@ export type AgentAction =
       amount?: number;
     }
   | { type: "navigate"; url: string }
+  | { type: "history"; direction: "back" | "forward" }
   | { type: "reload"; bypassCache?: boolean };
 
 export interface ActionExpectation {

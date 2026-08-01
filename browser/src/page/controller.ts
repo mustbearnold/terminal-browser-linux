@@ -251,16 +251,16 @@ export class BrowserController {
     void this.window.webContents.loadURL(normalizeUrl(value, this.cwd));
   }
 
-  back() {
-    if (this.window.webContents.navigationHistory.canGoBack()) {
-      this.window.webContents.navigationHistory.goBack();
-    }
+  back(): boolean {
+    if (!this.window.webContents.navigationHistory.canGoBack()) return false;
+    this.window.webContents.navigationHistory.goBack();
+    return true;
   }
 
-  forward() {
-    if (this.window.webContents.navigationHistory.canGoForward()) {
-      this.window.webContents.navigationHistory.goForward();
-    }
+  forward(): boolean {
+    if (!this.window.webContents.navigationHistory.canGoForward()) return false;
+    this.window.webContents.navigationHistory.goForward();
+    return true;
   }
 
   reload(bypassCache = false) {

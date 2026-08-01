@@ -16,7 +16,7 @@ import {
   asSnapshotRef,
   type PageIdentity,
 } from "../protocol/types";
-import { FIXTURE_PAGE_ID, FixtureRuntime } from "./fixture";
+import { FIXTURE_PAGE_ID, FIXTURE_PREVIOUS_URL, FixtureRuntime } from "./fixture";
 
 let requestSequence = 0;
 
@@ -39,6 +39,7 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(hello.capabilities.includes("page.act"), true);
   assert.equal(hello.capabilities.includes("page.act.click"), true);
   assert.equal(hello.capabilities.includes("page.act.fill"), true);
+  assert.equal(hello.capabilities.includes("page.act.history"), true);
   assert.equal(hello.capabilities.includes("page.act.select"), false);
 
   const negotiated = result<{
@@ -205,6 +206,52 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(stale.ok, false);
   assert.equal(stale.error?.code, "STALE_SNAPSHOT");
   assert.equal(stale.error?.retryable, true);
+
+  const back = result<{ verified: boolean; proof?: { url?: string }; snapshot?: PageSnapshot }>(
+    await router.handle(
+      request("page.act", {
+        pageId: FIXTURE_PAGE_ID,
+        token: token(pressed.snapshot!),
+        action: { type: "history", direction: "back" },
+        expect: { url: FIXTURE_PREVIOUS_URL },
+      }),
+      context,
+    ),
+  );
+  assert.equal(back.verified, true);
+  assert.equal(back.proof?.url, FIXTURE_PREVIOUS_URL);
+
+  const staleHistory = await router.handle(
+    request("page.act", {
+      pageId: FIXTURE_PAGE_ID,
+      token: token(pressed.snapshot!),
+      action: { type: "history", direction: "forward" },
+    }),
+    context,
+  );
+  assert.equal(staleHistory.error?.code, "STALE_SNAPSHOT");
+
+  const forward = result<{ verified: boolean; proof?: { url?: string } }>(
+    await router.handle(
+      request("page.act", {
+        pageId: FIXTURE_PAGE_ID,
+        action: { type: "history", direction: "forward" },
+        expect: { url: "fixture://agent-control" },
+      }),
+      context,
+    ),
+  );
+  assert.equal(forward.verified, true);
+  assert.equal(forward.proof?.url, "fixture://agent-control");
+
+  const unavailable = await router.handle(
+    request("page.act", {
+      pageId: FIXTURE_PAGE_ID,
+      action: { type: "history", direction: "forward" },
+    }),
+    context,
+  );
+  assert.equal(unavailable.error?.code, "HISTORY_UNAVAILABLE");
 
   for (const cleanup of cleanups) cleanup();
 });

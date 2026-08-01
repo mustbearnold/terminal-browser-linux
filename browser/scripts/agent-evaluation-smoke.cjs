@@ -354,19 +354,41 @@ function topLevelNavigationScenarios(pageId, urls) {
           action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Recovered name", exact: true } }, value: "stale" },
         }), "STALE_SNAPSHOT");
         const restored = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
+        const back = await client.call("page.act", {
+          pageId,
+          token: snapshotToken(restored),
+          action: { type: "history", direction: "back" },
+          expect: { url: "/start.html", title: "Navigation start", text: "Navigation start", timeoutMs: 5_000 },
+        });
+        await expectCode(client.call("page.act", {
+          pageId,
+          token: snapshotToken(restored),
+          action: { type: "history", direction: "forward" },
+        }), "STALE_SNAPSHOT");
+        const forward = await client.call("page.act", {
+          pageId,
+          action: { type: "history", direction: "forward" },
+          expect: { url: "/next.html", title: "Navigation next", text: "Next ready", timeoutMs: 5_000 },
+        });
+        await expectCode(client.call("page.act", {
+          pageId,
+          action: { type: "history", direction: "forward" },
+        }), "HISTORY_UNAVAILABLE");
+        const final = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
         const mainNavigations = lifecycleEvents.filter((event) => event.data?.type === "navigated" && event.data.frame?.frameId === "main");
         const passed = navigated.verified && navigated.effects.some((effect) => effect.type === "navigation")
           && filled.verified && clicked.verified
           && reloaded.verified && next.documentId !== restored.documentId
-          && mainNavigations.length >= 2 && navigationEvents.length >= 2
-          && restored.nodes.some((node) => node.name === "Recovered name");
+          && back.verified && forward.verified
+          && mainNavigations.length >= 4 && navigationEvents.length >= 4
+          && final.nodes.some((node) => node.name === "Recovered name");
         return {
           passed,
           metrics: {
             topLevelNavigations: mainNavigations.length,
             navigationEvents: navigationEvents.length,
-            staleTokenRejections: 2,
-            recoveredControls: restored.nodes.filter((node) => node.name === "Recovered name").length,
+            staleTokenRejections: 3,
+            recoveredControls: final.nodes.filter((node) => node.name === "Recovered name").length,
           },
         };
       } finally {

@@ -175,6 +175,9 @@ function validateAction(value: unknown): void {
     case "navigate":
       requireString(action.url, "action.url");
       return;
+    case "history":
+      requireOneOf(action.direction, "action.direction", ["back", "forward"]);
+      return;
     case "reload":
       if (action.bypassCache !== undefined) requireBoolean(action.bypassCache, "action.bypassCache");
       return;
