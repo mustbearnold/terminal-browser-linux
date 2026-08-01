@@ -27,8 +27,8 @@ test("produces a versioned fixture report with trace windows and aggregate metri
 
     assert.equal(report.contract, AGENT_EVALUATION_PROTOCOL);
     assert.equal(report.version, AGENT_EVALUATION_VERSION);
-    assert.equal(report.total, 5);
-    assert.equal(report.passed, 5);
+    assert.equal(report.total, 6);
+    assert.equal(report.passed, 6);
     assert.equal(report.failed, 0);
     assert.equal(report.passRate, 1);
     assert.deepEqual(report.provenance, { source: { commit: "test-commit" }, runtime: { node: "test-node" } });

@@ -1,6 +1,7 @@
 import { AgentClient } from "./client";
 import { AGENT_TRACE_VERSION, type TraceDocument, type TraceEntry } from "./core/trace";
 import { AgentError, type AgentErrorCode } from "./protocol/errors";
+import { AgentToolClient } from "./tools";
 import type {
   AgentEvent,
   PageId,
@@ -235,6 +236,31 @@ function validateProvenanceSection(value: unknown, name: string): void {
 
 export function fixtureScenarios(pageId: PageId): readonly AgentEvaluationScenario[] {
   return [
+    {
+      id: "structured-tools-discover-and-dispatch",
+      name: "structured-tools-discover-and-dispatch",
+      async run(client) {
+        const tools = new AgentToolClient(client);
+        const manifest = await tools.manifest();
+        const names = new Set(manifest.tools.map((definition) => definition.name));
+        const snapshot = await tools.callTool("terminal_browser_page_snapshot", {
+          pageId,
+          options: { interactiveOnly: false, includeGeometry: false },
+        });
+        const node = await tools.callTool("terminal_browser_page_read", {
+          pageId,
+          target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } },
+          token: snapshotToken(snapshot),
+        });
+        return {
+          passed: names.has("terminal_browser_page_snapshot")
+            && names.has("terminal_browser_page_read")
+            && node.role === "textbox"
+            && node.name === "Name",
+          metrics: { structuredTools: manifest.tools.length },
+        };
+      },
+    },
     {
       id: "snapshot-locates-semantic-control",
       name: "snapshot-locates-semantic-control",

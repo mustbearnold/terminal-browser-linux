@@ -16,6 +16,7 @@ import {
 import type { Backend, Direction } from "pixel-terminals";
 import { actionCommand } from "./action";
 import { agentCommand } from "./agent";
+import { agentToolsCommand } from "./agent-tools";
 import { control } from "./control";
 import { setupCommand } from "./editors";
 import { commandHelp, helpTopics, rootHelp } from "./help";
@@ -487,6 +488,12 @@ async function main(): Promise<number> {
     const browserKey = takeFlag(args, "--browser");
     if (args.length > 0) fail(`unexpected ${args[0]} (agent mode reads JSON lines from stdin)`);
     return agentCommand(detectBackend(), { browserKey });
+  }
+  if (command === "tools") {
+    const browserKey = takeFlag(args, "--browser");
+    const list = takeBoolFlag(args, "--list");
+    if (args.length > 0) fail(`unexpected ${args[0]} (tools mode reads JSON lines from stdin)`);
+    return agentToolsCommand(detectBackend(), { browserKey, list });
   }
   const rest = process.argv.slice(2);
   if (asksForHelp(rest)) {

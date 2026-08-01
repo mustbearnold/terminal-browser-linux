@@ -13,7 +13,7 @@ export interface AgentOptions {
 
 export async function agentCommand(backend: Backend, options: AgentOptions): Promise<number> {
   const browser = await selectBrowser(backend, options.browserKey);
-  const socketPath = path.join(INSTANCES_DIR, `${recordKey(browser)}.agent.sock`);
+  const socketPath = agentSocketPath(browser);
   const socket = net.connect(socketPath);
   await new Promise<void>((resolve, reject) => {
     socket.once("connect", resolve);
@@ -29,7 +29,11 @@ export async function agentCommand(backend: Backend, options: AgentOptions): Pro
   return 0;
 }
 
-async function selectBrowser(backend: Backend, key: string | undefined): Promise<Browser> {
+export function agentSocketPath(browser: Browser): string {
+  return path.join(INSTANCES_DIR, `${recordKey(browser)}.agent.sock`);
+}
+
+export async function selectBrowser(backend: Backend, key: string | undefined): Promise<Browser> {
   const all = await browsers(backend);
   if (all.length === 0) throw new Error("no terminal browsers running — start one with: terminal-browser open");
   if (key) {

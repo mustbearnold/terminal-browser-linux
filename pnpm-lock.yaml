@@ -60,6 +60,9 @@ importers:
       pixel-terminals:
         specifier: workspace:*
         version: link:../terminals
+      terminal-browser-agent:
+        specifier: workspace:*
+        version: link:../agent
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

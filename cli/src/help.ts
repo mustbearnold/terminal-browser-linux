@@ -78,6 +78,22 @@ Options:
 Examples:
   terminal-browser agent --browser 90107-1
   printf '%s\\n' '{"kind":"request",...}' | terminal-browser agent
+  `,
+  },
+  tools: {
+    summary: "Expose discoverable structured agent tools",
+    usage: "terminal-browser tools [options]",
+    body: `
+Connects to the selected browser and exposes the negotiated agent operations
+as named tools. Pass --list to print the tool manifest. Without --list, read
+one JSON tool request per line from stdin and receive one JSON result per line.
+
+Options:
+  --browser <key>     A browser key from terminal-browser ls
+  --list              Print the negotiated tool manifest and exit
+
+Request shape:
+  {"id":"1","name":"terminal_browser_page_snapshot","arguments":{...}}
 `,
   },
 };
