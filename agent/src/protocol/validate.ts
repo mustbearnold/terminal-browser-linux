@@ -175,6 +175,9 @@ function validateAction(value: unknown): void {
     case "navigate":
       requireString(action.url, "action.url");
       return;
+    case "reload":
+      if (action.bypassCache !== undefined) requireBoolean(action.bypassCache, "action.bypassCache");
+      return;
     default:
       throw new AgentError("INVALID_MESSAGE", `action.type is unsupported: ${type}`);
   }

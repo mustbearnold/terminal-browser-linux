@@ -54,6 +54,7 @@ export class FixtureRuntime implements AgentRuntime {
       "page.act.fill",
       "page.act.type",
       "page.act.press",
+      "page.act.reload",
       "page.wait",
       "page.observe",
     ];
@@ -86,6 +87,8 @@ class FixturePageBackend implements PageBackend {
   private readonly resolver = new SnapshotLocatorResolver();
   private readonly events = new AgentEventBus();
   private revision = 0;
+  private documentId = DOCUMENT_ID;
+  private documentSequence = 1;
   private nextSequence = 0;
   private ready = false;
   private value = "";
@@ -99,7 +102,7 @@ class FixturePageBackend implements PageBackend {
     throwIfAborted(signal);
     return {
       pageId: this.pageId,
-      documentId: DOCUMENT_ID,
+      documentId: this.documentId,
       revision: this.revision,
       url: FIXTURE_URL,
       title: "Agent control fixture",
@@ -194,7 +197,7 @@ class FixturePageBackend implements PageBackend {
     const nodes = visibleNodes.slice(0, Math.max(1, maxNodes));
     return {
       pageId: this.pageId,
-      documentId: DOCUMENT_ID,
+      documentId: this.documentId,
       revision: this.revision,
       url: FIXTURE_URL,
       title: "Agent control fixture",
@@ -219,6 +222,8 @@ class FixturePageBackend implements PageBackend {
         return this.typeText(action.text, token, expect, signal);
       case "press":
         return this.press(action.key, token, expect, signal);
+      case "reload":
+        return this.reload(action, token, expect, signal);
       default:
         throw new AgentError("INVALID_REQUEST", `fixture does not support ${action.type}`);
     }
@@ -339,6 +344,28 @@ class FixturePageBackend implements PageBackend {
         url: identity.url,
         title: identity.title,
       },
+    };
+  }
+
+  private async reload(
+    _action: Extract<AgentAction, { type: "reload" }>,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+    signal?: AbortSignal,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    await this.actionSnapshot(token, signal);
+    throwIfAborted(signal);
+    this.documentId = asDocumentId(`fixture-document-${++this.documentSequence}`);
+    this.revision = 0;
+    this.ready = false;
+    this.value = "";
+    this.focused = false;
+    const identity = await this.identity(signal);
+    this.events.publish(this.event("navigation", { url: identity.url, inPage: false }));
+    return {
+      verified: await this.matches(expect, identity, signal),
+      effects: [{ type: "navigation", data: { url: identity.url } }],
+      proof: { url: identity.url, title: identity.title },
     };
   }
 

@@ -463,6 +463,8 @@ export class ElectronPageBackend implements PageBackend {
         return this.press(action.key, token, expect, signal);
       case "navigate":
         return this.navigate(action, token, expect, signal);
+      case "reload":
+        return this.reload(action, token, expect, signal);
       default:
         return unsupportedAction(action);
     }
@@ -732,6 +734,27 @@ export class ElectronPageBackend implements PageBackend {
     const effects = this.transitionEffects(before, after);
     const proof: ActionProof = { url: after.url, title: after.title };
     return { verified: outcome.satisfied, effects, proof };
+  }
+
+  private async reload(
+    action: Extract<AgentAction, { type: "reload" }>,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+    signal?: AbortSignal,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    const before = await this.identity(signal);
+    this.assertToken(token ?? undefined, before.documentId, before.revision);
+    throwIfAborted(signal);
+    this.controller.reloadDocument(action.bypassCache ?? false);
+    this.invalidateSnapshots();
+    const outcome = await this.waitForOutcome(
+      before,
+      expect ?? { url: before.url, timeoutMs: 10_000 },
+      signal,
+    );
+    const after = outcome.identity;
+    const proof: ActionProof = { url: after.url, title: after.title };
+    return { verified: outcome.satisfied, effects: this.transitionEffects(before, after), proof };
   }
 
   private async hover(

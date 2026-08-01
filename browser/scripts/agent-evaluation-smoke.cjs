@@ -344,8 +344,8 @@ function topLevelNavigationScenarios(pageId, urls) {
         });
         const reloaded = await client.call("page.act", {
           pageId,
-          action: { type: "navigate", url: `${urls.next}?reload=1` },
-          expect: { url: "/next.html?reload=1", title: "Navigation next", text: "Next ready", timeoutMs: 5_000 },
+          action: { type: "reload" },
+          expect: { url: "/next.html", title: "Navigation next", text: "Next ready", timeoutMs: 5_000 },
         });
         await expectCode(client.call("page.act", {
           pageId,

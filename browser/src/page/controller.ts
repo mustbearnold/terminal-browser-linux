@@ -263,8 +263,14 @@ export class BrowserController {
     }
   }
 
-  reload() {
+  reload(bypassCache = false) {
     if (this.state.loading) this.window.webContents.stop();
+    else if (bypassCache) this.window.webContents.reloadIgnoringCache();
+    else this.window.webContents.reload();
+  }
+
+  reloadDocument(bypassCache = false) {
+    if (bypassCache) this.window.webContents.reloadIgnoringCache();
     else this.window.webContents.reload();
   }
 

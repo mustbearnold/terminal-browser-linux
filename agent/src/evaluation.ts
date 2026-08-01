@@ -271,6 +271,35 @@ export function fixtureScenarios(pageId: PageId): readonly AgentEvaluationScenar
         };
       },
     },
+    {
+      id: "reload-resets-document-and-rejects-stale-token",
+      name: "reload-resets-document-and-rejects-stale-token",
+      async run(client) {
+        const before = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false } });
+        const reloaded = await client.call("page.act", {
+          pageId,
+          token: snapshotToken(before),
+          action: { type: "reload" },
+        });
+        let staleCode: AgentErrorCode | undefined;
+        try {
+          await client.call("page.act", {
+            pageId,
+            token: snapshotToken(before),
+            action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } } },
+          });
+        } catch (error) {
+          if (error instanceof AgentError) staleCode = error.code;
+        }
+        const after = reloaded.snapshot;
+        const transitioned = after?.documentId !== before.documentId;
+        return {
+          passed: reloaded.verified && transitioned && staleCode === "STALE_SNAPSHOT",
+          metrics: { documentTransitions: transitioned ? 1 : 0, staleTokenRejections: staleCode === "STALE_SNAPSHOT" ? 1 : 0 },
+          reason: staleCode === "STALE_SNAPSHOT" ? undefined : `expected STALE_SNAPSHOT, received ${staleCode ?? "no error"}`,
+        };
+      },
+    },
   ];
 }
 

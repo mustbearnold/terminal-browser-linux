@@ -52,6 +52,7 @@ export class BrowserAgentRuntime implements AgentRuntime {
       "page.act.hover",
       "page.act.scroll",
       "page.act.navigate",
+      "page.act.reload",
       "page.wait",
       "page.observe",
     ];

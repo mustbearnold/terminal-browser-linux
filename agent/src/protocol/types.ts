@@ -35,6 +35,7 @@ export type AgentCapability =
   | "page.act.hover"
   | "page.act.scroll"
   | "page.act.navigate"
+  | "page.act.reload"
   | "page.wait"
   | "page.observe"
   | "snapshot.delta"
@@ -193,7 +194,8 @@ export type AgentAction =
       direction: "up" | "down" | "left" | "right";
       amount?: number;
     }
-  | { type: "navigate"; url: string };
+  | { type: "navigate"; url: string }
+  | { type: "reload"; bypassCache?: boolean };
 
 export interface ActionExpectation {
   url?: string;

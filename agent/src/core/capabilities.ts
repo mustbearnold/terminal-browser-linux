@@ -22,6 +22,8 @@ export function actionCapability(action: AgentAction): AgentActionCapability {
       return "page.act.scroll";
     case "navigate":
       return "page.act.navigate";
+    case "reload":
+      return "page.act.reload";
   }
 }
 

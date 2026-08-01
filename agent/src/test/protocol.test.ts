@@ -120,6 +120,14 @@ test("validates nested agent request shapes at the wire boundary", () => {
   });
   assert.equal(valid.kind, "request");
 
+  const reload = parseAgentMessage({
+    ...listRequest(),
+    op: "page.act",
+    pageId: "page-1",
+    action: { type: "reload", bypassCache: true },
+  });
+  assert.equal(reload.kind, "request");
+
   const invalid = (body: Record<string, unknown>) => {
     assert.throws(
       () => parseAgentMessage({ ...listRequest(), ...body }),
@@ -130,6 +138,7 @@ test("validates nested agent request shapes at the wire boundary", () => {
   invalid({ op: "page.read", pageId: "page-1", target: { ref: "r1", locator: { kind: "css", value: "button" } } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "scroll", direction: "diagonal" } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "fill", target: { ref: "r1" } } });
+  invalid({ op: "page.act", pageId: "page-1", action: { type: "reload", bypassCache: "yes" } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, expect: { timeoutMs: -1 } });
   invalid({ op: "page.wait", pageId: "page-1", condition: { type: "stable", quietMs: 1.5 } });
   invalid({ op: "page.read", pageId: "page-1", target: { ref: "r1" }, token: { pageId: "page-1" } });
