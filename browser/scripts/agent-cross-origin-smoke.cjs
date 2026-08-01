@@ -104,6 +104,17 @@ async function run() {
       });
       assert.equal(cachedDiagnosticQuery.diagnostics?.queries[0]?.cacheHit, true);
       assert.equal(cachedDiagnosticQuery.diagnostics?.queries[0]?.elementsEvaluated, 0);
+      const plannedBatch = await client.call("page.query.batch", {
+        pageId,
+        queries: [
+          { locator: { kind: "css", value: "button[aria-label]" }, options: { frameId: frameButton.frameId, limit: 8, diagnostics: "summary" } },
+          { locator: { kind: "css", value: "button[aria-label]" }, options: { frameId: frameButton.frameId, limit: 1, diagnostics: "summary" } },
+        ],
+      });
+      assert.equal(plannedBatch.diagnostics?.mode, "live");
+      assert.equal(plannedBatch.diagnostics?.queriesEvaluated, 2);
+      assert.ok((plannedBatch.diagnostics?.planCacheHits ?? 0) > 0);
+      assert.equal(plannedBatch.queries[0].matchCount, plannedBatch.queries[1].matchCount);
       const cssRead = await client.call("page.read", {
         pageId,
         target: { locator: { kind: "css", value: 'button[aria-label="Frame action"]' } },
@@ -358,6 +369,7 @@ async function run() {
         queryCacheVerified: cachedDiagnosticQuery.diagnostics?.queries[0]?.cacheHit === true
           && cachedDiagnosticQuery.diagnostics.queries[0].elementsEvaluated === 0,
         queryCacheInvalidationVerified: postMutationQuery.diagnostics?.queries[0]?.cacheHit === false,
+        queryPlanVerified: (plannedBatch.diagnostics?.planCacheHits ?? 0) > 0,
         stateLocatorVerified: queryBatch.queries[2].nodes[0]?.state?.checked === false,
         mixedFrameBatchVerified: queryBatch.queries[3].nodes[0]?.frameId === "main",
         idempotentReplayVerified: scrolledRetry.replayed === true,

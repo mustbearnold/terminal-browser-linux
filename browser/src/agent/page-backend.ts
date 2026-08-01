@@ -139,6 +139,7 @@ type LiveLocatorRequest = {
 type LiveLocatorRuntimeDiagnostics = {
   elementsScanned: number;
   shadowRootsSearched: number;
+  planCacheHits: number;
   queries: LiveLocatorRuntimeQueryDiagnostics[];
 };
 type LiveLocatorRuntimeQueryDiagnostics = {
@@ -424,6 +425,7 @@ export class ElectronPageBackend implements PageBackend {
     const diagnosticsRequested = queries.some((query) => query.diagnostics);
     let elementsScanned = 0;
     let shadowRootsSearched = 0;
+    let planCacheHits = 0;
     const queryDiagnostics = queries.map((query, index): PageQueryDiagnostic | null => (
       query.diagnostics
         ? {
@@ -441,6 +443,7 @@ export class ElectronPageBackend implements PageBackend {
       if (diagnosticsRequested && value.raw.diagnostics) {
         elementsScanned += value.raw.diagnostics.elementsScanned;
         shadowRootsSearched += value.raw.diagnostics.shadowRootsSearched;
+        planCacheHits += value.raw.diagnostics.planCacheHits;
         for (const diagnostic of value.raw.diagnostics.queries) {
           const entry = value.entries[diagnostic.index];
           if (!entry) continue;
@@ -515,6 +518,7 @@ export class ElectronPageBackend implements PageBackend {
           framesSearched: frames.length,
           shadowRootsSearched,
           elementsScanned,
+          planCacheHits,
           queries: queryDiagnostics.filter((diagnostic): diagnostic is PageQueryDiagnostic => diagnostic !== null),
         },
       } : {}),
@@ -2747,6 +2751,38 @@ function liveLocatorBatchScript(
         ? normalizedValue === normalizedExpected
         : normalizedValue.toLocaleLowerCase().includes(normalizedExpected.toLocaleLowerCase());
     };
+    const stableKey = (value) => {
+      if (value === null || typeof value !== "object") return JSON.stringify(value);
+      if (Array.isArray(value)) return "[" + value.map(stableKey).join(",") + "]";
+      return "{" + Object.keys(value).sort().map((key) => JSON.stringify(key) + ":" + stableKey(value[key])).join(",") + "}";
+    };
+    const baseMatchCaches = new Map();
+    const scopedMatchCaches = new Map();
+    const cssSelectorCache = new Map();
+    const locatorKeys = new WeakMap();
+    let planCacheHits = 0;
+    const cacheKeyFor = (prefix, locator) => {
+      let locatorKey = locatorKeys.get(locator);
+      if (!locatorKey) {
+        locatorKey = stableKey(locator);
+        locatorKeys.set(locator, locatorKey);
+      }
+      return prefix + locatorKey;
+    };
+    const cachedMatch = (caches, prefix, el, locator, evaluate) => {
+      const key = cacheKeyFor(prefix, locator);
+      let cache = caches.get(key);
+      if (!cache) {
+        cache = new WeakMap();
+        caches.set(key, cache);
+      } else if (cache.has(el)) {
+        planCacheHits += 1;
+        return cache.get(el);
+      }
+      const result = evaluate();
+      cache.set(el, result);
+      return result;
+    };
     const matchesState = (el, state) => {
       if (!state) return true;
       const elementState = stateFor(el) || {};
@@ -2766,46 +2802,58 @@ function liveLocatorBatchScript(
       return true;
     };
     let invalid = false;
-    const matchesBase = (el, candidateLocator) => {
-      let matched = false;
-      switch (candidateLocator.kind) {
-        case "role":
-          matched = roleFor(el) === candidateLocator.role
-            && (!candidateLocator.name || textMatches(nameFor(el), candidateLocator.name, candidateLocator.exact));
-          break;
-        case "text":
-          matched = textMatches(rawTextFor(el) || nameFor(el), candidateLocator.text, candidateLocator.exact);
-          break;
-        case "label":
-          matched = textMatches(el.getAttribute("label") || nameFor(el), candidateLocator.text, candidateLocator.exact);
-          break;
-        case "placeholder":
-          matched = textMatches(el.getAttribute("placeholder") || "", candidateLocator.text, candidateLocator.exact);
-          break;
-        case "testid":
-          matched = el.getAttribute("data-testid") === candidateLocator.value;
-          break;
-        case "css":
-          try {
-            matched = el.matches(candidateLocator.value);
-          } catch (error) {
-            if (error instanceof DOMException && error.name === "SyntaxError") invalid = true;
-            matched = false;
-          }
-          break;
-      }
-      return matched && matchesState(el, candidateLocator.state);
-    };
-    const matchesScoped = (el, candidateLocator) => {
-      if (!matchesBase(el, candidateLocator)) return false;
-      if (candidateLocator.within === undefined) return true;
-      let current = parentFor(el);
-      while (current) {
-        if (matchesScoped(current, candidateLocator.within)) return true;
-        current = parentFor(current);
-      }
-      return false;
-    };
+    const matchesBase = (el, candidateLocator) => cachedMatch(
+      baseMatchCaches,
+      "base:",
+      el,
+      candidateLocator,
+      () => {
+        let matched = false;
+        switch (candidateLocator.kind) {
+          case "role":
+            matched = roleFor(el) === candidateLocator.role
+              && (!candidateLocator.name || textMatches(nameFor(el), candidateLocator.name, candidateLocator.exact));
+            break;
+          case "text":
+            matched = textMatches(rawTextFor(el) || nameFor(el), candidateLocator.text, candidateLocator.exact);
+            break;
+          case "label":
+            matched = textMatches(el.getAttribute("label") || nameFor(el), candidateLocator.text, candidateLocator.exact);
+            break;
+          case "placeholder":
+            matched = textMatches(el.getAttribute("placeholder") || "", candidateLocator.text, candidateLocator.exact);
+            break;
+          case "testid":
+            matched = el.getAttribute("data-testid") === candidateLocator.value;
+            break;
+          case "css":
+            try {
+              matched = el.matches(candidateLocator.value);
+            } catch (error) {
+              if (error instanceof DOMException && error.name === "SyntaxError") invalid = true;
+              matched = false;
+            }
+            break;
+        }
+        return matched && matchesState(el, candidateLocator.state);
+      },
+    );
+    const matchesScoped = (el, candidateLocator) => cachedMatch(
+      scopedMatchCaches,
+      "scoped:",
+      el,
+      candidateLocator,
+      () => {
+        if (!matchesBase(el, candidateLocator)) return false;
+        if (candidateLocator.within === undefined) return true;
+        let current = parentFor(el);
+        while (current) {
+          if (matchesScoped(current, candidateLocator.within)) return true;
+          current = parentFor(current);
+        }
+        return false;
+      },
+    );
     const matchesWithin = (el, scopeLocator) => {
       let current = parentFor(el);
       while (current) {
@@ -2850,19 +2898,25 @@ function liveLocatorBatchScript(
       invalid = false;
       let matches = elements;
       if (locator.kind === "css") {
-        matches = [];
-        const seen = new Set();
-        try {
-          for (const root of roots) {
-            for (const element of root.querySelectorAll(locator.value)) {
-              if (seen.has(element)) continue;
-              seen.add(element);
-              matches.push(element);
+        if (cssSelectorCache.has(locator.value)) {
+          planCacheHits += 1;
+          matches = cssSelectorCache.get(locator.value);
+        } else {
+          matches = [];
+          const seen = new Set();
+          try {
+            for (const root of roots) {
+              for (const element of root.querySelectorAll(locator.value)) {
+                if (seen.has(element)) continue;
+                seen.add(element);
+                matches.push(element);
+              }
             }
+          } catch (error) {
+            if (error instanceof DOMException && error.name === "SyntaxError") return { ok: false, invalid: true };
+            return { ok: false };
           }
-        } catch (error) {
-          if (error instanceof DOMException && error.name === "SyntaxError") return { ok: false, invalid: true };
-          return { ok: false };
+          cssSelectorCache.set(locator.value, matches);
         }
       }
       const candidates = [];
@@ -2908,6 +2962,7 @@ function liveLocatorBatchScript(
         diagnostics: {
           elementsScanned: elements.length,
           shadowRootsSearched: Math.max(0, roots.length - 1),
+          planCacheHits,
           queries: queryDiagnostics,
         },
       } : {}),
@@ -3281,7 +3336,7 @@ function isLiveLocatorBatchResult(value: unknown): value is LiveLocatorBatchResu
 function isLiveLocatorRuntimeDiagnostics(value: unknown): value is LiveLocatorRuntimeDiagnostics {
   if (!value || typeof value !== "object") return false;
   const diagnostics = value as Record<string, unknown>;
-  return [diagnostics.elementsScanned, diagnostics.shadowRootsSearched].every((entry) =>
+  return [diagnostics.elementsScanned, diagnostics.shadowRootsSearched, diagnostics.planCacheHits].every((entry) =>
     Number.isSafeInteger(entry) && Number(entry) >= 0,
   ) && Array.isArray(diagnostics.queries) && diagnostics.queries.every(isLiveLocatorRuntimeQueryDiagnostics);
 }

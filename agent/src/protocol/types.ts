@@ -113,6 +113,7 @@ export interface PageQueryDiagnostics {
   framesSearched: number;
   shadowRootsSearched: number;
   elementsScanned: number;
+  planCacheHits: number;
   queries: readonly PageQueryDiagnostic[];
 }
 

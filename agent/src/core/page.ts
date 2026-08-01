@@ -831,6 +831,7 @@ function snapshotQueryDiagnostics(
     framesSearched: new Set([String(snapshot.rootFrameId), ...snapshot.nodes.map((node) => String(node.frameId))]).size,
     shadowRootsSearched: 0,
     elementsScanned: snapshot.nodes.length,
+    planCacheHits: 0,
     queries: queries.map((query) => ({
       ...query,
       cacheHit: false,
