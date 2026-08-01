@@ -86,14 +86,16 @@ Examples:
     body: `
 Connects to the selected browser and exposes the negotiated agent operations
 as named tools. Pass --list to print the tool manifest. Without --list, read
-one JSON tool request per line from stdin and receive one JSON result per line.
+one JSON tool request per line from stdin. Calls are concurrent: each first
+returns an accepted line, then a correlated result or event line.
 
 Options:
   --browser <key>     A browser key from terminal-browser ls
   --list              Print the negotiated tool manifest and exit
 
 Request shape:
-  {"id":"1","name":"terminal_browser_page_snapshot","arguments":{...}}
+  {"id":"1","name":"terminal_browser_page_snapshot","arguments":{},"deadlineMs":5000}
+  {"id":"2","cancelRequestId":"page.wait-3"}
 `,
   },
 };

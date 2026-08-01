@@ -80,6 +80,12 @@ export interface AgentToolManifest {
 
 export type AgentToolEventListener = (event: AgentEvent) => void;
 
+export interface AgentToolCall<Result> {
+  readonly requestId: string;
+  readonly promise: Promise<Result>;
+  cancel(options?: AgentCallOptions): Promise<boolean>;
+}
+
 export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
   tool("terminal_browser_pages_list", "List every open browser page.", "pages.list", "pages.list", empty()),
   tool("terminal_browser_pages_open", "Open a URL as a new browser page.", "pages.open", "pages.open", object({
@@ -174,6 +180,43 @@ export class AgentToolClient {
     return this.client.onEvent(listener);
   }
 
+  async startTool<Name extends AgentToolName>(
+    name: Name,
+    argumentsValue?: AgentToolArguments<Name>,
+    options?: AgentCallOptions,
+  ): Promise<AgentToolCall<AgentToolResult<Name>>>;
+  async startTool(
+    name: string,
+    argumentsValue?: unknown,
+    options?: AgentCallOptions,
+  ): Promise<AgentToolCall<AgentOperationResults[AgentOperation]>>;
+  async startTool(
+    name: string,
+    argumentsValue: unknown = {},
+    options?: AgentCallOptions,
+  ): Promise<AgentToolCall<AgentOperationResults[AgentOperation]>> {
+    const hello = await this.initialize(options);
+    const definition = AGENT_TOOL_DEFINITIONS.find((candidate) => candidate.name === name);
+    if (!definition) throw new AgentError("INVALID_REQUEST", `unknown agent tool: ${name}`);
+    if (definition.capability !== undefined && !hello.accepted.includes(definition.capability)) {
+      throw new AgentError("CAPABILITY_UNAVAILABLE", `agent tool is unavailable: ${name}`, {
+        details: { capability: definition.capability },
+      });
+    }
+    const fields = toolArguments(argumentsValue);
+    validateToolArguments(definition.operation, fields);
+    const call = this.client.start(
+      definition.operation,
+      fields as AgentRequestFields<AgentOperation>,
+      options,
+    );
+    return {
+      requestId: call.requestId,
+      promise: call.promise as Promise<AgentOperationResults[AgentOperation]>,
+      cancel: call.cancel,
+    };
+  }
+
   async callTool<Name extends AgentToolName>(
     name: Name,
     argumentsValue?: AgentToolArguments<Name>,
@@ -189,21 +232,8 @@ export class AgentToolClient {
     argumentsValue: unknown = {},
     options?: AgentCallOptions,
   ): Promise<AgentOperationResults[AgentOperation]> {
-    const hello = await this.initialize(options);
-    const definition = AGENT_TOOL_DEFINITIONS.find((candidate) => candidate.name === name);
-    if (!definition) throw new AgentError("INVALID_REQUEST", `unknown agent tool: ${name}`);
-    if (definition.capability !== undefined && !hello.accepted.includes(definition.capability)) {
-      throw new AgentError("CAPABILITY_UNAVAILABLE", `agent tool is unavailable: ${name}`, {
-        details: { capability: definition.capability },
-      });
-    }
-    const fields = toolArguments(argumentsValue);
-    validateToolArguments(definition.operation, fields);
-    return this.client.call(
-      definition.operation,
-      fields as AgentRequestFields<AgentOperation>,
-      options,
-    ) as Promise<AgentOperationResults[AgentOperation]>;
+    const call = await this.startTool(name, argumentsValue, options);
+    return call.promise;
   }
 
   close(): Promise<void> {

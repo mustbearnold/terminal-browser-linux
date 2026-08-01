@@ -243,10 +243,12 @@ export function fixtureScenarios(pageId: PageId): readonly AgentEvaluationScenar
         const tools = new AgentToolClient(client);
         const manifest = await tools.manifest();
         const names = new Set(manifest.tools.map((definition) => definition.name));
-        const snapshot = await tools.callTool("terminal_browser_page_snapshot", {
+        const snapshotCall = await tools.startTool("terminal_browser_page_snapshot", {
           pageId,
           options: { interactiveOnly: false, includeGeometry: false },
         });
+        const pagesCall = await tools.startTool("terminal_browser_pages_list");
+        const [snapshot, pages] = await Promise.all([snapshotCall.promise, pagesCall.promise]);
         const node = await tools.callTool("terminal_browser_page_read", {
           pageId,
           target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } },
@@ -255,9 +257,10 @@ export function fixtureScenarios(pageId: PageId): readonly AgentEvaluationScenar
         return {
           passed: names.has("terminal_browser_page_snapshot")
             && names.has("terminal_browser_page_read")
+            && pages.pages.some((page) => page.pageId === pageId)
             && node.role === "textbox"
             && node.name === "Name",
-          metrics: { structuredTools: manifest.tools.length },
+          metrics: { structuredTools: manifest.tools.length, structuredConcurrent: 1 },
         };
       },
     },

@@ -62,3 +62,23 @@ test("validates and dispatches structured calls through the typed client", async
   );
   await tools.close();
 });
+
+test("exposes request handles for concurrent cancellation", async () => {
+  const harness = createFixtureAgentHarness({ clientId: "tool-handle-test" });
+  const tools = new AgentToolClient(harness.client);
+  try {
+    const call = await tools.startTool("terminal_browser_page_wait", {
+      pageId: String(FIXTURE_PAGE_ID),
+      condition: { type: "time", ms: 1000 },
+      timeoutMs: 1000,
+    });
+    assert.match(call.requestId, /:page\.wait:/);
+    assert.equal(await call.cancel(), true);
+    await assert.rejects(
+      call.promise,
+      (error: unknown) => error instanceof AgentError && error.code === "REQUEST_CANCELLED",
+    );
+  } finally {
+    await tools.close();
+  }
+});
