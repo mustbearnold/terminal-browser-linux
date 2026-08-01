@@ -88,11 +88,12 @@ export async function runAgentEvaluation(
       const outcome = await scenario.run(client);
       const finishedAt = now();
       cases.push({
-        ...outcome,
         id: scenario.id,
         name: scenario.name,
+        passed: outcome.passed,
         durationMs: Math.max(0, finishedAt - caseStarted),
         metrics: outcome.metrics ?? {},
+        ...(outcome.reason === undefined ? {} : { reason: outcome.reason }),
         ...(options.trace ? { trace: traceWindow(traceBefore, options.trace.document()) } : {}),
       });
     } catch (error) {
@@ -128,12 +129,30 @@ export async function runAgentEvaluation(
   return assertAgentEvaluationReport(report);
 }
 
+export function serializeAgentEvaluationReport(report: AgentEvaluationReport): string {
+  return `${JSON.stringify(assertAgentEvaluationReport(report), null, 2)}\n`;
+}
+
+export function parseAgentEvaluationReport(serialized: string): AgentEvaluationReport {
+  let value: unknown;
+  try {
+    value = JSON.parse(serialized);
+  } catch (error) {
+    throw new Error(`invalid agent evaluation artifact: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!value || typeof value !== "object") throw new Error("invalid agent evaluation artifact: expected an object");
+  return assertAgentEvaluationReport(value as AgentEvaluationReport);
+}
+
 export function assertAgentEvaluationReport(report: AgentEvaluationReport): AgentEvaluationReport {
+  if (!report || typeof report !== "object") throw new Error("agent evaluation report must be an object");
   if (report.contract !== AGENT_EVALUATION_PROTOCOL) throw new Error("unsupported agent evaluation contract");
   if (report.version !== AGENT_EVALUATION_VERSION) throw new Error(`unsupported agent evaluation version: ${report.version}`);
   if (!Number.isFinite(report.startedAt) || !Number.isFinite(report.finishedAt) || report.finishedAt < report.startedAt) {
     throw new Error("agent evaluation timestamps are invalid");
   }
+  if (!Array.isArray(report.cases)) throw new Error("agent evaluation cases must be an array");
+  if (!report.metrics || typeof report.metrics !== "object") throw new Error("agent evaluation metrics must be an object");
   if (report.total !== report.cases.length) throw new Error("agent evaluation total does not match its cases");
   if (report.total < 0 || report.passed < 0 || report.failed < 0) throw new Error("agent evaluation counts are invalid");
   if (report.passed + report.failed !== report.total) throw new Error("agent evaluation pass counts do not add up");

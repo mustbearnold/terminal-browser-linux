@@ -1,8 +1,11 @@
-import { fixtureScenarios, runAgentEvaluation } from "./evaluation";
+import { writeFile } from "node:fs/promises";
+
+import { fixtureScenarios, runAgentEvaluation, serializeAgentEvaluationReport } from "./evaluation";
 import { createFixtureAgentHarness } from "./evaluation/loopback";
 
 const harness = createFixtureAgentHarness({ clientId: "evaluation" });
 const client = harness.client;
+const outputPath = optionValue("--output");
 
 void (async () => {
   try {
@@ -14,7 +17,9 @@ void (async () => {
       trace: harness.trace,
       includeTrace: process.argv.includes("--trace"),
     });
-    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    const serialized = serializeAgentEvaluationReport(report);
+    if (outputPath) await writeFile(outputPath, serialized, "utf8");
+    process.stdout.write(serialized);
     if (report.failed > 0) process.exitCode = 1;
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
@@ -23,3 +28,11 @@ void (async () => {
     await client.close();
   }
 })();
+
+function optionValue(name: string): string | undefined {
+  const index = process.argv.indexOf(name);
+  if (index < 0) return undefined;
+  const value = process.argv[index + 1];
+  if (!value || value.startsWith("--")) throw new Error(`${name} requires a path`);
+  return value;
+}

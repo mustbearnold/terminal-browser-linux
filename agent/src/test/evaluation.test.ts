@@ -6,7 +6,9 @@ import {
   AGENT_EVALUATION_VERSION,
   assertAgentEvaluationReport,
   fixtureScenarios,
+  parseAgentEvaluationReport,
   runAgentEvaluation,
+  serializeAgentEvaluationReport,
   type AgentEvaluationScenario,
 } from "../evaluation";
 import { createFixtureAgentHarness } from "../evaluation/loopback";
@@ -36,6 +38,7 @@ test("produces a versioned fixture report with trace windows and aggregate metri
     assert.ok(report.metrics["metric.nodes.samples"] === 1);
     assert.ok(report.cases.every((entry) => entry.trace && entry.trace.entries > 0));
     assert.equal(assertAgentEvaluationReport(report), report);
+    assert.deepEqual(parseAgentEvaluationReport(serializeAgentEvaluationReport(report)), report);
   } finally {
     await harness.client.close();
   }
@@ -66,4 +69,9 @@ test("rejects malformed evaluation reports", async () => {
   } finally {
     await harness.client.close();
   }
+});
+
+test("rejects malformed evaluation artifacts before reading report fields", () => {
+  assert.throws(() => parseAgentEvaluationReport("null"), /expected an object/);
+  assert.throws(() => parseAgentEvaluationReport("not-json"), /invalid agent evaluation artifact/);
 });

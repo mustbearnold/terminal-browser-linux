@@ -1,11 +1,13 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const {
   AgentClient,
   fixtureScenarios,
   MemoryTrace,
   runAgentEvaluation,
+  serializeAgentEvaluationReport,
   TraceRecorder,
 } = require("../../agent/dist");
 const { launchHost, listSockets, stopHost, waitForSocket, dataUrl } = require("./agent-smoke-support.cjs");
@@ -38,6 +40,8 @@ async function run() {
     assert.ok(report.metrics.traceResponses > 0);
     assert.ok(report.metrics.traceEvents > 0);
     assert.ok(report.cases.every((entry) => entry.trace && entry.trace.entries > 0));
+    const artifactPath = process.env.TERMINAL_BROWSER_EVALUATION_ARTIFACT;
+    if (artifactPath) fs.writeFileSync(artifactPath, serializeAgentEvaluationReport(report), "utf8");
     console.log(JSON.stringify({
       contract: report.contract,
       version: report.version,
