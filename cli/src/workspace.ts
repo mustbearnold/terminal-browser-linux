@@ -24,6 +24,9 @@ export interface WorkspaceBinding {
   browserKey: string;
   agentPaneId: string;
   agentKind: string;
+  agentPaneWindow?: string;
+  agentPaneTab?: string;
+  agentPaneTitle?: string;
   updatedAt: string;
 }
 
@@ -158,6 +161,8 @@ async function createNote(backend: Backend, args: string[]): Promise<void> {
   if (!note) throw new Error("workspace note requires --note <text>");
 
   const browser = await selectBrowser(backend, browserKey);
+  const binding = loadBindings().find((candidate) => candidate.browserKey === recordKey(browser));
+  const destination = agentPaneId ?? await resolveBindingPane(backend, browser.pane, binding);
   const pages = await withClient(browser, (client) => client.call("pages.list", {}));
   const page = choosePage(pages.pages, requestedPageId);
   const target = parseJson<Target>(targetJson, "--target");
@@ -168,8 +173,6 @@ async function createNote(backend: Backend, args: string[]): Promise<void> {
     note,
     token,
   ));
-  const binding = loadBindings().find((candidate) => candidate.browserKey === recordKey(browser));
-  const destination = agentPaneId ?? binding?.agentPaneId;
   const payload = promptTag(annotation, commit);
   const sent = destination === undefined
     ? false
@@ -190,11 +193,14 @@ async function saveBinding(
   agentKind: string,
   browserPaneId: string | null,
 ): Promise<WorkspaceBinding> {
-  await requirePane(backend, agentPaneId, browserPaneId);
+  const agentPane = await requirePane(backend, agentPaneId, browserPaneId);
   const binding: WorkspaceBinding = {
     browserKey,
     agentPaneId,
     agentKind,
+    agentPaneWindow: agentPane.window,
+    agentPaneTab: agentPane.tab,
+    agentPaneTitle: agentPane.title,
     updatedAt: new Date().toISOString(),
   };
   const bindings = loadBindings().filter((candidate) => candidate.browserKey !== browserKey);
@@ -219,20 +225,75 @@ async function peerPane(backend: Backend, browserPaneId: string | null): Promise
 }
 
 export function selectPeerPane(panes: readonly Pane[], browserPaneId: string): string {
-  const browser = panes.find((pane) => pane.pane === browserPaneId);
-  if (!browser) throw new Error(`browser pane ${browserPaneId} is no longer discoverable`);
-  const peers = panes.filter((pane) =>
-    pane.pane !== browser.pane &&
-    pane.window === browser.window &&
-    pane.tab === browser.tab &&
-    !pane.title.includes("terminal-browser:"),
-  );
+  const peers = peerPanes(panes, browserPaneId);
   const nonSelfPeers = peers.filter((pane) => !pane.self);
   const candidates = nonSelfPeers.length > 0 ? nonSelfPeers : peers;
   if (candidates.length !== 1) {
     throw new Error(`--left found ${candidates.length} possible agent panes; pass --pane <pane-id>`);
   }
   return candidates[0].pane;
+}
+
+export function resolveAgentPane(
+  panes: readonly Pane[],
+  browserPaneId: string,
+  binding: WorkspaceBinding,
+): string {
+  const peers = peerPanes(panes, browserPaneId);
+  const direct = peers.find((pane) => pane.pane === binding.agentPaneId);
+  if (direct) return direct.pane;
+  const fingerprintMatches = peers.filter((pane) =>
+    binding.agentPaneWindow !== undefined &&
+    binding.agentPaneTab !== undefined &&
+    binding.agentPaneTitle !== undefined &&
+    pane.window === binding.agentPaneWindow &&
+    pane.tab === binding.agentPaneTab &&
+    pane.title === binding.agentPaneTitle,
+  );
+  if (fingerprintMatches.length === 1) return fingerprintMatches[0].pane;
+  return selectPeerPane(panes, browserPaneId);
+}
+
+async function resolveBindingPane(
+  backend: Backend,
+  browserPaneId: string | null,
+  binding: WorkspaceBinding | undefined,
+): Promise<string | undefined> {
+  if (!binding) return undefined;
+  if (!browserPaneId) throw new Error("browser pane is not discoverable");
+  const panes = await backend.panes();
+  const paneId = resolveAgentPane(panes, browserPaneId, binding);
+  if (paneId !== binding.agentPaneId) {
+    const pane = panes.find((candidate) => candidate.pane === paneId);
+    if (!pane) throw new Error(`no terminal pane ${paneId}; run terminal-browser workspace panes`);
+    saveRecoveredBinding(binding, pane);
+  }
+  return paneId;
+}
+
+function peerPanes(panes: readonly Pane[], browserPaneId: string): Pane[] {
+  const browser = panes.find((pane) => pane.pane === browserPaneId);
+  if (!browser) throw new Error(`browser pane ${browserPaneId} is no longer discoverable`);
+  return panes.filter((pane) =>
+    pane.pane !== browser.pane &&
+    pane.window === browser.window &&
+    pane.tab === browser.tab &&
+    !pane.title.includes("terminal-browser:"),
+  );
+}
+
+function saveRecoveredBinding(binding: WorkspaceBinding, pane: Pane): void {
+  const recovered: WorkspaceBinding = {
+    ...binding,
+    agentPaneId: pane.pane,
+    agentPaneWindow: pane.window,
+    agentPaneTab: pane.tab,
+    agentPaneTitle: pane.title,
+    updatedAt: new Date().toISOString(),
+  };
+  saveBindings(loadBindings().map((candidate) =>
+    candidate.browserKey === binding.browserKey ? recovered : candidate,
+  ));
 }
 
 async function sendToPane(backend: Backend, paneId: string, text: string, browserPaneId: string | null): Promise<boolean> {
