@@ -19,6 +19,7 @@ import {
   type CaptureOptions,
   type DialogAction,
   type PageCapture,
+  type PageEventCursor,
   type PageActiveResult,
   type PageDialogResult,
   type PageIdentity,
@@ -59,7 +60,7 @@ export interface AgentCallOptions {
 }
 
 export interface AgentObserveOptions extends AgentCallOptions {
-  afterSequence?: number;
+  after?: PageEventCursor;
 }
 
 export interface AgentHelloResult {
@@ -218,12 +219,12 @@ export class AgentClient {
   }
 
   observe(pageId: PageId, events: readonly AgentEventType[], options: AgentObserveOptions = {}) {
-    validateSequence(options.afterSequence);
-    const { afterSequence, ...callOptions } = options;
+    validateEventCursor(pageId, options.after);
+    const { after, ...callOptions } = options;
     return this.call("page.observe", {
       pageId,
       events,
-      ...(afterSequence === undefined ? {} : { afterSequence }),
+      ...(after === undefined ? {} : { after }),
     }, callOptions);
   }
 
@@ -442,9 +443,13 @@ function validateDeadline(deadlineMs: number | undefined): void {
   }
 }
 
-function validateSequence(sequence: number | undefined): void {
-  if (sequence !== undefined && (!Number.isSafeInteger(sequence) || sequence < 0)) {
-    throw new AgentError("INVALID_REQUEST", "afterSequence must be a non-negative safe integer");
+function validateEventCursor(pageId: PageId, cursor: PageEventCursor | undefined): void {
+  if (cursor === undefined) return;
+  if (cursor.pageId !== pageId) {
+    throw new AgentError("INVALID_REQUEST", "event cursor pageId must match the observed page");
+  }
+  if (!Number.isSafeInteger(cursor.sequence) || cursor.sequence < 0) {
+    throw new AgentError("INVALID_REQUEST", "event cursor sequence must be a non-negative safe integer");
   }
 }
 

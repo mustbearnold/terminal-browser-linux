@@ -392,12 +392,15 @@ async function run() {
         "cross-origin frame event did not preserve its frame identity",
       );
 
+      const recoveryCursor = { pageId, sequence: events[0].sequence };
+      await client.close();
+      client = null;
       const recoveryEvents = [];
       recoveryClient = await AgentClient.connect(socket, { clientId: "cross-origin-smoke" });
       await recoveryClient.hello();
       recoveryClient.onEvent((event) => recoveryEvents.push(event));
       const recovered = await recoveryClient.observe(pageId, ["dom.changed", "frame.lifecycle"], {
-        afterSequence: events[0].sequence,
+        after: recoveryCursor,
       });
       assert.ok(recovered.replayed > 0, "event cursor replayed no retained events");
       assert.ok(recoveryEvents.some((event) => event.sequence > events[0].sequence), "recovery client received no replayed event");

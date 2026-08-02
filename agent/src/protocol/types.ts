@@ -545,7 +545,7 @@ export type AgentRequest =
       op: "page.observe";
       pageId: PageId;
       events: readonly AgentEventType[];
-      afterSequence?: number;
+      after?: PageEventCursor;
     })
   | (AgentRequestEnvelope & {
       op: "page.observe.cancel";
@@ -563,8 +563,7 @@ export interface PageObserveResult {
   pageId: PageId;
   subscriptionId: string;
   events: readonly AgentEventType[];
-  afterSequence?: number;
-  sequence: number;
+  cursor: PageEventCursor;
   replayed: number;
 }
 
@@ -603,6 +602,11 @@ export interface AgentEvent {
   pageId: PageId;
   sequence: number;
   data?: JsonValue;
+}
+
+export interface PageEventCursor {
+  pageId: PageId;
+  sequence: number;
 }
 
 export interface AgentErrorPayload {

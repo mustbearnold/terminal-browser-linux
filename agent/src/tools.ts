@@ -163,7 +163,7 @@ export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
   tool("terminal_browser_page_observe", "Subscribe to resumable page lifecycle, DOM, and focus events.", "page.observe", "page.observe", object({
     pageId: string("Page identifier."),
     events: { type: "array", items: string("Event type.") },
-    afterSequence: number("Replay events after this cursor."),
+    after: pageEventCursor("Replay events after this page-bound cursor."),
   }, ["pageId", "events"])),
   tool("terminal_browser_page_observe_cancel", "Stop a resumable page event subscription.", "page.observe.cancel", "page.observe", object({
     pageId: string("Page identifier."),
@@ -331,6 +331,13 @@ function snapshotToken(): AgentToolSchema {
     revision: number("DOM revision."),
     snapshotId: string("Snapshot identifier."),
   }, ["pageId", "documentId", "revision", "snapshotId"]);
+}
+
+function pageEventCursor(description: string): AgentToolSchema {
+  return object({
+    pageId: string("Page identifier for the event stream."),
+    sequence: number("Last received event sequence."),
+  }, ["pageId", "sequence"], description);
 }
 
 function snapshotOptions(): AgentToolSchema {

@@ -33,7 +33,7 @@ test("correlates typed calls and delivers observed events", async () => {
     });
 
     const observation = await client.observe(FIXTURE_PAGE_ID, ["dom.changed"]);
-    assert.equal(observation.sequence, 0);
+    assert.deepEqual(observation.cursor, { pageId: FIXTURE_PAGE_ID, sequence: 0 });
     assert.equal(observation.replayed, 0);
     const action = await client.call("page.act", {
       pageId: FIXTURE_PAGE_ID,
@@ -91,7 +91,9 @@ test("reports only requested event types when replaying an observation", async (
       output: { snapshot: "none" },
     });
 
-    const observation = await client.observe(FIXTURE_PAGE_ID, ["focus.changed"], { afterSequence: 0 });
+    const observation = await client.observe(FIXTURE_PAGE_ID, ["focus.changed"], {
+      after: { pageId: FIXTURE_PAGE_ID, sequence: 0 },
+    });
     assert.equal(observation.replayed, 1);
     assert.deepEqual(events, ["focus.changed"]);
   } finally {

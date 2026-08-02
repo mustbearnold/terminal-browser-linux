@@ -300,7 +300,7 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(noActive.node, null);
   assert.equal(noActive.target, null);
 
-  const focusObservation = result<{ sequence: number }>(await router.handle(
+  const focusObservation = result<{ cursor: { sequence: number } }>(await router.handle(
     request("page.observe", { pageId: FIXTURE_PAGE_ID, events: ["focus.changed"] }),
     context,
   ));
@@ -338,16 +338,16 @@ test("runs the deterministic agent control contract", async () => {
     revision: focused.snapshot!.revision,
     phase: "focusin",
   });
-  const replayedFocus = result<{ replayed: number; sequence: number }>(await router.handle(
+  const replayedFocus = result<{ replayed: number; cursor: { sequence: number } }>(await router.handle(
     request("page.observe", {
       pageId: FIXTURE_PAGE_ID,
       events: ["focus.changed"],
-      afterSequence: focusObservation.sequence,
+      after: { pageId: FIXTURE_PAGE_ID, sequence: focusObservation.cursor.sequence },
     }),
     context,
   ));
   assert.ok(replayedFocus.replayed > 0);
-  assert.equal(replayedFocus.sequence >= focusEvents[0].sequence, true);
+  assert.equal(replayedFocus.cursor.sequence >= focusEvents[0].sequence, true);
 
   result(await router.handle(request("page.observe", { pageId: FIXTURE_PAGE_ID, events: ["dom.changed"] }), context));
 
@@ -674,7 +674,7 @@ test("replays missed fixture events from an observation cursor", async () => {
     request("page.observe", {
       pageId: FIXTURE_PAGE_ID,
       events: ["dom.changed"],
-      afterSequence: 0,
+      after: { pageId: FIXTURE_PAGE_ID, sequence: 0 },
     }),
     context,
   );
@@ -682,11 +682,61 @@ test("replays missed fixture events from an observation cursor", async () => {
     pageId: FIXTURE_PAGE_ID,
     subscriptionId: "subscription-1",
     events: ["dom.changed"],
-    afterSequence: 0,
-    sequence: 1,
+    cursor: { pageId: FIXTURE_PAGE_ID, sequence: 1 },
     replayed: 1,
   });
   assert.deepEqual(events.map((event) => event.sequence), [1]);
+});
+
+test("resumes an observation after its connection closes", async () => {
+  const runtime = new FixtureRuntime();
+  const router = new AgentRequestRouter(runtime);
+  const firstEvents: AgentEvent[] = [];
+  const firstContext: AgentConnectionContext = {
+    clientId: "fixture-observation-first",
+    emit: (message) => {
+      firstEvents.push(message as AgentEvent);
+    },
+    addSubscription: () => {},
+  };
+
+  await router.handle(request("page.observe", {
+    pageId: FIXTURE_PAGE_ID,
+    events: ["dom.changed"],
+    after: { pageId: FIXTURE_PAGE_ID, sequence: 0 },
+  }), firstContext);
+  await router.handle(request("page.act", {
+    pageId: FIXTURE_PAGE_ID,
+    action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } } },
+  }), firstContext);
+  assert.deepEqual(firstEvents.map((event) => event.sequence), [1]);
+
+  router.close(firstContext);
+
+  const resumedEvents: AgentEvent[] = [];
+  const resumedContext: AgentConnectionContext = {
+    clientId: "fixture-observation-resumed",
+    emit: (message) => {
+      resumedEvents.push(message as AgentEvent);
+    },
+    addSubscription: () => {},
+  };
+  await router.handle(request("page.act", {
+    pageId: FIXTURE_PAGE_ID,
+    action: { type: "focus", target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } } },
+  }), resumedContext);
+
+  const resumed = result<{ cursor: { pageId: string; sequence: number }; replayed: number }>(await router.handle(
+    request("page.observe", {
+      pageId: FIXTURE_PAGE_ID,
+      events: ["focus.changed"],
+      after: { pageId: FIXTURE_PAGE_ID, sequence: firstEvents[0].sequence },
+    }),
+    resumedContext,
+  ));
+  assert.equal(resumed.replayed, 1);
+  assert.deepEqual(resumed.cursor, { pageId: FIXTURE_PAGE_ID, sequence: 3 });
+  assert.deepEqual(resumedEvents.map((event) => event.sequence), [3]);
 });
 
 test("replays a completed action across connections with an idempotency key", async () => {

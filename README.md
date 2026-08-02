@@ -38,10 +38,13 @@ Each event includes the affected frame, that frame's new DOM revision, and
 whether the transition entered or left focus; call `page.active` to recover the
 current page revision-bound control.
 
-`page.observe` returns a `subscriptionId`; use `page.observe.cancel` when the
-agent no longer needs that event stream so a long-lived connection does not
-accumulate listeners. Replay counts and delivery are limited to the requested
-event types, and closing a page releases its remaining subscriptions.
+`page.observe` returns a page-bound `cursor` and a `subscriptionId`; pass the
+cursor as `after` when reconnecting so events missed during transport loss are
+replayed. Use `page.observe.cancel` when the event stream is no longer needed
+so a long-lived connection does not accumulate listeners. Replay counts and
+delivery are limited to the requested event types, and closing a page releases
+its remaining subscriptions. If the cursor falls outside retained history,
+recover with a fresh page snapshot before observing again.
 
 Use `page.wait` with an `element` condition to wait on semantic state such as
 `attached`, `visible`, `enabled`, `disabled`, `focused`, `value`, `checked`,

@@ -227,12 +227,15 @@ export class AgentRequestRouter {
       }
       case "page.observe": {
         const page = this.page(request.pageId);
+        if (request.after !== undefined && request.after.pageId !== request.pageId) {
+          throw new AgentError("INVALID_REQUEST", "event cursor pageId must match the observed page");
+        }
         const wanted = new Set(request.events);
         const subscription = await page.subscribe((event) => {
           this.record("event", event);
           void context.emit(event);
         }, {
-          afterSequence: request.afterSequence,
+          afterSequence: request.after?.sequence,
           filter: (event) => wanted.has(event.event),
         }, signal);
         try {
@@ -246,8 +249,7 @@ export class AgentRequestRouter {
           pageId: request.pageId,
           subscriptionId,
           events: request.events,
-          ...(request.afterSequence === undefined ? {} : { afterSequence: request.afterSequence }),
-          sequence: subscription.sequence,
+          cursor: { pageId: request.pageId, sequence: subscription.sequence },
           replayed: subscription.replayed,
         };
       }

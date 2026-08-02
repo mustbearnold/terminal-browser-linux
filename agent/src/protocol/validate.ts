@@ -409,6 +409,15 @@ function validateEventType(value: unknown, field: string): void {
   }
 }
 
+function validatePageEventCursor(value: unknown, field: string, pageId: string): void {
+  const cursor = requireObject(value, field);
+  const cursorPageId = requireString(cursor.pageId, `${field}.pageId`);
+  if (cursorPageId !== pageId) {
+    throw new AgentError("INVALID_MESSAGE", `${field}.pageId must match pageId`);
+  }
+  requireNonNegativeInteger(cursor.sequence, `${field}.sequence`);
+}
+
 function validateRequest(message: Record<string, unknown>): void {
   const op = requireString(message.op, "op");
   if (message.deadlineMs !== undefined) requireNonNegativeInteger(message.deadlineMs, "deadlineMs");
@@ -504,7 +513,7 @@ function validateRequest(message: Record<string, unknown>): void {
   if (op === "page.observe") {
     requireStringArray(message.events, "events");
     for (const [index, event] of (message.events as string[]).entries()) validateEventType(event, `events[${index}]`);
-    if (message.afterSequence !== undefined) requireNonNegativeInteger(message.afterSequence, "afterSequence");
+    if (message.after !== undefined) validatePageEventCursor(message.after, "after", String(message.pageId));
   }
   if (op === "page.observe.cancel") requireString(message.subscriptionId, "subscriptionId");
 }

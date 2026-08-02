@@ -12,6 +12,6 @@ Emit and consume `focus.changed` as a resumable event instead of making agents p
 
 Cancel each `page.observe` subscription when its event stream is no longer needed; observation lifecycle is part of the agent contract.
 
-Request only the event types an agent needs. Replay counts describe delivered events after filtering, and closing a page releases any remaining subscriptions.
+Request only the event types an agent needs. Treat the page-bound observation cursor as the reconnect contract, replaying it with `page.observe.after` after transport loss. Replay counts describe delivered events after filtering, and closing a page releases any remaining subscriptions. Recover from `EVENT_GAP` with a fresh page snapshot.
 
 Run `pnpm --filter terminal-browser-agent check` before handing off changes. Build the workspace packages before running a repository-wide typecheck when a package consumes generated declarations.

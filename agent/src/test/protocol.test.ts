@@ -98,7 +98,17 @@ test("validates request deadlines and cancellation operations", () => {
       op: "page.observe",
       pageId: "page-1",
       events: ["dom.changed"],
-      afterSequence: -1,
+      after: { pageId: "page-1", sequence: -1 },
+    }),
+    (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
+  );
+  assert.throws(
+    () => parseAgentMessage({
+      ...listRequest(),
+      op: "page.observe",
+      pageId: "page-1",
+      events: ["dom.changed"],
+      after: { pageId: "page-2", sequence: 0 },
     }),
     (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
   );
