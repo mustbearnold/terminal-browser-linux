@@ -3054,19 +3054,9 @@ function liveTextScript(key: string, expected: string, frameId: string): string 
     const normalize = (value) => String(value ?? "").replace(/\\s+/g, " ").trim();
     const wanted = normalize(expected).toLocaleLowerCase();
     const matches = (el) => normalize(String(nameFor(el) ?? "") + " " + String(rawTextFor(el) ?? "")).toLocaleLowerCase().includes(wanted);
-    const roots = [document];
-    const visitedRoots = new Set(roots);
-    const visitedElements = new Set();
-    for (let rootIndex = 0; rootIndex < roots.length; rootIndex += 1) {
-      for (const element of roots[rootIndex].querySelectorAll("*")) {
-        if (visitedElements.has(element)) continue;
-        visitedElements.add(element);
-        if (matches(element)) return { ok: true, matches: true };
-        if (element.shadowRoot && !visitedRoots.has(element.shadowRoot)) {
-          visitedRoots.add(element.shadowRoot);
-          roots.push(element.shadowRoot);
-        }
-      }
+    state.ensureElementIndex();
+    for (const element of state.elementIndexElements) {
+      if (matches(element)) return { ok: true, matches: true };
     }
     return { ok: true, matches: false };
   })()`;

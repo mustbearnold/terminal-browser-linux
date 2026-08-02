@@ -125,6 +125,17 @@ function largeWindowScenarios(pageId) {
         },
         output: { snapshot: "none" },
       });
+      const inserted = await client.call("page.act", {
+        pageId,
+        action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Add control", exact: true } } },
+        output: { snapshot: "none" },
+      });
+      const liveDynamicTextWait = await client.call("page.wait", {
+        pageId,
+        condition: { type: "text", value: "Dynamic control" },
+        timeoutMs: 1_000,
+        output: { snapshot: "none" },
+      });
       let current = await client.call("page.snapshot.window", {
         pageId,
         options: { limit: 256 },
@@ -158,6 +169,9 @@ function largeWindowScenarios(pageId) {
           && liveGlobalTextWait.snapshot === undefined
           && liveTargetedTextWait.snapshot === undefined
           && liveElementWait.snapshot === undefined
+          && inserted.verified
+          && liveDynamicTextWait.satisfied
+          && liveDynamicTextWait.snapshot === undefined
           && liveElementExpectation.verified
           && ambiguity?.code === "AMBIGUOUS_TARGET"
           && ambiguityDetails?.candidateCount === 1099
@@ -172,7 +186,8 @@ function largeWindowScenarios(pageId) {
           liveGlobalTextWait: liveGlobalTextWait.satisfied ? 1 : 0,
           liveTargetedTextWait: liveTargetedTextWait.satisfied ? 1 : 0,
           liveElementWait: liveElementWait.satisfied ? 1 : 0,
-          waitSnapshotsOmitted: [liveGlobalTextWait, liveTargetedTextWait, liveElementWait].every((wait) => wait.snapshot === undefined) ? 1 : 0,
+          liveDynamicTextWait: liveDynamicTextWait.satisfied ? 1 : 0,
+          waitSnapshotsOmitted: [liveGlobalTextWait, liveTargetedTextWait, liveElementWait, liveDynamicTextWait].every((wait) => wait.snapshot === undefined) ? 1 : 0,
           liveElementExpectation: liveElementExpectation.verified ? 1 : 0,
           liveLocatorAction: locatedClick.verified ? 1 : 0,
           ambiguousLiveCandidates: ambiguityDetails?.candidateCount ?? 0,
