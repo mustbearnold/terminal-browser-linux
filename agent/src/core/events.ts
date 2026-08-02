@@ -5,6 +5,7 @@ export type AgentEventListener = (event: AgentEvent) => void;
 
 export interface EventSubscriptionOptions {
   afterSequence?: number;
+  filter?: (event: AgentEvent) => boolean;
 }
 
 export interface EventSubscription {
@@ -49,18 +50,22 @@ export class AgentEventBus {
   }
 
   subscribe(listener: AgentEventListener, options: EventSubscriptionOptions = {}): EventSubscription {
-    const replay = this.replay(options.afterSequence);
-    this.listeners.add(listener);
+    const matches = options.filter ?? (() => true);
+    const replay = this.replay(options.afterSequence).filter(matches);
+    const subscribed = (event: AgentEvent) => {
+      if (matches(event)) listener(event);
+    };
+    this.listeners.add(subscribed);
     try {
       for (const event of replay) listener(event);
     } catch (error) {
-      this.listeners.delete(listener);
+      this.listeners.delete(subscribed);
       throw error;
     }
     return {
       sequence: this.latest,
       replayed: replay.length,
-      unsubscribe: () => this.listeners.delete(listener),
+      unsubscribe: () => this.listeners.delete(subscribed),
     };
   }
 

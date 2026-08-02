@@ -40,7 +40,8 @@ current page revision-bound control.
 
 `page.observe` returns a `subscriptionId`; use `page.observe.cancel` when the
 agent no longer needs that event stream so a long-lived connection does not
-accumulate listeners.
+accumulate listeners. Replay counts and delivery are limited to the requested
+event types, and closing a page releases its remaining subscriptions.
 
 Use `page.wait` with an `element` condition to wait on semantic state such as
 `attached`, `visible`, `enabled`, `disabled`, `focused`, `value`, `checked`,

@@ -75,6 +75,31 @@ test("records client-side requests, responses, and events when tracing is enable
   }
 });
 
+test("reports only requested event types when replaying an observation", async () => {
+  const client = createFixtureAgentClient({ clientId: "filtered-observation-test" });
+  const events: string[] = [];
+  const unsubscribe = client.onEvent((event) => events.push(event.event));
+  try {
+    await client.call("page.act", {
+      pageId: FIXTURE_PAGE_ID,
+      action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } } },
+      output: { snapshot: "none" },
+    });
+    await client.call("page.act", {
+      pageId: FIXTURE_PAGE_ID,
+      action: { type: "focus", target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } } },
+      output: { snapshot: "none" },
+    });
+
+    const observation = await client.observe(FIXTURE_PAGE_ID, ["focus.changed"], { afterSequence: 0 });
+    assert.equal(observation.replayed, 1);
+    assert.deepEqual(events, ["focus.changed"]);
+  } finally {
+    unsubscribe();
+    await client.close();
+  }
+});
+
 test("cancels page observations without retaining event listeners", async () => {
   const client = createFixtureAgentClient({ clientId: "observation-lifecycle-test" });
   const events: string[] = [];

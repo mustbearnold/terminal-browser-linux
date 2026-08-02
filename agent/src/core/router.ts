@@ -129,6 +129,7 @@ export class AgentRequestRouter {
         return await this.runtime.activatePage(request.pageId);
       case "pages.close":
         await this.runtime.closePage(request.pageId);
+        this.cancelSubscriptionsForPage(context, request.pageId);
         return { pageId: request.pageId };
       case "page.frames":
         return await this.page(request.pageId).frames(signal);
@@ -228,10 +229,12 @@ export class AgentRequestRouter {
         const page = this.page(request.pageId);
         const wanted = new Set(request.events);
         const subscription = await page.subscribe((event) => {
-          if (!wanted.has(event.event)) return;
           this.record("event", event);
           void context.emit(event);
-        }, { afterSequence: request.afterSequence }, signal);
+        }, {
+          afterSequence: request.afterSequence,
+          filter: (event) => wanted.has(event.event),
+        }, signal);
         try {
           throwIfAborted(signal);
         } catch (error) {
@@ -345,6 +348,14 @@ export class AgentRequestRouter {
     entry.removeCleanup?.();
     if (active!.size === 0) this.subscriptions.delete(context);
     return true;
+  }
+
+  private cancelSubscriptionsForPage(context: AgentConnectionContext, pageId: PageId): void {
+    const subscriptions = this.subscriptions.get(context);
+    if (!subscriptions) return;
+    for (const [subscriptionId, entry] of subscriptions) {
+      if (entry.pageId === pageId) this.cancelSubscription(context, subscriptionId, pageId);
+    }
   }
 
   private success(request: AgentRequest, result: unknown): AgentResponse {

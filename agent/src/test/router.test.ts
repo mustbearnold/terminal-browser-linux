@@ -255,6 +255,45 @@ test("returns a typed error for an unknown page", async () => {
   assert.equal(response.error?.code, "PAGE_NOT_FOUND");
 });
 
+test("releases page observations when a page closes", async () => {
+  let unsubscribed = 0;
+  let cleanupRemoved = 0;
+  const observedPage: PageSession = {
+    ...page(),
+    subscribe: async () => ({
+      sequence: 0,
+      replayed: 0,
+      unsubscribe: () => {
+        unsubscribed += 1;
+      },
+    }),
+  };
+  const closeRuntime: AgentRuntime = {
+    ...runtime(),
+    capabilities: () => [...runtime().capabilities(), "pages.close", "page.observe"],
+    getPage: (candidate) => (candidate === pageId ? observedPage : undefined),
+    closePage: async (candidate) => {
+      assert.equal(candidate, pageId);
+    },
+  };
+  const router = new AgentRequestRouter(closeRuntime);
+  const context = {
+    clientId: "page-close-test",
+    emit: () => {},
+    addSubscription: () => () => {
+      cleanupRemoved += 1;
+    },
+  };
+
+  const observed = await router.handle(envelope({ op: "page.observe", pageId, events: ["dom.changed"] }), context);
+  const closed = await router.handle(envelope({ op: "pages.close", pageId }), context);
+
+  assert.equal(observed.ok, true);
+  assert.equal(closed.ok, true);
+  assert.equal(unsubscribed, 1);
+  assert.equal(cleanupRemoved, 1);
+});
+
 test("routes page reads through a live page target resolver when available", async () => {
   let resolved = false;
   const resolvedPage: PageSession = {
