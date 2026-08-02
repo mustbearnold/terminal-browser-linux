@@ -171,29 +171,18 @@ export class AgentClient {
       clientId: this.clientId,
       ...(this.capabilities === undefined ? {} : { capabilities: this.capabilities }),
     }, options).then((result) => {
-      const negotiated = result.limits?.maxInFlightRequests;
-      if (negotiated === undefined) {
-        throw new AgentError("INTERNAL_ERROR", "agent hello omitted its request budget");
+      try {
+        const validated = validateHelloResult(result, this.clientId);
+        this.maxPendingRequests = Math.min(this.maxPendingRequests, validated.limits.maxInFlightRequests);
+        this.maxPendingActionsPerPage = Math.min(
+          this.maxPendingActionsPerPage,
+          validated.limits.maxQueuedActionsPerPage,
+        );
+        return validated;
+      } catch (error) {
+        void this.close().catch(() => {});
+        throw error;
       }
-      validateRequestBudget(negotiated);
-      const negotiatedActions = result.limits?.maxQueuedActionsPerPage;
-      if (negotiatedActions === undefined) {
-        throw new AgentError("INTERNAL_ERROR", "agent hello omitted its page action queue budget");
-      }
-      validateRequestBudget(negotiatedActions);
-      const negotiatedOutboundMessages = result.limits?.maxOutboundQueueMessages;
-      if (negotiatedOutboundMessages === undefined) {
-        throw new AgentError("INTERNAL_ERROR", "agent hello omitted its outbound message queue budget");
-      }
-      validateRequestBudget(negotiatedOutboundMessages);
-      const negotiatedOutboundBytes = result.limits?.maxOutboundQueueBytes;
-      if (negotiatedOutboundBytes === undefined) {
-        throw new AgentError("INTERNAL_ERROR", "agent hello omitted its outbound byte queue budget");
-      }
-      validateRequestBudget(negotiatedOutboundBytes);
-      this.maxPendingRequests = Math.min(this.maxPendingRequests, negotiated);
-      this.maxPendingActionsPerPage = Math.min(this.maxPendingActionsPerPage, negotiatedActions);
-      return result;
     });
   }
 
@@ -522,6 +511,67 @@ function validateRequestBudget(maxPendingRequests: number | undefined): void {
   if (maxPendingRequests !== undefined && (!Number.isSafeInteger(maxPendingRequests) || maxPendingRequests < 1)) {
     throw new AgentError("INVALID_REQUEST", "maxPendingRequests must be a positive safe integer");
   }
+}
+
+function validateHelloResult(value: unknown, clientId: string): AgentHelloResult {
+  const result = asRecord(value);
+  if (!result) throw invalidHello("result must be an object");
+  if (result.protocol !== AGENT_PROTOCOL) throw invalidHello("protocol is invalid");
+  if (result.version !== AGENT_PROTOCOL_VERSION) throw invalidHello("version is invalid");
+  if (result.clientId !== clientId) throw invalidHello("clientId does not match the request");
+
+  const capabilities = uniqueStringArray(result.capabilities, "capabilities");
+  const requested = uniqueStringArray(result.requested, "requested");
+  const accepted = uniqueStringArray(result.accepted, "accepted");
+  const unsupported = uniqueStringArray(result.unsupported, "unsupported");
+  const capabilitiesSet = new Set(capabilities);
+  const requestedSet = new Set(requested);
+  const acceptedSet = new Set(accepted);
+  const unsupportedSet = new Set(unsupported);
+  if (
+    accepted.some((capability) => !capabilitiesSet.has(capability)) ||
+    unsupported.some((capability) => capabilitiesSet.has(capability)) ||
+    accepted.some((capability) => !requestedSet.has(capability)) ||
+    unsupported.some((capability) => !requestedSet.has(capability)) ||
+    accepted.some((capability) => unsupportedSet.has(capability)) ||
+    requested.some((capability) => !acceptedSet.has(capability) && !unsupportedSet.has(capability))
+  ) {
+    throw invalidHello("accepted and unsupported capabilities must partition requested capabilities");
+  }
+
+  const limits = asRecord(result.limits);
+  if (!limits) throw invalidHello("limits must be an object");
+  for (const field of [
+    "maxInFlightRequests",
+    "maxQueuedActionsPerPage",
+    "maxOutboundQueueMessages",
+    "maxOutboundQueueBytes",
+  ] as const) {
+    if (!Number.isSafeInteger(limits[field]) || Number(limits[field]) < 1) {
+      throw invalidHello(`${field} must be a positive safe integer`);
+    }
+  }
+
+  return result as unknown as AgentHelloResult;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function uniqueStringArray(value: unknown, field: string): readonly string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item.length === 0)) {
+    throw invalidHello(`${field} must be an array of non-empty strings`);
+  }
+  const strings = value as string[];
+  if (new Set(strings).size !== strings.length) throw invalidHello(`${field} must not contain duplicates`);
+  return strings;
+}
+
+function invalidHello(reason: string): AgentError {
+  return new AgentError("INTERNAL_ERROR", `agent hello is invalid: ${reason}`);
 }
 
 function validateEventCursor(pageId: PageId, cursor: PageEventCursor | undefined): void {

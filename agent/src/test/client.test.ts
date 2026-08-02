@@ -2,9 +2,58 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { MemoryTrace, TraceRecorder } from "../core/trace";
+import { AgentClient } from "../client";
 import { AgentError } from "../protocol/errors";
+import { AGENT_PROTOCOL, AGENT_PROTOCOL_VERSION, type AgentMessage } from "../protocol/types";
 import { createFixtureAgentClient } from "../evaluation/loopback";
 import { FIXTURE_PAGE_ID } from "./fixture";
+import type { AgentTransport } from "../transport/types";
+
+class HelloTransport implements AgentTransport {
+  private readonly messageListeners = new Set<(message: AgentMessage) => void>();
+  private readonly closeListeners = new Set<() => void>();
+  closed = false;
+
+  constructor(private readonly result: unknown) {}
+
+  send(message: AgentMessage): Promise<void> {
+    if (this.closed) return Promise.reject(new Error("transport is closed"));
+    if (message.kind === "request" && message.op === "hello") {
+      const response: AgentMessage = {
+        kind: "response",
+        protocol: AGENT_PROTOCOL,
+        version: AGENT_PROTOCOL_VERSION,
+        requestId: message.requestId,
+        ok: true,
+        result: this.result,
+      };
+      queueMicrotask(() => {
+        if (!this.closed) for (const listener of this.messageListeners) listener(response);
+      });
+    }
+    return Promise.resolve();
+  }
+
+  onMessage(listener: (message: AgentMessage) => void): () => void {
+    this.messageListeners.add(listener);
+    return () => this.messageListeners.delete(listener);
+  }
+
+  onError(): () => void {
+    return () => {};
+  }
+
+  onClose(listener: () => void): () => void {
+    this.closeListeners.add(listener);
+    return () => this.closeListeners.delete(listener);
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    for (const listener of this.closeListeners) listener();
+  }
+}
 
 test("correlates typed calls and delivers observed events", async () => {
   const client = createFixtureAgentClient({ clientId: "client-test" });
@@ -54,6 +103,53 @@ test("correlates typed calls and delivers observed events", async () => {
     unsubscribe();
     await client.close();
   }
+});
+
+test("closes when hello returns an invalid negotiated contract", async () => {
+  const transport = new HelloTransport({
+    protocol: AGENT_PROTOCOL,
+    version: AGENT_PROTOCOL_VERSION,
+    clientId: "hello-validation-test",
+    capabilities: ["page.query"],
+    requested: ["page.query"],
+    accepted: ["page.query"],
+    unsupported: [],
+    limits: {
+      maxInFlightRequests: 0,
+      maxQueuedActionsPerPage: 64,
+      maxOutboundQueueMessages: 256,
+      maxOutboundQueueBytes: 8 * 1024 * 1024,
+    },
+  });
+  const client = new AgentClient(transport, { clientId: "hello-validation-test" });
+  await assert.rejects(
+    client.hello(),
+    (error: unknown) => error instanceof AgentError && error.code === "INTERNAL_ERROR",
+  );
+  assert.equal(transport.closed, true);
+  await client.close();
+});
+
+test("rejects hello capability partitions that are incomplete", async () => {
+  const transport = new HelloTransport({
+    protocol: AGENT_PROTOCOL,
+    version: AGENT_PROTOCOL_VERSION,
+    clientId: "hello-partition-test",
+    capabilities: [],
+    requested: ["page.query"],
+    accepted: [],
+    unsupported: [],
+    limits: {
+      maxInFlightRequests: 128,
+      maxQueuedActionsPerPage: 64,
+      maxOutboundQueueMessages: 256,
+      maxOutboundQueueBytes: 8 * 1024 * 1024,
+    },
+  });
+  const client = new AgentClient(transport, { clientId: "hello-partition-test" });
+  await assert.rejects(client.hello(), (error: unknown) => error instanceof AgentError && error.code === "INTERNAL_ERROR");
+  assert.equal(transport.closed, true);
+  await client.close();
 });
 
 test("records client-side requests, responses, and events when tracing is enabled", async () => {
