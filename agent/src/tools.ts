@@ -406,6 +406,7 @@ function locatorStateSchema(): AgentToolSchema {
     visible: boolean("Match visibility."),
     enabled: boolean("Match enabled state."),
     disabled: boolean("Match disabled state."),
+    fileCount: number("Number of files currently selected."),
     focused: boolean("Match focus state."),
     value: string("Match control value."),
     checked: boolean("Match checked state."),
@@ -438,6 +439,7 @@ function elementStateSchema(): AgentToolSchema {
     visible: boolean("Whether the target is visible."),
     enabled: boolean("Whether the target is enabled."),
     disabled: boolean("Whether the target is disabled."),
+    fileCount: number("Number of files currently selected."),
     focused: boolean("Whether the target has focus."),
     value: string("Target value."),
     checked: boolean("Checked state."),
@@ -482,6 +484,7 @@ function actionSchema(): AgentToolSchema {
     oneOf: [
       object({ type: string("Action type.", ["click"]), target: targetSchema(), button: string("Mouse button.", ["left", "middle", "right"]), clickCount: number("Click count.") }, ["type", "target"]),
       object({ type: string("Action type.", ["fill"]), target: targetSchema(), value: string("Replacement value.") }, ["type", "target", "value"]),
+      object({ type: string("Action type.", ["upload"]), target: targetSchema(), paths: { type: "array", items: string("Absolute local file path.") } }, ["type", "target", "paths"]),
       object({ type: string("Action type.", ["type"]), text: string("Text to type."), target: targetSchema() }, ["type", "text"]),
       object({ type: string("Action type.", ["press"]), key: string("Key or modified key, such as Ctrl+A."), target: targetSchema() }, ["type", "key"]),
       object({ type: string("Action type.", ["select"]), target: targetSchema(), values: { type: "array", items: string("Option value.") } }, ["type", "target", "values"]),

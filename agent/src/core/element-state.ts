@@ -10,6 +10,7 @@ export function matchesWaitElementState(node: SnapshotNode, state?: WaitElementS
   if (state.visible !== undefined && node.visible !== state.visible) return false;
   if (state.enabled !== undefined && node.enabled !== state.enabled) return false;
   if (state.disabled !== undefined && (node.state?.disabled ?? false) !== state.disabled) return false;
+  if (state.fileCount !== undefined && (node.state?.fileCount ?? 0) !== state.fileCount) return false;
   if (state.focused !== undefined && (node.state?.focused ?? false) !== state.focused) return false;
   if (state.value !== undefined && node.state?.value !== state.value) return false;
   if (state.checked !== undefined && node.state?.checked !== state.checked) return false;

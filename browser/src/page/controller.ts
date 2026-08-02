@@ -593,6 +593,75 @@ export class BrowserController {
     throw new Error(`frame evaluation failed for ${frameId}`);
   }
 
+  async setFileInputFiles(frameId: string, source: string, paths: readonly string[]): Promise<number> {
+    await this.attachCdp();
+    await this.cdp("DOM.enable");
+    let objectId: string | undefined;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        let contextId = frameId === "main" ? undefined : this.frameContexts.get(frameId);
+        if (frameId !== "main" && contextId === undefined) {
+          const world = (await this.cdp("Page.createIsolatedWorld", {
+            frameId,
+            worldName: "terminal-browser-agent",
+            grantUniveralAccess: true,
+          })) as { executionContextId?: number };
+          if (typeof world.executionContextId !== "number") throw new Error(`no execution context for frame ${frameId}`);
+          contextId = world.executionContextId;
+          this.frameContexts.set(frameId, contextId);
+        }
+        const evaluated = (await this.cdp("Runtime.evaluate", {
+          expression: source,
+          ...(contextId === undefined ? {} : { contextId }),
+          awaitPromise: true,
+          returnByValue: false,
+          userGesture: true,
+        })) as {
+          result?: { objectId?: string };
+          exceptionDetails?: { text?: string; exception?: { description?: string } };
+        };
+        if (evaluated.exceptionDetails) {
+          throw new Error(evaluated.exceptionDetails.exception?.description ?? evaluated.exceptionDetails.text ?? "frame evaluation failed");
+        }
+        objectId = evaluated.result?.objectId;
+        if (!objectId) throw new Error("file input target did not return a DOM object");
+        const described = (await this.cdp("DOM.describeNode", { objectId })) as {
+          node?: { backendNodeId?: number };
+        };
+        const backendNodeId = described.node?.backendNodeId;
+        if (typeof backendNodeId !== "number") throw new Error("file input target has no backend DOM node");
+        if (paths.length > 0) {
+          await this.cdp("DOM.setFileInputFiles", { backendNodeId, files: [...paths] });
+        }
+        const inspected = (await this.cdp("Runtime.callFunctionOn", {
+          objectId,
+          functionDeclaration: paths.length === 0
+            ? "function() { this.value = ''; const view = this.ownerDocument.defaultView || window; const EventCtor = view.Event || Event; this.dispatchEvent(new EventCtor('input', { bubbles: true })); this.dispatchEvent(new EventCtor('change', { bubbles: true })); return this.files ? this.files.length : -1; }"
+            : "function() { return this.files ? this.files.length : -1; }",
+          returnByValue: true,
+        })) as { result?: { value?: unknown } };
+        const fileCount = inspected.result?.value;
+        if (!Number.isSafeInteger(fileCount) || Number(fileCount) < 0) {
+          throw new Error("file input assignment returned no file count");
+        }
+        return Number(fileCount);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (frameId !== "main" && attempt === 0 && /context|frame/i.test(message)) {
+          this.frameContexts.delete(frameId);
+          continue;
+        }
+        throw error;
+      } finally {
+        if (objectId) {
+          await this.cdp("Runtime.releaseObject", { objectId }).catch(() => {});
+          objectId = undefined;
+        }
+      }
+    }
+    throw new Error(`file input assignment failed for ${frameId}`);
+  }
+
   find(text: string) {
     this.findText = text;
     if (!text) {

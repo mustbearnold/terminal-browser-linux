@@ -245,6 +245,24 @@ test("validates nested agent request shapes at the wire boundary", () => {
   });
   assert.equal(targetedPress.kind, "request");
 
+  const upload = parseAgentMessage({
+    ...listRequest(),
+    op: "page.act",
+    pageId: "page-1",
+    action: {
+      type: "upload",
+      target: { locator: { kind: "css", value: "#attachments" } },
+      paths: ["/tmp/agent-one.txt", "/tmp/agent-two.txt"],
+    },
+    expect: {
+      element: {
+        target: { locator: { kind: "css", value: "#attachments" } },
+        state: { fileCount: 2 },
+      },
+    },
+  });
+  assert.equal(upload.kind, "request");
+
   const history = parseAgentMessage({
     ...listRequest(),
     op: "page.act",
@@ -324,6 +342,14 @@ test("validates nested agent request shapes at the wire boundary", () => {
   invalid({ op: "page.read", pageId: "page-1", target: { locator: { kind: "role", role: "button" }, frameId: "" } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "scroll", direction: "diagonal" } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "fill", target: { ref: "r1" } } });
+  invalid({ op: "page.act", pageId: "page-1", action: { type: "upload", target: { ref: "r1" }, paths: ["relative.txt"] } });
+  invalid({ op: "page.act", pageId: "page-1", action: { type: "upload", target: { ref: "r1" }, paths: ["/tmp/a\u0000.txt"] } });
+  invalid({
+    op: "page.act",
+    pageId: "page-1",
+    action: { type: "upload", target: { ref: "r1" }, paths: Array.from({ length: 65 }, (_, index) => `/tmp/${index}.txt`) },
+  });
+  invalid({ op: "page.act", pageId: "page-1", action: { type: "upload", target: { ref: "r1" }, paths: ["/tmp/a.txt"] }, expect: { element: { target: { ref: "r1" }, state: { fileCount: 65 } } } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "reload", bypassCache: "yes" } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "history", direction: "sideways" } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, expect: { timeoutMs: -1 } });

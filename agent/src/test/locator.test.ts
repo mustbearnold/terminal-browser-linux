@@ -268,6 +268,7 @@ test("matches the complete semantic wait state", () => {
       readOnly: true,
       required: true,
       value: "Ada",
+      fileCount: 2,
       checked: true,
       selected: true,
     },
@@ -279,6 +280,7 @@ test("matches the complete semantic wait state", () => {
     disabled: true,
     focused: true,
     value: "Ada",
+    fileCount: 2,
     checked: true,
     expanded: true,
     invalid: true,
@@ -288,6 +290,7 @@ test("matches the complete semantic wait state", () => {
     selected: true,
   }), true);
   assert.equal(matchesWaitElementState(node, { invalid: false }), false);
+  assert.equal(matchesWaitElementState(node, { fileCount: 1 }), false);
   assert.equal(matchesWaitElementState(node, { attached: false }), false);
 });
 

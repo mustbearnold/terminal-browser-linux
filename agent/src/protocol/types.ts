@@ -3,6 +3,8 @@ export const AGENT_PROTOCOL_VERSION = 1 as const;
 export const MAX_TARGET_INDEX = 255 as const;
 export const MAX_LOCATOR_DEPTH = 8 as const;
 export const MAX_PAGE_QUERY_BATCH = 32 as const;
+export const MAX_UPLOAD_FILES = 64 as const;
+export const MAX_UPLOAD_PATH_LENGTH = 4096 as const;
 
 type Brand<T, Name extends string> = T & { readonly __brand: Name };
 
@@ -37,6 +39,7 @@ export type AgentCapability =
   | "page.act.status"
   | "page.act.click"
   | "page.act.fill"
+  | "page.act.upload"
   | "page.act.type"
   | "page.act.press"
   | "page.act.select"
@@ -129,6 +132,7 @@ export interface SnapshotWindowOptions {
 export interface SnapshotNodeState {
   checked?: boolean;
   disabled?: boolean;
+  fileCount?: number;
   expanded?: boolean;
   focused?: boolean;
   invalid?: boolean;
@@ -296,6 +300,7 @@ export interface LocatorState {
   visible?: boolean;
   enabled?: boolean;
   disabled?: boolean;
+  fileCount?: number;
   focused?: boolean;
   value?: string;
   checked?: boolean;
@@ -323,6 +328,7 @@ export type Target =
 export type AgentAction =
   | { type: "click"; target: Target; button?: "left" | "middle" | "right"; clickCount?: number }
   | { type: "fill"; target: Target; value: string }
+  | { type: "upload"; target: Target; paths: readonly string[] }
   | { type: "type"; text: string; target?: Target }
   | { type: "press"; key: string; target?: Target }
   | { type: "select"; target: Target; values: readonly string[] }
@@ -378,6 +384,7 @@ export interface ActionProof extends PageRevision {
   role?: string;
   name?: string;
   value?: string;
+  fileCount?: number;
   url?: string;
   title?: string;
 }

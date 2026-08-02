@@ -93,12 +93,16 @@ type ElementInspection = {
   y?: number;
   visible?: boolean;
   enabled?: boolean;
+  disabled?: boolean;
   occluded?: boolean;
   editable?: boolean;
   focused?: boolean;
   role?: string;
   name?: string;
   value?: string;
+  fileCount?: number;
+  multiple?: boolean;
+  fileInput?: boolean;
   checked?: boolean;
   selected?: boolean;
 };
@@ -545,27 +549,29 @@ export class ElectronPageBackend implements PageBackend {
 
   async frames(signal?: AbortSignal): Promise<PageFrameSnapshot> {
     throwIfAborted(signal);
-    const before = await this.identity(signal);
-    const browserFrames = await this.controller.agentFrames();
-    throwIfAborted(signal);
-    const after = await this.identity(signal);
-    if (before.documentId !== after.documentId || before.revision !== after.revision) {
-      throw new AgentError("STALE_SNAPSHOT", "frame tree changed while it was being read", { retryable: true });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const before = await this.identity(signal);
+      const browserFrames = await this.controller.agentFrames();
+      throwIfAborted(signal);
+      const after = await this.identity(signal);
+      if (before.documentId === after.documentId && before.revision === after.revision) {
+        const mainFrame = browserFrames.find((frame) => frame.parentId === null);
+        if (!mainFrame) throw new AgentError("INTERNAL_ERROR", "browser frame tree has no main frame");
+        this.mainBrowserFrameId = mainFrame.id;
+        return {
+          pageId: this.pageId,
+          documentId: after.documentId,
+          revision: after.revision,
+          frames: browserFrames.map((frame) => ({
+            frameId: this.protocolFrameId(frame.id, frame.parentId),
+            parentFrameId: frame.parentId === null ? null : this.protocolFrameId(frame.parentId),
+            url: frame.url,
+            origin: frame.origin,
+          })),
+        };
+      }
     }
-    const mainFrame = browserFrames.find((frame) => frame.parentId === null);
-    if (!mainFrame) throw new AgentError("INTERNAL_ERROR", "browser frame tree has no main frame");
-    this.mainBrowserFrameId = mainFrame.id;
-    return {
-      pageId: this.pageId,
-      documentId: after.documentId,
-      revision: after.revision,
-      frames: browserFrames.map((frame) => ({
-        frameId: this.protocolFrameId(frame.id, frame.parentId),
-        parentFrameId: frame.parentId === null ? null : this.protocolFrameId(frame.parentId),
-        url: frame.url,
-        origin: frame.origin,
-      })),
-    };
+    throw new AgentError("STALE_SNAPSHOT", "frame tree changed while it was being read", { retryable: true });
   }
 
   async query(
@@ -985,6 +991,8 @@ export class ElectronPageBackend implements PageBackend {
         return this.click(action, token, expect, signal);
       case "fill":
         return this.fill(action, token, expect, signal);
+      case "upload":
+        return this.upload(action, token, expect, signal);
       case "select":
         return this.select(action, token, expect, signal);
       case "check":
@@ -1121,6 +1129,58 @@ export class ElectronPageBackend implements PageBackend {
     };
     const verified = hasExpectation(expect) ? outcome.satisfied : true;
     return { verified, effects, proof };
+  }
+
+  private async upload(
+    action: Extract<AgentAction, { type: "upload" }>,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+    signal?: AbortSignal,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    const before = await this.identity(signal);
+    const target = await this.resolveActionTarget(action.target, token, before, signal);
+    const frameId = String(target.node.frameId);
+    const inspection = await this.inspect(target.ref, frameId, signal);
+    if (!inspection.ok || !inspection.fileInput || inspection.disabled) {
+      throw new AgentError("NOT_INTERACTABLE", "target is not an enabled file input", { retryable: true });
+    }
+    if (action.paths.length > 1 && inspection.multiple !== true) {
+      throw new AgentError("INVALID_REQUEST", "file input does not accept multiple files");
+    }
+
+    this.controller.focusContent();
+    throwIfAborted(signal);
+    let fileCount: number;
+    try {
+      fileCount = await this.controller.setFileInputFiles(
+        frameId,
+        fileInputTargetScript(this.agentKey, String(target.ref), frameId),
+        action.paths,
+      );
+    } catch {
+      throw new AgentError("ACTION_UNVERIFIED", "file input rejected the requested files", { retryable: true });
+    }
+    this.invalidateFrameSnapshots(frameId);
+    if (fileCount !== action.paths.length) {
+      throw new AgentError("ACTION_UNVERIFIED", "file input state did not match the requested files", { retryable: true });
+    }
+    const outcome = await this.waitForOutcome(before, expect, signal);
+    const after = outcome.identity;
+    const effects = this.transitionEffects(before, after);
+    effects.push({ type: "value.changed", data: { fileCount } });
+    const proof: ActionProof = {
+      pageId: after.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
+      target: target.ref,
+      frameId: target.node.frameId,
+      role: inspection.role,
+      name: inspection.name,
+      fileCount,
+      url: after.url,
+      title: after.title,
+    };
+    return { verified: hasExpectation(expect) ? outcome.satisfied : true, effects, proof };
   }
 
   private async typeText(
@@ -2483,6 +2543,7 @@ function semanticHelpersScript(): string {
       const invalid = ariaBooleanFor(el, "aria-invalid") === true || (el.validity && el.validity.valid === false);
       if (invalid) value.invalid = true;
       if ("value" in el && typeof el.value === "string") value.value = el.value.slice(0, 240);
+      if (el.tagName === "INPUT" && typeFor(el) === "file" && el.files) value.fileCount = el.files.length;
       return Object.keys(value).length ? value : undefined;
     };
     const attrsFor = (el) => {
@@ -2880,15 +2941,30 @@ function inspectScript(key: string, ref: string, frameId: string): string {
       y,
       visible: visibleFor(el),
       enabled: enabledFor(el),
+      disabled: disabledFor(el),
       occluded: !!hit && !composedHit(el, hit),
       editable: editableFor(el),
       focused: activeFor(el) === el,
       role: roleFor(el),
       name: nameFor(el),
       value: "value" in el && typeof el.value === "string" ? el.value : undefined,
+      fileInput: el.tagName === "INPUT" && typeFor(el) === "file",
+      ...(el.tagName === "INPUT" && typeFor(el) === "file" ? {
+        fileCount: el.files ? el.files.length : 0,
+        multiple: el.multiple === true,
+      } : {}),
       checked: checkedFor(el),
       selected: selectedFor(el),
     };
+  })()`;
+}
+
+function fileInputTargetScript(key: string, ref: string, frameId: string): string {
+  return `(() => {
+    const state = window[${JSON.stringify(key)}];
+    if (!state || state.frameId !== ${JSON.stringify(frameId)}) return null;
+    const el = state.refs && state.refs.get(${JSON.stringify(ref)});
+    return el && el.isConnected && el.tagName === "INPUT" && String(el.type).toLowerCase() === "file" ? el : null;
   })()`;
 }
 
@@ -2976,6 +3052,7 @@ function liveLocatorBatchScript(
       if (state.visible !== undefined && visibleFor(el) !== state.visible) return false;
       if (state.enabled !== undefined && enabledFor(el) !== state.enabled) return false;
       if (state.disabled !== undefined && disabledFor(el) !== state.disabled) return false;
+      if (state.fileCount !== undefined && (elementState.fileCount ?? 0) !== state.fileCount) return false;
       if (state.focused !== undefined && (activeFor(el) === el) !== state.focused) return false;
       if (state.value !== undefined && elementState.value !== state.value) return false;
       if (state.checked !== undefined && (elementState.checked ?? false) !== state.checked) return false;
@@ -3118,6 +3195,24 @@ function liveLocatorBatchScript(
     const results = queries.map(({ locator, includeHidden, maxCandidates, diagnostics }, queryIndex) => {
       invalid = false;
       let matches = indexedCandidates(locator);
+      if (locator.kind === "css" && simpleIdFor(locator.value) !== null && matches.length === 0) {
+        const directMatches = [];
+        const seen = new Set();
+        for (const root of roots) {
+          for (const element of root.querySelectorAll(locator.value)) {
+            if (seen.has(element)) continue;
+            seen.add(element);
+            directMatches.push(element);
+          }
+        }
+        if (directMatches.length > 0) {
+          state.elementIndexDirty = true;
+          state.elementIndexAttributeDirty = true;
+          state.ensureElementAttributeIndex();
+          matches = indexedCandidates(locator);
+          if (matches.length === 0) matches = directMatches;
+        }
+      }
       if (locator.kind === "css" && simpleIdFor(locator.value) === null) {
         if (cssSelectorCache.has(locator.value)) {
           planCacheHits += 1;
@@ -3431,13 +3526,13 @@ function liveLocatorCacheKey(query: LiveLocatorRequest): string {
 
 function liveLocatorQueryCanUseCache(query: LiveLocatorRequest): boolean {
   const state = query.locator.state;
-  if (state?.value !== undefined || state?.checked !== undefined || state?.selected !== undefined) return false;
+  if (state?.value !== undefined || state?.fileCount !== undefined || state?.checked !== undefined || state?.selected !== undefined) return false;
   return query.locator.within === undefined || liveLocatorWithinCanUseCache(query.locator.within);
 }
 
 function liveLocatorWithinCanUseCache(locator: Locator): boolean {
   const state = locator.state;
-  if (state?.value !== undefined || state?.checked !== undefined || state?.selected !== undefined) return false;
+  if (state?.value !== undefined || state?.fileCount !== undefined || state?.checked !== undefined || state?.selected !== undefined) return false;
   return locator.within === undefined || liveLocatorWithinCanUseCache(locator.within);
 }
 
@@ -3446,7 +3541,7 @@ function liveLocatorResultCanUseCache(query: LiveLocatorRequest, result: LiveLoc
   if ((result.candidateCount ?? 0) + (result.hiddenCandidateCount ?? 0) === 0) return false;
   return [...result.candidates ?? [], ...result.hiddenCandidates ?? []].every((node) => {
     const state = node.state;
-    if (state?.checked !== undefined || state?.selected !== undefined) return false;
+    if (state?.fileCount !== undefined || state?.checked !== undefined || state?.selected !== undefined) return false;
     if (state?.value === undefined) return true;
     const type = node.attributes?.type?.toLowerCase();
     return !LIVE_VOLATILE_VALUE_ROLES.has(node.role)

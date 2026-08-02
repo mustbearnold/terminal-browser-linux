@@ -4,6 +4,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const http = require("node:http");
 const net = require("node:net");
+const os = require("node:os");
+const path = require("node:path");
 const {
   AgentClient,
   createAgentEvaluationProvenance,
@@ -22,6 +24,9 @@ const html = `<!doctype html>
 <span id="launch-name">Launch workflow</span>
 <button id="launch" aria-label="Wrong name" aria-labelledby="launch-name">Visible button</button>
 <label for="agent-name">Name</label><input id="agent-name">
+<label for="upload-single">Upload document</label><input id="upload-single" type="file">
+<label for="upload-many">Upload attachments</label><input id="upload-many" type="file" multiple>
+<input id="upload-hidden" type="file" aria-label="Hidden upload" hidden>
 <label for="full-name">Full name</label><input id="full-name" placeholder="Ignored by label" value="" required>
 <button id="schedule-silent-value" aria-label="Schedule silent value" onclick="setTimeout(() => { document.getElementById('full-name').value = 'Silent value'; document.getElementById('silent-button').value = 'New silent action'; document.getElementById('silent-check').checked = true; document.getElementById('silent-choices').options[1].selected = true }, 500)">Schedule silent value</button>
 <input id="silent-button" type="button" value="Old silent action">
@@ -56,7 +61,7 @@ const shadowHtml = `<!doctype html><meta charset="utf-8"><title>Shadow evaluatio
 const frameChildHtml = `<!doctype html><label>Frame name <input aria-label="Frame name"></label><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
 const frameHtml = `<!doctype html><meta charset="utf-8"><title>Frame evaluation fixture</title><iframe title="Control frame"></iframe><script>document.querySelector('iframe').srcdoc=${JSON.stringify(frameChildHtml)}</script>`;
 
-const crossOriginChildHtml = `<!doctype html><label>Frame name <input id="frame-name" aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input id="frame-enabled" type="checkbox" aria-label="Frame enabled">Frame enabled</label><button id="schedule-frame-silent" aria-label="Schedule frame silent" onclick="setTimeout(() => { document.getElementById('frame-name').value = 'Silent frame name'; document.getElementById('frame-silent-button').value = 'New frame action'; document.getElementById('frame-enabled').checked = true; document.getElementById('frame-silent-choice').options[1].selected = true }, 500)">Schedule frame silent</button><input id="frame-silent-button" type="button" value="Old frame action"><select id="frame-silent-choice" multiple aria-label="Frame silent choices"><option value="one" selected>Frame silent one</option><option value="two">Frame silent two</option></select><div role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
+const crossOriginChildHtml = `<!doctype html><label>Frame name <input id="frame-name" aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input id="frame-enabled" type="checkbox" aria-label="Frame enabled">Frame enabled</label><input id="frame-upload" type="file" aria-label="Frame upload"><button id="schedule-frame-silent" aria-label="Schedule frame silent" onclick="setTimeout(() => { document.getElementById('frame-name').value = 'Silent frame name'; document.getElementById('frame-silent-button').value = 'New frame action'; document.getElementById('frame-enabled').checked = true; document.getElementById('frame-silent-choice').options[1].selected = true }, 500)">Schedule frame silent</button><input id="frame-silent-button" type="button" value="Old frame action"><select id="frame-silent-choice" multiple aria-label="Frame silent choices"><option value="one" selected>Frame silent one</option><option value="two">Frame silent two</option></select><div role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
 const navigationStartHtml = `<!doctype html><meta charset="utf-8"><title>Navigation start</title><button aria-label="Start action">Start action</button><output>Navigation start</output>`;
 const navigationNextHtml = `<!doctype html><meta charset="utf-8"><title>Navigation next</title><label>Recovered name <input aria-label="Recovered name"></label><button aria-label="Next action" onclick="document.querySelector('output').textContent='Next clicked'">Next action</button><output>Next ready</output>`;
 const eventHtml = `<!doctype html><meta charset="utf-8"><title>Native event fixture</title><button aria-label="Emit console" onclick="console.warn('agent console probe')">Emit console</button><button aria-label="Emit dialog" onclick="alert('agent dialog probe')">Emit dialog</button><button aria-label="Emit confirm" onclick="document.querySelector('#dialog-status').textContent = confirm('agent confirm probe') ? 'Confirmed' : 'Dismissed'">Emit confirm</button><button id="unlock" aria-label="Unlock" disabled>Unlock</button><button aria-label="Schedule update" onclick="setTimeout(() => { document.querySelector('#async-status').textContent = 'Asynchronous update'; document.querySelector('#unlock').disabled = false; setTimeout(() => { document.querySelector('#async-status').textContent = 'Settled' }, 80) }, 180)">Schedule update</button><span id="dialog-status">Idle</span><span id="async-status">Idle</span>`;
@@ -809,6 +814,96 @@ function semanticScenarios(pageId) {
   ];
 }
 
+function uploadScenarios(pageId, uploadPaths) {
+  return [{
+    id: "file-input-upload-and-clear",
+    name: "file-input-upload-and-clear",
+    async run(client) {
+      await client.call("page.wait", { pageId, condition: { type: "text", value: "Upload document" }, timeoutMs: 3_000 });
+      await client.call("page.wait", { pageId, condition: { type: "stable", quietMs: 50 }, timeoutMs: 3_000 });
+      const initial = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
+      const single = initial.nodes.find((node) => node.attributes?.id === "upload-single");
+      const many = initial.nodes.find((node) => node.attributes?.id === "upload-many");
+      const singleQuery = await client.call("page.query", {
+        pageId,
+        locator: { kind: "css", value: "#upload-single" },
+        options: { limit: 1, diagnostics: "summary" },
+      });
+      const singleUpload = await client.call("page.act", {
+        pageId,
+        action: { type: "upload", target: { ref: singleQuery.nodes[0].ref }, paths: [uploadPaths[0]] },
+        expect: { element: { target: { locator: { kind: "css", value: "#upload-single" } }, state: { fileCount: 1 } }, timeoutMs: 1_000 },
+        output: { snapshot: "none" },
+      });
+      const singleAfter = await client.call("page.query", {
+        pageId,
+        locator: { kind: "css", value: "#upload-single" },
+        options: { limit: 1, diagnostics: "summary" },
+      });
+      const manyQuery = await client.call("page.query", {
+        pageId,
+        locator: { kind: "css", value: "#upload-many" },
+        options: { limit: 1, diagnostics: "summary" },
+      });
+      const manyUpload = await client.call("page.act", {
+        pageId,
+        action: { type: "upload", target: { ref: manyQuery.nodes[0].ref }, paths: uploadPaths },
+        expect: { element: { target: { locator: { kind: "css", value: "#upload-many" } }, state: { fileCount: 2 } }, timeoutMs: 1_000 },
+        output: { snapshot: "none" },
+      });
+      const hiddenQuery = await client.call("page.query", {
+        pageId,
+        locator: { kind: "css", value: "#upload-hidden" },
+        options: { includeHidden: true, limit: 1, diagnostics: "summary" },
+      });
+      const hiddenTargetSnapshot = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
+      const hiddenTarget = hiddenTargetSnapshot.nodes.find((node) => node.attributes?.id === "upload-hidden");
+      const hiddenUpload = await client.call("page.act", {
+        pageId,
+        action: { type: "upload", target: { ref: hiddenTarget.ref }, paths: [uploadPaths[0]] },
+        expect: { element: { target: { locator: { kind: "css", value: "#upload-hidden" } }, state: { fileCount: 1 } }, timeoutMs: 1_000 },
+        output: { snapshot: "none" },
+      });
+      await client.call("page.wait", { pageId, condition: { type: "stable", quietMs: 50 }, timeoutMs: 3_000 });
+      const clearTargetSnapshot = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
+      const clearTarget = clearTargetSnapshot.nodes.find((node) => node.attributes?.id === "upload-hidden");
+      const cleared = await client.call("page.act", {
+        pageId,
+        action: { type: "upload", target: { ref: clearTarget.ref }, paths: [] },
+        expect: { element: { target: { locator: { kind: "css", value: "#upload-hidden" } }, state: { fileCount: 0 } }, timeoutMs: 1_000 },
+        output: { snapshot: "none" },
+      });
+      const passed = single?.state?.fileCount === 0
+        && many?.state?.fileCount === 0
+        && hiddenQuery.nodes[0]?.attributes?.id === "upload-hidden"
+        && singleUpload.verified
+        && singleUpload.proof?.fileCount === 1
+        && singleUpload.snapshot === undefined
+        && singleAfter.nodes[0]?.state?.fileCount === 1
+        && singleAfter.diagnostics?.queries[0]?.cacheHit === false
+        && manyUpload.verified
+        && manyUpload.proof?.fileCount === 2
+        && hiddenUpload.verified
+        && hiddenUpload.proof?.fileCount === 1
+        && cleared.verified
+        && cleared.proof?.fileCount === 0;
+      return {
+        passed,
+        metrics: {
+          fileInputs: [single, many, hiddenQuery.nodes[0]].filter(Boolean).length,
+          initialSingleQuery: singleQuery.nodes.length,
+          singleUpload: Number(singleUpload.verified && singleUpload.proof?.fileCount === 1),
+          multipleUpload: Number(manyUpload.verified && manyUpload.proof?.fileCount === 2),
+          hiddenUpload: Number(hiddenUpload.verified),
+          clearUpload: Number(cleared.verified && cleared.proof?.fileCount === 0),
+          singleAfterFileCount: singleAfter.nodes[0]?.state?.fileCount ?? -1,
+          volatileFileStateRefresh: Number(singleAfter.diagnostics?.queries[0]?.cacheHit === false),
+        },
+      };
+    },
+  }];
+}
+
 function shadowScenarios(pageId) {
   return [{
     id: "shadow-dom-resolution-and-mutation",
@@ -902,7 +997,7 @@ function frameScenarios(pageId) {
   }];
 }
 
-function crossOriginScenarios(pageId) {
+function crossOriginScenarios(pageId, uploadPaths) {
   return [{
     id: "cross-origin-frame-actions-and-replay",
     name: "cross-origin-frame-actions-and-replay",
@@ -984,6 +1079,27 @@ function crossOriginScenarios(pageId) {
       const frameSilentDelta = await client.call("page.snapshot.delta", {
         pageId,
         base: snapshotToken(frameSilentBase),
+      });
+      const frameUploadQuery = await client.call("page.query", {
+        pageId,
+        locator: { kind: "css", value: "#frame-upload" },
+        options: { frameId: frameButton.frameId, limit: 1, diagnostics: "summary" },
+      });
+      const frameUpload = await client.call("page.act", {
+        pageId,
+        action: {
+          type: "upload",
+          target: { ref: frameUploadQuery.nodes[0].ref },
+          paths: [uploadPaths[0]],
+        },
+        expect: {
+          element: {
+            target: { locator: { kind: "css", value: "#frame-upload" }, frameId: frameButton.frameId },
+            state: { fileCount: 1 },
+          },
+          timeoutMs: 1_000,
+        },
+        output: { snapshot: "none" },
       });
       const childCacheSeed = await client.call("page.query", {
         pageId,
@@ -1105,6 +1221,9 @@ function crossOriginScenarios(pageId) {
           && frameSilentDelta.mode === "full"
           && frameSilentDelta.updated.some((entry) => entry.node.attributes?.id === "frame-enabled")
           && frameSilentDelta.updated.some((entry) => entry.node.name === "Frame silent two")
+          && frameUploadQuery.nodes[0]?.state?.fileCount === 0
+          && frameUpload.verified
+          && frameUpload.proof?.fileCount === 1
           && childCacheSeed.diagnostics?.queries[0]?.cacheHit === false
           && parentMutation.verified
           && childCacheAfterParentMutation.diagnostics?.queries[0]?.cacheHit === true
@@ -1130,6 +1249,7 @@ function crossOriginScenarios(pageId) {
             frameSilentSelectedRefresh: Number(frameSilentOptionAfter.nodes[0]?.state?.selected === true),
             frameSilentPropertyDelta: Number(frameSilentDelta.revision > frameSilentBase.revision
               && frameSilentDelta.mode === "full"),
+            frameUpload: Number(frameUpload.verified && frameUpload.proof?.fileCount === 1),
             frameScopedCachePreserved: Number(
               childCacheSeed.diagnostics?.queries[0]?.cacheHit === false
                 && parentMutation.verified
@@ -1472,11 +1592,19 @@ async function run() {
   let navigationPageId;
   let eventPageId;
   let downloadPageId;
+  let uploadPageId;
   let largePageId;
   let navigationServer;
   let downloadServer;
   let largeServer;
   let failurePort;
+  const uploadDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-browser-agent-upload-"));
+  const uploadPaths = [
+    path.join(uploadDirectory, "agent-one.txt"),
+    path.join(uploadDirectory, "agent-two.txt"),
+  ];
+  fs.writeFileSync(uploadPaths[0], "agent upload one\n", "utf8");
+  fs.writeFileSync(uploadPaths[1], "agent upload two\n", "utf8");
   try {
     childServer = await serve(crossOriginChildHtml);
     parentServer = await serve(`<!doctype html><meta charset="utf-8"><title>Cross-origin evaluation fixture</title><button aria-label="Navigate frame" onclick="document.querySelector('iframe').src='http://127.0.0.1:${childServer.port}/frame-next.html'">Navigate frame</button><button aria-label="Remove frame" onclick="document.querySelector('iframe').remove()">Remove frame</button><button aria-label="Add frame" onclick="const frame=document.createElement('iframe');frame.title='Control frame';frame.src='http://127.0.0.1:${childServer.port}/frame-restored.html';document.body.append(frame)">Add frame</button><button aria-label="Parent action" onclick="document.title='Cross-origin updated'">Parent action</button><iframe title="Control frame" src="http://127.0.0.1:${childServer.port}/frame.html"></iframe>`);
@@ -1492,11 +1620,13 @@ async function run() {
     });
     const hello = await client.hello();
     assert.equal(hello.capabilities.includes("page.dialog"), true);
+    assert.equal(hello.capabilities.includes("page.act.upload"), true);
     const opened = await client.call("pages.open", { url: dataUrl(html) });
     pageId = opened.pageId;
     shadowPageId = (await client.call("pages.open", { url: dataUrl(shadowHtml) })).pageId;
     framePageId = (await client.call("pages.open", { url: dataUrl(frameHtml) })).pageId;
     crossOriginPageId = (await client.call("pages.open", { url: `http://127.0.0.1:${parentServer.port}/index.html` })).pageId;
+    uploadPageId = (await client.call("pages.open", { url: dataUrl(html) })).pageId;
     navigationPageId = (await client.call("pages.open", { url: `http://127.0.0.1:${navigationServer.port}/start.html` })).pageId;
     eventPageId = (await client.call("pages.open", { url: dataUrl(eventHtml) })).pageId;
     downloadPageId = (await client.call("pages.open", { url: `http://127.0.0.1:${downloadServer.port}/index.html` })).pageId;
@@ -1509,9 +1639,10 @@ async function run() {
       ...queryScenarios(largePageId),
       ...batchScenarios(pageId),
       ...semanticScenarios(pageId),
+      ...uploadScenarios(uploadPageId, uploadPaths),
       ...shadowScenarios(shadowPageId),
       ...frameScenarios(framePageId),
-      ...crossOriginScenarios(crossOriginPageId),
+      ...crossOriginScenarios(crossOriginPageId, uploadPaths),
       ...topLevelNavigationScenarios(navigationPageId, {
         next: `http://127.0.0.1:${navigationServer.port}/next.html`,
       }),
@@ -1548,6 +1679,7 @@ async function run() {
       if (navigationPageId) await client.call("pages.close", { pageId: navigationPageId }).catch(() => {});
       if (eventPageId) await client.call("pages.close", { pageId: eventPageId }).catch(() => {});
       if (downloadPageId) await client.call("pages.close", { pageId: downloadPageId }).catch(() => {});
+      if (uploadPageId) await client.call("pages.close", { pageId: uploadPageId }).catch(() => {});
       if (largePageId) await client.call("pages.close", { pageId: largePageId }).catch(() => {});
       await client.close().catch(() => {});
     }
@@ -1557,6 +1689,7 @@ async function run() {
     if (navigationServer) await closeServer(navigationServer);
     if (downloadServer) await closeServer(downloadServer);
     if (largeServer) await closeServer(largeServer);
+    fs.rmSync(uploadDirectory, { recursive: true, force: true });
   }
 }
 

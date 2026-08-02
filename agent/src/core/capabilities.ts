@@ -8,6 +8,8 @@ export function actionCapability(action: AgentAction): AgentActionCapability {
       return "page.act.click";
     case "fill":
       return "page.act.fill";
+    case "upload":
+      return "page.act.upload";
     case "type":
       return "page.act.type";
     case "press":

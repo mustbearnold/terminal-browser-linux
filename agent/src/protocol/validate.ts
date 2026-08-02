@@ -4,6 +4,8 @@ import {
   AGENT_PROTOCOL_VERSION,
   MAX_LOCATOR_DEPTH,
   MAX_PAGE_QUERY_BATCH,
+  MAX_UPLOAD_FILES,
+  MAX_UPLOAD_PATH_LENGTH,
   MAX_TARGET_INDEX,
   type AgentMessage,
 } from "./types";
@@ -31,6 +33,27 @@ function requireStringArray(value: unknown, field: string): void {
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item.length === 0)) {
     throw new AgentError("INVALID_MESSAGE", `${field} must be an array of non-empty strings`);
   }
+}
+
+function requireUploadPaths(value: unknown, field: string): void {
+  if (!Array.isArray(value) || value.length > MAX_UPLOAD_FILES) {
+    throw new AgentError("INVALID_MESSAGE", `${field} must contain at most ${MAX_UPLOAD_FILES} paths`);
+  }
+  for (const [index, item] of value.entries()) {
+    if (typeof item !== "string" || item.length === 0 || item.length > MAX_UPLOAD_PATH_LENGTH) {
+      throw new AgentError("INVALID_MESSAGE", `${field}[${index}] must be a non-empty path of at most ${MAX_UPLOAD_PATH_LENGTH} characters`);
+    }
+    if (item.includes("\u0000")) {
+      throw new AgentError("INVALID_MESSAGE", `${field}[${index}] must not contain a null byte`);
+    }
+    if (!isAbsolutePath(item)) {
+      throw new AgentError("INVALID_MESSAGE", `${field}[${index}] must be an absolute path`);
+    }
+  }
+}
+
+function isAbsolutePath(value: string): boolean {
+  return value.startsWith("/") || value.startsWith("\\\\") || /^[A-Za-z]:[\\/]/.test(value);
 }
 
 function requireNonNegativeInteger(value: unknown, field: string): void {
@@ -75,6 +98,14 @@ function optionalString(value: Record<string, unknown>, property: string, field 
 
 function optionalNonNegativeInteger(value: Record<string, unknown>, property: string, field = property): void {
   if (value[property] !== undefined) requireNonNegativeInteger(value[property], field);
+}
+
+function optionalFileCount(value: Record<string, unknown>, property: string, field = property): void {
+  if (value[property] === undefined) return;
+  requireNonNegativeInteger(value[property], field);
+  if (Number(value[property]) > MAX_UPLOAD_FILES) {
+    throw new AgentError("INVALID_MESSAGE", `${field} must be at most ${MAX_UPLOAD_FILES}`);
+  }
 }
 
 function validateSnapshotOptions(value: unknown): void {
@@ -186,6 +217,7 @@ function validateLocatorState(value: unknown, field: string): void {
   optionalBoolean(state, "visible", `${field}.visible`);
   optionalBoolean(state, "enabled", `${field}.enabled`);
   optionalBoolean(state, "disabled", `${field}.disabled`);
+  optionalFileCount(state, "fileCount", `${field}.fileCount`);
   optionalBoolean(state, "focused", `${field}.focused`);
   optionalString(state, "value", `${field}.value`);
   optionalBoolean(state, "checked", `${field}.checked`);
@@ -232,6 +264,10 @@ function validateAction(value: unknown): void {
     case "fill":
       validateTarget(action.target, "action.target");
       requireStringValue(action.value, "action.value");
+      return;
+    case "upload":
+      validateTarget(action.target, "action.target");
+      requireUploadPaths(action.paths, "action.paths");
       return;
     case "type":
       requireStringValue(action.text, "action.text");
@@ -329,6 +365,7 @@ function validateWaitElementState(value: unknown): void {
   optionalBoolean(state, "visible", "condition.state.visible");
   optionalBoolean(state, "enabled", "condition.state.enabled");
   optionalBoolean(state, "disabled", "condition.state.disabled");
+  optionalFileCount(state, "fileCount", "condition.state.fileCount");
   optionalBoolean(state, "focused", "condition.state.focused");
   optionalString(state, "value", "condition.state.value");
   optionalBoolean(state, "checked", "condition.state.checked");
