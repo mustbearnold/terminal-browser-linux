@@ -123,6 +123,12 @@ export function selectPeerPane(panes: readonly Pane[], browserPaneId: string): s
   return candidates[0].pane;
 }
 
+export function selectPeerPaneFromSelf(panes: readonly Pane[]): string {
+  const self = panes.find((pane) => pane.self);
+  if (!self) throw new Error("current terminal pane is not discoverable");
+  return selectPeerPane(panes, self.pane);
+}
+
 export function resolveAgentPane(
   panes: readonly Pane[],
   browserPaneId: string,

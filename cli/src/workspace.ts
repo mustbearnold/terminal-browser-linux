@@ -20,6 +20,7 @@ import {
   saveBinding,
   saveRecoveredBinding,
   selectPeerPane,
+  selectPeerPaneFromSelf,
   sendToPane,
 } from "terminal-browser-workspace";
 import type { WorkspaceBinding } from "terminal-browser-workspace";
@@ -29,6 +30,7 @@ export {
   promptTag,
   resolveAgentPane,
   selectPeerPane,
+  selectPeerPaneFromSelf,
 } from "terminal-browser-workspace";
 export type { WorkspaceBinding } from "terminal-browser-workspace";
 
@@ -80,6 +82,17 @@ async function openWorkspace(
   let agentPaneId = takeFlag(args, "--agent-pane");
   const left = takeBool(args, "--left");
   const requestedAgentKind = takeFlag(args, "--agent");
+  if (left && agentPaneId !== undefined) {
+    throw new Error("workspace open cannot combine --left with --agent-pane");
+  }
+  if (left) {
+    const panes = await backend.panes();
+    agentPaneId = selectPeerPaneFromSelf(panes);
+    const agentPane = panes.find((pane) => pane.pane === agentPaneId);
+    if (!agentPane || !(await backend.focusPane(agentPane.title))) {
+      throw new Error(`could not focus agent pane ${agentPaneId}`);
+    }
+  }
   const before = new Set((await browsers(backend)).map(recordKey));
   if (!args.some((value) => isDirection(value))) args.push("right");
   await openBrowser(args);
@@ -88,7 +101,6 @@ async function openWorkspace(
     ?? running.filter((candidate) => candidate.inCurrentTab).at(-1)
     ?? running.at(-1);
   if (!browser) throw new Error("browser opened but no workspace browser was registered");
-  if (left) agentPaneId = await peerPane(backend, browser.pane);
   const binding = agentPaneId === undefined
     ? undefined
     : await saveBinding(backend, recordKey(browser), agentPaneId, requestedAgentKind, browser.pane);

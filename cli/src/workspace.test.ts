@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { agentKindForPane, promptTag, resolveAgentPane, selectPeerPane } from "./workspace";
+import {
+  agentKindForPane,
+  promptTag,
+  resolveAgentPane,
+  selectPeerPane,
+  selectPeerPaneFromSelf,
+} from "./workspace";
 import type { PageAnnotation } from "terminal-browser-agent";
 import type { Pane } from "pixel-terminals";
 
@@ -63,6 +69,23 @@ test("--left can attach the only peer when the command runs in the agent pane", 
       pane("browser", false, "terminal-browser:browser-1"),
     ], "browser"),
     "agent",
+  );
+});
+
+test("--left selects the peer before opening so the browser can split beside it", () => {
+  assert.equal(
+    selectPeerPaneFromSelf([
+      pane("shell", true, "shell"),
+      pane("agent", false, "claude"),
+    ]),
+    "agent",
+  );
+});
+
+test("--left fails when the current terminal pane is not discoverable", () => {
+  assert.throws(
+    () => selectPeerPaneFromSelf([pane("agent", false, "claude")]),
+    /current terminal pane is not discoverable/,
   );
 });
 
