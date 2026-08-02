@@ -117,6 +117,11 @@ actions focus and verify that element before dispatching input, so they do not
 depend on ambient focus; omitting the target keeps the compact active-element
 path.
 
+Use `page.act` with `action.type: "focus"` when focus itself is the intended
+state transition. The action resolves and verifies a visible focusable control
+and returns `proof.focused: true`, including for controls inside frames and
+shadow roots.
+
 Use `page.act` with `action.type: "drag"` and semantic `source` and `target`
 references for native drag-and-drop. The live adapter resolves both elements,
 scrolls them into reach, sends a bounded native pointer path through Chromium,

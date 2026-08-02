@@ -483,6 +483,7 @@ function actionSchema(): AgentToolSchema {
   return {
     oneOf: [
       object({ type: string("Action type.", ["click"]), target: targetSchema(), button: string("Mouse button.", ["left", "middle", "right"]), clickCount: number("Click count.") }, ["type", "target"]),
+      object({ type: string("Action type.", ["focus"]), target: targetSchema() }, ["type", "target"]),
       object({ type: string("Action type.", ["fill"]), target: targetSchema(), value: string("Replacement value.") }, ["type", "target", "value"]),
       object({ type: string("Action type.", ["upload"]), target: targetSchema(), paths: { type: "array", items: string("Absolute local file path.") } }, ["type", "target", "paths"]),
       object({ type: string("Action type.", ["drag"]), source: targetSchema(), target: targetSchema() }, ["type", "source", "target"]),

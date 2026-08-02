@@ -61,6 +61,7 @@ export class FixtureRuntime implements AgentRuntime {
       "page.act.batch",
       "page.act.status",
       "page.act.click",
+      "page.act.focus",
       "page.act.fill",
       "page.act.type",
       "page.act.press",
@@ -111,7 +112,7 @@ class FixturePageBackend implements PageBackend {
   private nextSequence = 0;
   private ready = false;
   private value = "";
-  private focused = false;
+  private focusedRef: string | null = null;
 
   constructor(pageId: PageId) {
     this.pageId = pageId;
@@ -163,6 +164,7 @@ class FixturePageBackend implements PageBackend {
         role: "button",
         name: "Continue",
         ...(includeText ? { text: "Continue" } : {}),
+        state: { focused: this.focusedRef === "r1" },
         ...(includeGeometry ? { box: { x: 12, y: 12, width: 96, height: 32 } } : {}),
         visible: true,
         enabled: true,
@@ -176,7 +178,7 @@ class FixturePageBackend implements PageBackend {
         role: "textbox",
         name: "Name",
         ...(includeText ? { text: this.value } : {}),
-        state: { value: this.value, focused: this.focused },
+        state: { value: this.value, focused: this.focusedRef === "r2" },
         ...(includeGeometry ? { box: { x: 12, y: 56, width: 180, height: 32 } } : {}),
         visible: true,
         enabled: true,
@@ -257,6 +259,8 @@ class FixturePageBackend implements PageBackend {
     switch (action.type) {
       case "click":
         return this.click(action, token, expect, signal);
+      case "focus":
+        return this.focus(action, token, expect, signal);
       case "fill":
         return this.fill(action, token, expect, signal);
       case "type":
@@ -305,6 +309,41 @@ class FixturePageBackend implements PageBackend {
     };
   }
 
+  private async focus(
+    action: Extract<AgentAction, { type: "focus" }>,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+    signal?: AbortSignal,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    const snapshot = await this.actionSnapshot(token, signal);
+    const target = this.resolver.resolve(action.target, snapshot);
+    if (!target.node.visible || !target.node.enabled || !target.node.focusable) {
+      throw new AgentError("NOT_INTERACTABLE", "fixture target is not a visible focusable control", { retryable: true });
+    }
+    throwIfAborted(signal);
+    this.focusedRef = String(target.ref);
+    this.revision += 1;
+    const identity = await this.identity(signal);
+    this.emitChanged();
+    return {
+      verified: await this.matches(expect, identity, signal),
+      effects: [{ type: "focus.changed", data: { focused: true } }],
+      proof: {
+        pageId: identity.pageId,
+        documentId: identity.documentId,
+        revision: identity.revision,
+        target: target.ref,
+        frameId: target.node.frameId,
+        focused: true,
+        role: target.node.role,
+        name: target.node.name,
+        value: target.node.state?.value,
+        url: identity.url,
+        title: identity.title,
+      },
+    };
+  }
+
   private async fill(
     action: Extract<AgentAction, { type: "fill" }>,
     token?: SnapshotToken,
@@ -318,7 +357,7 @@ class FixturePageBackend implements PageBackend {
     }
     throwIfAborted(signal);
     this.value = action.value;
-    this.focused = true;
+    this.focusedRef = String(target.ref);
     this.revision += 1;
     const identity = await this.identity(signal);
     this.emitChanged();
@@ -355,8 +394,8 @@ class FixturePageBackend implements PageBackend {
       throw new AgentError("NOT_INTERACTABLE", "fixture target is not editable", { retryable: true });
     }
     throwIfAborted(signal);
-    if (!target && !this.focused) throw new AgentError("NOT_INTERACTABLE", "fixture has no focused editable control", { retryable: true });
-    this.focused = true;
+    if (!target && this.focusedRef !== "r2") throw new AgentError("NOT_INTERACTABLE", "fixture has no focused editable control", { retryable: true });
+    this.focusedRef = target ? String(target.ref) : this.focusedRef;
     this.value += action.text;
     this.revision += 1;
     const identity = await this.identity(signal);
@@ -394,8 +433,8 @@ class FixturePageBackend implements PageBackend {
       throw new AgentError("NOT_INTERACTABLE", "fixture target is not focusable", { retryable: true });
     }
     throwIfAborted(signal);
-    if (!target && !this.focused) throw new AgentError("NOT_INTERACTABLE", "fixture has no focused control", { retryable: true });
-    this.focused = true;
+    if (!target && this.focusedRef === null) throw new AgentError("NOT_INTERACTABLE", "fixture has no focused control", { retryable: true });
+    this.focusedRef = target ? String(target.ref) : this.focusedRef;
     if (action.key.toLocaleLowerCase() === "enter") this.ready = true;
     this.revision += 1;
     const identity = await this.identity(signal);
@@ -430,7 +469,7 @@ class FixturePageBackend implements PageBackend {
     this.revision = 0;
     this.ready = false;
     this.value = "";
-    this.focused = false;
+    this.focusedRef = null;
     const identity = await this.identity(signal);
     this.events.publish(this.event("navigation", { url: identity.url, inPage: false }));
     return {
@@ -465,7 +504,7 @@ class FixturePageBackend implements PageBackend {
     this.revision = 0;
     this.ready = false;
     this.value = "";
-    this.focused = false;
+    this.focusedRef = null;
     const identity = await this.identity(signal);
     this.events.publish(this.event("navigation", { url: identity.url, inPage: false }));
     return {

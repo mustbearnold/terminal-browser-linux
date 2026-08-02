@@ -6,6 +6,8 @@ export function actionCapability(action: AgentAction): AgentActionCapability {
   switch (action.type) {
     case "click":
       return "page.act.click";
+    case "focus":
+      return "page.act.focus";
     case "fill":
       return "page.act.fill";
     case "upload":

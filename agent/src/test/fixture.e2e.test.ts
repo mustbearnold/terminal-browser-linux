@@ -44,6 +44,7 @@ test("runs the deterministic agent control contract", async () => {
   );
   assert.equal(hello.capabilities.includes("page.act"), true);
   assert.equal(hello.capabilities.includes("page.act.click"), true);
+  assert.equal(hello.capabilities.includes("page.act.focus"), true);
   assert.equal(hello.capabilities.includes("page.act.fill"), true);
   assert.equal(hello.capabilities.includes("page.act.history"), true);
   assert.equal(hello.capabilities.includes("page.query.batch"), true);
@@ -283,13 +284,27 @@ test("runs the deterministic agent control contract", async () => {
   );
   assert.equal(read.node.name, "Name");
 
+  const focused = result<{ verified: boolean; proof?: ActionProof; snapshot?: PageSnapshot }>(
+    await router.handle(
+      request("page.act", {
+        pageId: FIXTURE_PAGE_ID,
+        token: token(read),
+        action: { type: "focus", target: { ref: read.node.ref } },
+      }),
+      context,
+    ),
+  );
+  assert.equal(focused.verified, true);
+  assert.equal(focused.proof?.focused, true);
+  assert.equal(focused.proof?.target, read.node.ref);
+
   result(await router.handle(request("page.observe", { pageId: FIXTURE_PAGE_ID, events: ["dom.changed"] }), context));
 
   const filled = result<{ verified: boolean; proof?: ActionProof; snapshot?: PageSnapshot }>(
     await router.handle(
       request("page.act", {
         pageId: FIXTURE_PAGE_ID,
-        token: token(read),
+        token: token(focused.snapshot!),
         action: {
           type: "fill",
           target: {

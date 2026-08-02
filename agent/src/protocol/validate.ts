@@ -267,6 +267,9 @@ function validateAction(value: unknown): void {
         }
       }
       return;
+    case "focus":
+      validateTarget(action.target, "action.target");
+      return;
     case "fill":
       validateTarget(action.target, "action.target");
       requireStringValue(action.value, "action.value");

@@ -990,6 +990,8 @@ export class ElectronPageBackend implements PageBackend {
     switch (action.type) {
       case "click":
         return this.click(action, token, expect, signal);
+      case "focus":
+        return this.focus(action, token, expect, signal);
       case "fill":
         return this.fill(action, token, expect, signal);
       case "upload":
@@ -1118,6 +1120,45 @@ export class ElectronPageBackend implements PageBackend {
     };
     const verified = hasExpectation(expect) ? outcome.satisfied : true;
     return { verified, effects, proof };
+  }
+
+  private async focus(
+    action: Extract<AgentAction, { type: "focus" }>,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+    signal?: AbortSignal,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    const before = await this.identity(signal);
+    const target = await this.resolveActionTarget(action.target, token, before, signal);
+    const frameId = String(target.node.frameId);
+    const inspection = await this.inspect(target.ref, frameId, signal);
+    if (!inspection.ok || !inspection.visible || !inspection.enabled || target.node.focusable !== true) {
+      throw new AgentError("NOT_INTERACTABLE", "target is not a visible focusable control", { retryable: true });
+    }
+
+    const focused = await this.focusTarget(target, signal, "focusing");
+    if (!focused.ok || focused.enabled === false || focused.visible === false || focused.focused !== true) {
+      throw new AgentError("ACTION_UNVERIFIED", "target did not receive focus", { retryable: true });
+    }
+    this.invalidateFrameSnapshots(frameId);
+    const outcome = await this.waitForOutcome(before, expect, signal);
+    const after = outcome.identity;
+    const effects = this.transitionEffects(before, after);
+    effects.push({ type: "focus.changed", data: { frameId: target.node.frameId, focused: true } });
+    const proof: ActionProof = {
+      pageId: after.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
+      target: target.ref,
+      frameId: target.node.frameId,
+      focused: true,
+      role: focused.role ?? inspection.role,
+      name: focused.name ?? inspection.name,
+      value: focused.value ?? inspection.value,
+      url: after.url,
+      title: after.title,
+    };
+    return { verified: hasExpectation(expect) ? outcome.satisfied : true, effects, proof };
   }
 
   private async upload(

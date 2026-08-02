@@ -89,6 +89,17 @@ test("validates and dispatches structured calls through the typed client", async
   assert.equal(read.node.name, "Name");
   assert.equal(read.revision, 0);
 
+  const focused = await tools.callTool("terminal_browser_page_act", {
+    pageId: String(FIXTURE_PAGE_ID),
+    action: {
+      type: "focus",
+      target: { ref: String(read.node.ref) },
+    },
+    output: { snapshot: "none" },
+  });
+  assert.equal(focused.verified, true);
+  assert.equal(focused.proof?.focused, true);
+
   const batch = await tools.callTool("terminal_browser_page_act_batch", {
     pageId: String(FIXTURE_PAGE_ID),
     steps: [{

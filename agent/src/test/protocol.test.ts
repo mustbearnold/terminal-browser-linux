@@ -222,6 +222,14 @@ test("validates nested agent request shapes at the wire boundary", () => {
   });
   assert.equal(reload.kind, "request");
 
+  const focus = parseAgentMessage({
+    ...listRequest(),
+    op: "page.act",
+    pageId: "page-1",
+    action: { type: "focus", target: { ref: "r1" } },
+  });
+  assert.equal(focus.kind, "request");
+
   const targetedKeyboard = parseAgentMessage({
     ...listRequest(),
     op: "page.act",

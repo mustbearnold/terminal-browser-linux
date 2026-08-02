@@ -50,6 +50,7 @@ export class BrowserAgentRuntime implements AgentRuntime {
       "page.act.batch",
       "page.act.status",
       "page.act.click",
+      "page.act.focus",
       "page.act.fill",
       "page.act.upload",
       "page.act.drag",

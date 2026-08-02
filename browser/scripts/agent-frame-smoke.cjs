@@ -45,6 +45,17 @@ async function run() {
         options: { interactiveOnly: false, includeGeometry: false },
       });
 
+      const focused = await client.call("page.act", {
+        pageId,
+        action: {
+          type: "focus",
+          target: { locator: { kind: "role", role: "textbox", name: "Frame name", exact: true } },
+        },
+        output: { snapshot: "none" },
+      });
+      assert.equal(focused.verified, true);
+      assert.equal(focused.proof?.focused, true);
+
       const filled = await client.call("page.act", {
         pageId,
         action: {
@@ -86,6 +97,7 @@ async function run() {
       const delta = await client.snapshotDelta(pageId, typedDelta);
       const dynamicButton = after.nodes.find((node) => node.name === "Frame dynamic");
       assert.equal(filled.verified, true);
+      assert.equal(focused.verified, true);
       assert.equal(typed.proof?.value, "Ada Lovelace");
       assert.equal(clicked.verified, true);
       assert.ok(dynamicButton, "same-origin frame mutation was not exposed in the next snapshot");
@@ -100,6 +112,7 @@ async function run() {
         frameId: frameButton.frameId,
         box: frameButton.box,
         typedValue: typed.proof?.value,
+        focusVerified: focused.verified && focused.proof?.focused === true,
         dynamicNode: dynamicButton.name,
         incrementalDeltaMode: typedDelta.mode,
         fallbackDeltaMode: delta.mode,

@@ -595,6 +595,11 @@ function semanticScenarios(pageId) {
           pageId,
           base: snapshotToken(silentPropertyBase),
         });
+        const focused = await client.call("page.act", {
+          pageId,
+          action: { type: "focus", target: { locator: { kind: "role", role: "textbox", name: "Full name", exact: true } } },
+          output: { snapshot: "none" },
+        });
         const filled = await client.call("page.act", {
           pageId,
           action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Full name", exact: true } }, value: "Ada" },
@@ -745,7 +750,8 @@ function semanticScenarios(pageId) {
           && typeof filled.proof?.documentId === "string"
           && Number.isSafeInteger(filled.proof?.revision)
           && typeof filled.proof?.frameId === "string";
-        const passed = filled.verified && filled.proof?.name === "Full name" && filled.proof.value === "Ada"
+        const passed = focused.verified && focused.proof?.focused === true
+          && filled.verified && filled.proof?.name === "Full name" && filled.proof.value === "Ada"
           && compactProof
           && scheduleSilentValue.verified
           && silentValueSeed.nodes[0]?.state?.value === ""
@@ -813,6 +819,7 @@ function semanticScenarios(pageId) {
             trustedCheckEvents: Number(trustedCheckStatus.satisfied),
             nativeDoubleClick: Number(doubleClicked.verified),
             targetedElementExpectations: Number(expandedAction.verified && removedAction.verified),
+            focusVerified: Number(focused.verified && focused.proof?.focused === true),
           },
         };
       },
@@ -999,6 +1006,11 @@ function shadowScenarios(pageId, uploadPaths) {
         locator: { kind: "role", role: "button", name: "Shadow action", exact: true },
       });
       const liveShadowButton = liveShadow.nodes[0];
+      const focused = await client.call("page.act", {
+        pageId,
+        action: { type: "focus", target: { locator: { kind: "role", role: "textbox", name: "Shadow name", exact: true } } },
+        output: { snapshot: "none" },
+      });
       const filled = await client.call("page.act", {
         pageId,
         action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Shadow name", exact: true } }, value: "Ada" },
@@ -1056,6 +1068,7 @@ function shadowScenarios(pageId, uploadPaths) {
       });
       const passed = shadowButton?.frameId === "main" && shadowTextbox?.frameId === "main"
         && Boolean(liveShadowButton?.parent)
+        && focused.verified && focused.proof?.focused === true
         && filled.verified && typed.proof?.value === "Ada Lovelace" && clicked.verified && Boolean(dynamic)
         && attachedLate.verified
         && late.matchCount === 1
@@ -1077,6 +1090,7 @@ function shadowScenarios(pageId, uploadPaths) {
           shadowFileUpload: Number(shadowUploaded.verified && shadowUploaded.proof?.fileCount === 1),
           shadowFileClear: Number(shadowCleared.verified && shadowCleared.proof?.fileCount === 0),
           shadowFileClearEvent: Number(shadowUploadStatus.node.text === "change false 0"),
+          shadowFocus: Number(focused.verified && focused.proof?.focused === true),
         },
       };
     },
@@ -1100,6 +1114,11 @@ function frameScenarios(pageId, uploadPaths) {
       const initial = await client.call("page.snapshot", { pageId, options: { includeGeometry: true } });
       const frameButton = initial.nodes.find((node) => node.name === "Frame action");
       const frameTextbox = initial.nodes.find((node) => node.name === "Frame name");
+      const focused = await client.call("page.act", {
+        pageId,
+        action: { type: "focus", target: { locator: { kind: "role", role: "textbox", name: "Frame name", exact: true } } },
+        output: { snapshot: "none" },
+      });
       const filled = await client.call("page.act", {
         pageId,
         action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Frame name", exact: true } }, value: "Ada" },
@@ -1139,6 +1158,7 @@ function frameScenarios(pageId, uploadPaths) {
       const dynamic = after.nodes.find((node) => node.name === "Frame dynamic");
       const passed = Boolean(frameButton?.frameId && frameButton.frameId !== "main")
         && frameTextbox?.frameId === frameButton.frameId && frameButton.box?.width > 0
+        && focused.verified && focused.proof?.focused === true
         && filled.verified && frameUploaded.verified && frameUploaded.proof?.fileCount === 1
         && frameCleared.verified && frameCleared.proof?.fileCount === 0
         && frameUploadStatus.node.text === "change false 0"
@@ -1151,6 +1171,7 @@ function frameScenarios(pageId, uploadPaths) {
           frameFileUpload: Number(frameUploaded.verified && frameUploaded.proof?.fileCount === 1),
           frameFileClear: Number(frameCleared.verified && frameCleared.proof?.fileCount === 0),
           frameFileClearEvent: Number(frameUploadStatus.node.text === "change false 0"),
+          frameFocus: Number(focused.verified && focused.proof?.focused === true),
         },
       };
     },
@@ -1336,6 +1357,17 @@ function crossOriginScenarios(pageId, uploadPaths) {
         locator: { kind: "role", role: "button", name: "Frame action", exact: true },
         options: { limit: 1, diagnostics: "summary" },
       });
+      const focused = await client.call("page.act", {
+        pageId,
+        action: {
+          type: "focus",
+          target: {
+            locator: { kind: "role", role: "textbox", name: "Frame name", exact: true },
+            frameId: frameTextbox.frameId,
+          },
+        },
+        output: { snapshot: "none" },
+      });
       const hovered = await client.call("page.act", {
         pageId,
         action: { type: "hover", target: { locator: { kind: "css", value: 'button[aria-label="Frame action"]' } } },
@@ -1451,6 +1483,7 @@ function crossOriginScenarios(pageId, uploadPaths) {
           && childCacheAfterParentMutation.diagnostics.queries[0].elementsEvaluated === 0
           && globalCacheSeed.diagnostics?.queries[0]?.cacheHit === false
           && globalCacheAfterParentMutation.diagnostics?.queries[0]?.cacheHit === false
+          && focused.verified && focused.proof?.focused === true
           && hovered.verified && scrolled.verified && selected.proof?.value === "two"
           && checked.proof?.value === "true" && filled.verified && typed.proof?.value === "Ada Lovelace"
           && clicked.verified && clicked.proof?.frameId === frameButton.frameId
@@ -1468,6 +1501,7 @@ function crossOriginScenarios(pageId, uploadPaths) {
               && frameSilentValueAfter.diagnostics?.queries[0]?.cacheHit === false),
             frameSilentCheckedRefresh: Number(frameSilentCheckAfter.nodes[0]?.state?.checked === true),
             frameSilentSelectedRefresh: Number(frameSilentOptionAfter.nodes[0]?.state?.selected === true),
+            frameFocus: Number(focused.verified && focused.proof?.focused === true),
             frameSilentPropertyDelta: Number(frameSilentDelta.revision > frameSilentBase.revision
               && frameSilentDelta.mode === "full"),
             frameUpload: Number(frameUpload.verified && frameUpload.proof?.fileCount === 1),

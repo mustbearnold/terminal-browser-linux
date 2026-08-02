@@ -39,6 +39,7 @@ export type AgentCapability =
   | "page.act.batch"
   | "page.act.status"
   | "page.act.click"
+  | "page.act.focus"
   | "page.act.fill"
   | "page.act.upload"
   | "page.act.drag"
@@ -329,6 +330,7 @@ export type Target =
 
 export type AgentAction =
   | { type: "click"; target: Target; button?: "left" | "middle" | "right"; clickCount?: number }
+  | { type: "focus"; target: Target }
   | { type: "fill"; target: Target; value: string }
   | { type: "upload"; target: Target; paths: readonly string[] }
   | { type: "drag"; source: Target; target: Target }
@@ -385,6 +387,7 @@ export interface ActionProof extends PageRevision {
   source?: SnapshotRef;
   target?: SnapshotRef;
   frameId?: FrameId;
+  focused?: boolean;
   role?: string;
   name?: string;
   value?: string;

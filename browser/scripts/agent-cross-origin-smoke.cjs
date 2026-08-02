@@ -20,12 +20,13 @@ async function run() {
     const socket = await waitForSocket(existing, 15_000, output);
     client = await AgentClient.connect(socket, {
       clientId: "cross-origin-smoke",
-      capabilities: ["page.act.hover", "unsafe.eval"],
+      capabilities: ["page.act.hover", "page.act.focus", "unsafe.eval"],
     });
     const hello = await client.hello();
     assert.equal(hello.capabilities.includes("page.act.hover"), true);
+    assert.equal(hello.capabilities.includes("page.act.focus"), true);
     assert.equal(hello.capabilities.includes("page.act.scroll"), true);
-    assert.deepEqual(hello.accepted, ["page.act.hover"]);
+    assert.deepEqual(hello.accepted, ["page.act.hover", "page.act.focus"]);
     assert.deepEqual(hello.unsupported, ["unsafe.eval"]);
     const opened = await client.call("pages.open", { url: `http://127.0.0.1:${parentServer.port}/index.html` });
     pageId = opened.pageId;
@@ -237,6 +238,20 @@ async function run() {
       const activeFrameId = restoredFrame?.frameId;
       assert.ok(activeFrameId, "restored frame was not available for control");
 
+      const focused = await client.call("page.act", {
+        pageId,
+        action: {
+          type: "focus",
+          target: {
+            locator: { kind: "role", role: "textbox", name: "Frame name", exact: true },
+            frameId: activeFrameId,
+          },
+        },
+        output: { snapshot: "none" },
+      });
+      assert.equal(focused.verified, true);
+      assert.equal(focused.proof?.focused, true);
+
       const hovered = await client.call("page.act", {
         pageId,
         action: { type: "hover", target: { locator: { kind: "css", value: 'button[aria-label="Frame action"]' } } },
@@ -339,6 +354,7 @@ async function run() {
       const delta = await client.snapshotDelta(pageId, typedDelta);
       const dynamicButton = after.nodes.find((node) => node.name === "Frame dynamic");
       assert.equal(filled.verified, true);
+      assert.equal(focused.verified, true);
       assert.equal(hovered.verified, true);
       assert.equal(scrolled.verified, true);
       assert.match(scrolled.proof?.value ?? "", /,\d+/);
@@ -399,6 +415,7 @@ async function run() {
         hoverVerified: hovered.verified,
         scrollVerified: scrolled.verified,
         targetedPressVerified: pressed.verified && pressed.proof?.target !== undefined,
+        focusVerified: focused.verified && focused.proof?.focused === true,
         frameScopedQueryVerified: queryBatch.queries[0].matchCount === 3
           && queryBatch.queries[0].nodes.every((node) => node.frameId === frameButton.frameId),
         liveAncestryVerified: Boolean(queryBatch.queries[0].nodes[0]?.parent)

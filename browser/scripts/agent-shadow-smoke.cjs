@@ -50,6 +50,17 @@ async function run() {
       assert.equal(shadowButton.frameId, "main");
       assert.equal(shadowTextbox.frameId, "main");
 
+      const focused = await client.call("page.act", {
+        pageId,
+        action: {
+          type: "focus",
+          target: { locator: { kind: "role", role: "textbox", name: "Shadow name", exact: true } },
+        },
+        output: { snapshot: "none" },
+      });
+      assert.equal(focused.verified, true);
+      assert.equal(focused.proof?.focused, true);
+
       const filled = await client.call("page.act", {
         pageId,
         action: {
@@ -154,6 +165,7 @@ async function run() {
       const delta = await client.snapshotDelta(pageId, typedDelta);
       const dynamicButton = after.nodes.find((node) => node.name === "Dynamic action");
       assert.equal(filled.verified, true);
+      assert.equal(focused.verified, true);
       assert.equal(typed.verified, true);
       assert.equal(typed.proof?.value, "Ada Lovelace");
       assert.equal(clicked.verified, true);
@@ -168,6 +180,7 @@ async function run() {
         protocol: `${hello.protocol}/${hello.version}`,
         shadowNodes: initial.nodes.length,
         typedValue: typed.proof?.value,
+        focusVerified: focused.verified && focused.proof?.focused === true,
         targetedPress: Number(pressed.verified && pressed.proof?.target !== undefined),
         dynamicNode: dynamicButton.name,
         captureBytes: captured?.data.length ?? 0,
