@@ -17,6 +17,13 @@ const SETUP_HINT = [
 interface KittyWindow {
   id: number;
   title: string;
+  cwd?: string;
+  foreground_processes?: KittyProcess[];
+}
+
+interface KittyProcess {
+  cwd?: string;
+  cmdline?: string[];
 }
 
 interface KittyTab {
@@ -106,11 +113,14 @@ export function createKitty(env: NodeJS.ProcessEnv = process.env): Backend {
       for (const osWindow of await osWindows()) {
         for (const tab of osWindow.tabs) {
           for (const window of tab.windows) {
+            const foreground = window.foreground_processes?.at(-1);
             panes.push({
               window: String(osWindow.id),
               tab: String(tab.id),
               pane: String(window.id),
               title: window.title,
+              cwd: window.cwd ?? foreground?.cwd,
+              command: foreground?.cmdline?.[0] ? path.basename(foreground.cmdline[0]) : undefined,
               self: window.id === self,
             });
           }

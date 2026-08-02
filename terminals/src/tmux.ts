@@ -36,17 +36,19 @@ export function createTmux(env: NodeJS.ProcessEnv = process.env): Backend {
         "list-panes",
         "-a",
         "-F",
-        "#{session_name}\t#{window_id}\t#{pane_id}\t#{pane_title}",
+        "#{session_name}\t#{window_id}\t#{pane_id}\t#{pane_title}\t#{pane_current_path}\t#{pane_current_command}",
       ]);
       const panes: Pane[] = [];
       for (const line of listing.split("\n")) {
         if (!line.trim()) continue;
-        const [session, window, pane, ...title] = line.split("\t");
+        const [session, window, pane, title, cwd, command] = line.split("\t");
         panes.push({
           window: session,
           tab: window,
           pane,
-          title: title.join("\t"),
+          title,
+          cwd: cwd || undefined,
+          command: command || undefined,
           self: pane === self,
         });
       }

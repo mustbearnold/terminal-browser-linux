@@ -27,6 +27,8 @@ export interface WorkspaceBinding {
   agentPaneWindow?: string;
   agentPaneTab?: string;
   agentPaneTitle?: string;
+  agentPaneCwd?: string;
+  agentPaneCommand?: string;
   updatedAt: string;
 }
 
@@ -201,6 +203,8 @@ async function saveBinding(
     agentPaneWindow: agentPane.window,
     agentPaneTab: agentPane.tab,
     agentPaneTitle: agentPane.title,
+    agentPaneCwd: agentPane.cwd,
+    agentPaneCommand: agentPane.command,
     updatedAt: new Date().toISOString(),
   };
   const bindings = loadBindings().filter((candidate) => candidate.browserKey !== browserKey);
@@ -240,7 +244,7 @@ export function resolveAgentPane(
   binding: WorkspaceBinding,
 ): string {
   const peers = peerPanes(panes, browserPaneId);
-  const direct = peers.find((pane) => pane.pane === binding.agentPaneId);
+  const direct = agentPanes(panes, browserPaneId).find((pane) => pane.pane === binding.agentPaneId);
   if (direct) return direct.pane;
   const fingerprintMatches = peers.filter((pane) =>
     binding.agentPaneWindow !== undefined &&
@@ -251,6 +255,11 @@ export function resolveAgentPane(
     pane.title === binding.agentPaneTitle,
   );
   if (fingerprintMatches.length === 1) return fingerprintMatches[0].pane;
+  const identityMatches = agentPanes(panes, browserPaneId).filter((pane) => matchesPaneIdentity(pane, binding));
+  if (identityMatches.length === 1) return identityMatches[0].pane;
+  if (identityMatches.length > 1) {
+    throw new Error(`workspace binding matches ${identityMatches.length} terminal panes; pass --pane <pane-id>`);
+  }
   return selectPeerPane(panes, browserPaneId);
 }
 
@@ -282,6 +291,20 @@ function peerPanes(panes: readonly Pane[], browserPaneId: string): Pane[] {
   );
 }
 
+function agentPanes(panes: readonly Pane[], browserPaneId: string): Pane[] {
+  return panes.filter((pane) => pane.pane !== browserPaneId && !pane.title.includes("terminal-browser:"));
+}
+
+function matchesPaneIdentity(pane: Pane, binding: WorkspaceBinding): boolean {
+  const hasCwd = binding.agentPaneCwd !== undefined;
+  const hasCommand = binding.agentPaneCommand !== undefined;
+  const hasTitle = binding.agentPaneTitle !== undefined;
+  if (hasCwd && hasTitle && pane.cwd === binding.agentPaneCwd && pane.title === binding.agentPaneTitle) return true;
+  if (hasCwd && hasCommand && pane.cwd === binding.agentPaneCwd && pane.command === binding.agentPaneCommand) return true;
+  if (!hasCwd && hasTitle && pane.title === binding.agentPaneTitle) return true;
+  return !hasCwd && !hasTitle && hasCommand && pane.command === binding.agentPaneCommand;
+}
+
 function saveRecoveredBinding(binding: WorkspaceBinding, pane: Pane): void {
   const recovered: WorkspaceBinding = {
     ...binding,
@@ -289,6 +312,8 @@ function saveRecoveredBinding(binding: WorkspaceBinding, pane: Pane): void {
     agentPaneWindow: pane.window,
     agentPaneTab: pane.tab,
     agentPaneTitle: pane.title,
+    agentPaneCwd: pane.cwd,
+    agentPaneCommand: pane.command,
     updatedAt: new Date().toISOString(),
   };
   saveBindings(loadBindings().map((candidate) =>
@@ -339,6 +364,11 @@ function loadBindings(): WorkspaceBinding[] {
   return parsed.bindings.map((value) => {
     if (!isRecord(value) || typeof value.browserKey !== "string" || typeof value.agentPaneId !== "string" || typeof value.agentKind !== "string" || typeof value.updatedAt !== "string") {
       throw new Error("workspace bindings contain an invalid entry");
+    }
+    for (const field of ["agentPaneWindow", "agentPaneTab", "agentPaneTitle", "agentPaneCwd", "agentPaneCommand"]) {
+      if (value[field] !== undefined && typeof value[field] !== "string") {
+        throw new Error("workspace bindings contain an invalid entry");
+      }
     }
     return value as unknown as WorkspaceBinding;
   });

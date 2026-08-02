@@ -10,6 +10,8 @@ interface WeztermPane {
   tab_id: number;
   pane_id: number;
   title: string;
+  cwd?: string;
+  cwd_url?: string;
 }
 
 export function createWezterm(env: NodeJS.ProcessEnv = process.env): Backend {
@@ -28,6 +30,7 @@ export function createWezterm(env: NodeJS.ProcessEnv = process.env): Backend {
         tab: String(pane.tab_id),
         pane: String(pane.pane_id),
         title: pane.title,
+        cwd: pane.cwd ?? pane.cwd_url,
         self: pane.pane_id === selfId,
       }));
     },

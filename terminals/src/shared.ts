@@ -8,6 +8,8 @@ export interface Pane {
   tab: string;
   pane: string;
   title: string;
+  cwd?: string;
+  command?: string;
   self: boolean;
 }
 
