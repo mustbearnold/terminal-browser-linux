@@ -6,7 +6,7 @@ import { DeviceFrame } from "./device-frame";
 import { Icon } from "./icons";
 import type { IconName } from "./icons";
 import { PageContextMenu } from "./context-menu";
-import { NewTabCard, PaletteCard, UrlCard } from "./modals";
+import { AnnotationCard, NewTabCard, PaletteCard, UrlCard } from "./modals";
 import { DownloadHud, FindBar, ZoomHud } from "./overlays";
 import { PopupModal } from "./popup-modal";
 import { TabStrip } from "./tab-strip";
@@ -17,6 +17,7 @@ import type {
   ChromeLayout,
   DeviceView,
   DownloadView,
+  AnnotationView,
   NewTabView,
   PageMenuView,
   PaletteView,
@@ -40,6 +41,7 @@ export function Chrome({
   zoomHud,
   download,
   pageMenu,
+  annotation,
   dividerEngaged,
   pageSurface,
   popupSurface,
@@ -61,6 +63,7 @@ export function Chrome({
   zoomHud: number | null;
   download: DownloadView | null;
   pageMenu: PageMenuView | null;
+  annotation: AnnotationView | null;
   dividerEngaged: boolean;
   pageSurface: Surface;
   popupSurface: Surface;
@@ -104,6 +107,9 @@ export function Chrome({
       )}
       {pageMenu && (
         <PageContextMenu view={pageMenu} actions={actions} layout={layout} theme={theme} />
+      )}
+      {annotation && (
+        <AnnotationCard view={annotation} actions={actions} layout={layout} theme={theme} />
       )}
       {findOpen && (
         <FindBar state={state} actions={actions} layout={layout} theme={theme} />
@@ -355,4 +361,3 @@ function ToolbarButton({
     </Box>
   );
 }
-

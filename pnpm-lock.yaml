@@ -38,6 +38,9 @@ importers:
       terminal-browser-agent:
         specifier: workspace:*
         version: link:../agent
+      terminal-browser-workspace:
+        specifier: workspace:*
+        version: link:../workspace
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -63,6 +66,9 @@ importers:
       terminal-browser-agent:
         specifier: workspace:*
         version: link:../agent
+      terminal-browser-workspace:
+        specifier: workspace:*
+        version: link:../workspace
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -204,6 +210,22 @@ importers:
         version: 5.9.3
 
   terminals:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+
+  workspace:
+    dependencies:
+      pixel-store:
+        specifier: workspace:*
+        version: link:../store
+      pixel-terminals:
+        specifier: workspace:*
+        version: link:../terminals
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

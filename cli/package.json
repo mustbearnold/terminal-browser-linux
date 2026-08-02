@@ -13,7 +13,8 @@
   "dependencies": {
     "pixel-store": "workspace:*",
     "pixel-terminals": "workspace:*",
-    "terminal-browser-agent": "workspace:*"
+    "terminal-browser-agent": "workspace:*",
+    "terminal-browser-workspace": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

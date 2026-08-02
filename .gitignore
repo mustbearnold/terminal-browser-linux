@@ -46,6 +46,7 @@ browser/dist/
 cli/dist/
 terminals/dist/
 store/dist/
+workspace/dist/
 .claude/worktrees/
 tools/
 dist-release/

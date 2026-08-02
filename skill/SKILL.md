@@ -85,13 +85,14 @@ Commands:
   list
   panes [--json]
   close --browser <key>
-  note --browser <key> --target '<json>' --note <text> [--commit]
+  note --browser <key> (--target '<json>' | --at <x> <y>) --note <text> [--commit]
 
 Examples:
   terminal-browser workspace panes
   terminal-browser workspace open https://example.com right --agent-pane 3
   terminal-browser workspace attach --browser 90107-1 --pane 3 --agent claude
   terminal-browser workspace note --browser 90107-1 --target '{"locator":{"kind":"role","role":"button","name":"Save"}}' --note 'save control is unreliable'
+  terminal-browser workspace note --browser 90107-1 --at 280 160 --note 'this card needs a clearer heading'
 ```
 
 ```

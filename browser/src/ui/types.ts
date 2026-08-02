@@ -55,6 +55,11 @@ export interface PageMenuView {
   items: PageMenuItem[];
 }
 
+export interface AnnotationView {
+  submitting: boolean;
+  error: string | null;
+}
+
 export interface ChromeActions {
   back(): void;
   forward(): void;
@@ -87,6 +92,8 @@ export interface ChromeActions {
   devtoolsDividerHover(hovering: boolean): void;
   pageMenuAction(id: string): void;
   pageMenuClose(): void;
+  annotationSubmit(text: string): void;
+  annotationClose(): void;
 }
 
 export interface ChromeLayout {

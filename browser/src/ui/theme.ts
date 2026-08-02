@@ -5,6 +5,7 @@ export interface Theme {
   fg: Rgba;
   muted: Rgba;
   disabled: Rgba;
+  error: Rgba;
   accent: Rgba;
   field: Rgba;
   fieldBorder: Rgba;
@@ -34,6 +35,7 @@ export function makeTheme(colors: EngineInfo["colors"]): Theme {
     accent,
     muted: mix(fg, bg, 0.35),
     disabled: mix(fg, bg, 0.7),
+    error: colors.palette[9] ?? colors.palette[1] ?? [220, 90, 90, 255],
     field: mix(bg, fg, 0.06),
     fieldBorder: mix(bg, fg, 0.16),
     hover: mix(bg, fg, 0.12),

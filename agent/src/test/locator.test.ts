@@ -11,7 +11,11 @@ import {
   asSnapshotRef,
   type PageSnapshot,
 } from "../protocol/types";
-import { querySnapshot, SnapshotLocatorResolver } from "../core/locator";
+import {
+  querySnapshot,
+  selectSnapshotTargetAt,
+  SnapshotLocatorResolver,
+} from "../core/locator";
 
 function snapshot(): PageSnapshot {
   const pageId = asPageId("page-1");
@@ -55,6 +59,69 @@ test("resolves an unambiguous semantic locator", () => {
     snapshot(),
   );
   assert.equal(result.ref, "r1");
+});
+
+test("selects the semantic ancestor at a point instead of storing coordinates", () => {
+  const frameId = asFrameId("frame-1");
+  const link = {
+    ref: asSnapshotRef("link"),
+    frameId,
+    parent: null,
+    role: "link",
+    name: "Launch project",
+    text: "Launch project",
+    box: { x: 10, y: 10, width: 160, height: 40 },
+    visible: true,
+    enabled: true,
+    focusable: true,
+  };
+  const child = {
+    ref: asSnapshotRef("child"),
+    frameId,
+    parent: link.ref,
+    role: "generic",
+    name: "Launch project",
+    text: "Launch project",
+    box: { x: 20, y: 15, width: 80, height: 20 },
+    visible: true,
+    enabled: true,
+    focusable: false,
+  };
+
+  const result = selectSnapshotTargetAt({ nodes: [link, child] }, 30, 20);
+  assert.equal(result.node.ref, link.ref);
+  assert.deepEqual(result.target, {
+    locator: { kind: "role", role: "link", name: "Launch project", exact: true },
+    frameId,
+  });
+});
+
+test("indexes a point target when its semantic locator is duplicated", () => {
+  const frameId = asFrameId("frame-1");
+  const first = {
+    ref: asSnapshotRef("first"),
+    frameId,
+    parent: null,
+    role: "button",
+    name: "Open",
+    box: { x: 0, y: 0, width: 40, height: 20 },
+    visible: true,
+    enabled: true,
+    focusable: true,
+  };
+  const second = {
+    ...first,
+    ref: asSnapshotRef("second"),
+    box: { x: 50, y: 0, width: 40, height: 20 },
+  };
+
+  const result = selectSnapshotTargetAt({ nodes: [first, second] }, 60, 10);
+  assert.equal(result.node.ref, second.ref);
+  assert.deepEqual(result.target, {
+    locator: { kind: "role", role: "button", name: "Open", exact: true },
+    frameId,
+    index: 1,
+  });
 });
 
 test("resolves a semantic locator within its matching ancestor", () => {

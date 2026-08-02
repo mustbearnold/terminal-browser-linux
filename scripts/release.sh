@@ -32,6 +32,7 @@ if [ "$TARGET" = darwin-arm64 ]; then
 fi
 
 (cd "$ROOT" && pnpm --filter terminal-browser-agent build)
+(cd "$ROOT" && pnpm --filter terminal-browser-workspace build)
 "$ROOT/scripts/bundle.sh" "$ROOT/cli/src/main.ts" "$STAGE/cli/dist/main.js"
 "$ROOT/scripts/bundle.sh" "$ROOT/browser/src/main.tsx" "$STAGE/browser/dist/main.js"
 

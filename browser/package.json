@@ -23,6 +23,7 @@
     "pixel-react": "workspace:*",
     "pixel-store": "workspace:*",
     "pixel-terminals": "workspace:*",
+    "terminal-browser-workspace": "workspace:*",
     "react": "^18.3.1"
   },
   "devDependencies": {

@@ -4,7 +4,7 @@ import type { NodeHandle } from "pixel-react";
 import type { BrowserState } from "../page/types";
 import { Icon } from "./icons";
 import type { Theme } from "./theme";
-import type { ChromeActions, ChromeLayout, NewTabView, PaletteView } from "./types";
+import type { AnnotationView, ChromeActions, ChromeLayout, NewTabView, PaletteView } from "./types";
 
 function Backdrop({ layout, onClose }: { layout: ChromeLayout; onClose(): void }) {
   return (
@@ -278,3 +278,57 @@ export function NewTabCard({
   );
 }
 
+export function AnnotationCard({
+  view,
+  actions,
+  layout,
+  theme,
+}: {
+  view: AnnotationView;
+  actions: ChromeActions;
+  layout: ChromeLayout;
+  theme: Theme;
+}) {
+  const rem = layout.rem;
+  const cardW = Math.min(rem * 30, layout.width - rem * 4);
+  const input = useRef<NodeHandle | null>(null);
+  useEffect(() => {
+    input.current?.focus();
+  }, []);
+  return (
+    <ModalCard layout={layout} theme={theme} width={cardW} onClose={actions.annotationClose}>
+      <Box
+        style={{
+          height: rem * 2.4,
+          alignItems: "center",
+          gap: rem * 0.5,
+          padding: { left: rem * 0.85, right: rem * 0.85 },
+          border: { bottom: [1, theme.hairline] },
+        }}
+      >
+        <Text style={{ fontSize: rem * 0.95, color: theme.muted, wrap: false, selectable: false }}>
+          DOM note
+        </Text>
+        <Input
+          ref={input}
+          autoFocus
+          style={{ flexGrow: 1, flexBasis: 0, wrap: false, fontSize: rem }}
+          caretColor={theme.accent}
+          selectionColor={theme.selection}
+          onSubmit={(text) => actions.annotationSubmit(text)}
+        />
+      </Box>
+      <Text
+        style={{
+          padding: { left: rem * 0.85, right: rem * 0.85, top: rem * 0.45, bottom: rem * 0.45 },
+          fontSize: rem * 0.78,
+          color: view.error ? theme.error : theme.muted,
+          wrap: true,
+          selectable: false,
+        }}
+      >
+        {view.error ?? (view.submitting ? "attaching to the agent pane…" : "enter to attach to the agent pane")}
+      </Text>
+    </ModalCard>
+  );
+}

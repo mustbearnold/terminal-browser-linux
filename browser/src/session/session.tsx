@@ -10,6 +10,7 @@ import {
   AgentRequestRouter,
   DurableAnnotationStore,
   DurableAgentJournal,
+  selectSnapshotTargetAt,
   UnixSocketAgentServer,
   attachAgentConnection,
 } from "terminal-browser-agent";
@@ -32,6 +33,7 @@ import type {
   ChromeLayout,
   DeviceView,
   DownloadView,
+  AnnotationView,
   PageMenuItem,
   PageMenuView,
   PopupView,
@@ -44,6 +46,13 @@ import type { DeviceMode, DevtoolsPlacement } from "./layout";
 import { fetchSuggestions } from "./suggest";
 import { TabManager } from "./tabs";
 import { BrowserAgentRuntime } from "../agent/runtime";
+import {
+  findBrowserPane,
+  loadBindings,
+  promptTag,
+  resolveBindingPane,
+  sendToPane,
+} from "terminal-browser-workspace";
 
 export interface SessionContext {
   tty?: string;
@@ -143,6 +152,12 @@ class Session {
     pageY: number;
     linkURL: string;
     selectionText: string;
+  } | null = null;
+  private annotation: {
+    pageX: number;
+    pageY: number;
+    submitting: boolean;
+    error: string | null;
   } | null = null;
   private sentCursor: string | null = null;
 
@@ -432,6 +447,7 @@ class Session {
             : null
         }
         pageMenu={this.pageMenuView()}
+        annotation={this.annotationView()}
         dividerEngaged={this.dividerHover || this.dividerDragging}
         pageSurface={pageSurface}
         popupSurface={this.popupSurface}
@@ -534,6 +550,8 @@ class Session {
     },
     pageMenuAction: (id) => this.runPageMenu(id),
     pageMenuClose: () => this.closePageMenu(),
+    annotationSubmit: (text) => this.submitAnnotation(text),
+    annotationClose: () => this.closeAnnotation(),
   };
 
   private handleKey(event: EngineKeyEvent) {
@@ -571,6 +589,11 @@ class Session {
       if (this.pageMenu) {
         this.closePageMenu();
         if (event.key === "escape") return;
+      }
+
+      if (this.annotation) {
+        if (event.key === "escape") this.closeAnnotation();
+        return;
       }
 
       if (this.palette) {
@@ -860,7 +883,7 @@ class Session {
 
   private openPageMenu(params: Electron.ContextMenuParams) {
     if (!this.surfaceLayout) return;
-    if (this.palette || this.newTab || this.urlEditOpen) return;
+    if (this.palette || this.newTab || this.urlEditOpen || this.annotation) return;
     if (this.tabs.activeController?.popup) return;
     const scale = this.surfaceLayout.scale;
     this.pageMenu = {
@@ -905,6 +928,9 @@ class Session {
         this.openDevtools();
         if (browser.devtools) browser.inspect(menu.pageX, menu.pageY);
         return;
+      case "annotate":
+        this.openAnnotation(menu.pageX, menu.pageY);
+        return;
     }
   }
 
@@ -928,6 +954,8 @@ class Session {
       ...(this.pageMenu.selectionText || this.pageMenu.linkURL
         ? [{ id: "sep-edit", separator: true } as const]
         : []),
+      { id: "annotate", label: "add DOM note", enabled: this.agentRuntime !== null, shortcut: "" },
+      { id: "sep-tools", separator: true },
       {
         id: "inspect",
         label: "inspect",
@@ -936,6 +964,99 @@ class Session {
       },
     ];
     return { x: this.pageMenu.x, y: this.pageMenu.y, items };
+  }
+
+  private annotationView(): AnnotationView | null {
+    if (!this.annotation) return null;
+    return {
+      submitting: this.annotation.submitting,
+      error: this.annotation.error,
+    };
+  }
+
+  private openAnnotation(pageX: number, pageY: number) {
+    if (this.annotation) return;
+    this.annotation = { pageX, pageY, submitting: false, error: null };
+    this.blurToOverlay();
+    this.root?.setKeyCapture(["enter"]);
+    this.render();
+  }
+
+  private closeAnnotation() {
+    if (!this.annotation) return;
+    this.annotation = null;
+    this.root?.setKeyCapture(this.findOpen ? ["enter"] : []);
+    this.refocusPage();
+    this.render();
+  }
+
+  private submitAnnotation(text: string) {
+    const annotation = this.annotation;
+    if (!annotation || annotation.submitting) return;
+    const note = text.trim();
+    if (!note) return;
+    annotation.submitting = true;
+    annotation.error = null;
+    this.render();
+    void this.createAnnotation(annotation.pageX, annotation.pageY, note)
+      .then(({ attached, tag }) => {
+        if (!this.annotation) return;
+        if (attached) {
+          this.closeAnnotation();
+          return;
+        }
+        this.annotation.submitting = false;
+        this.annotation.error = `saved ${tag}; no agent pane is attached`;
+        this.render();
+      })
+      .catch((error: unknown) => {
+        if (!this.annotation) return;
+        this.annotation.submitting = false;
+        this.annotation.error = error instanceof Error ? error.message : String(error);
+        this.render();
+      });
+  }
+
+  private async createAnnotation(
+    pageX: number,
+    pageY: number,
+    note: string,
+  ): Promise<{ attached: boolean; tag: string }> {
+    const runtime = this.agentRuntime;
+    if (!runtime) throw new Error("agent runtime is not ready");
+    const pages = await runtime.listPages();
+    const pageIdentity = pages.find((page) => page.active) ?? pages[0];
+    if (!pageIdentity) throw new Error("browser has no open pages");
+    const page = runtime.getPage(pageIdentity.pageId);
+    if (!page) throw new Error(`page ${pageIdentity.pageId} is no longer open`);
+    const snapshot = await page.snapshot({
+      interactiveOnly: false,
+      includeGeometry: true,
+      includeText: true,
+      maxNodes: 5000,
+    });
+    const selection = selectSnapshotTargetAt(snapshot, pageX, pageY);
+    const read = await page.read(selection.target, snapshot);
+    const annotation = runtime.annotations.create({
+      pageId: read.pageId,
+      documentId: read.documentId,
+      revision: read.revision,
+      url: read.url,
+      title: read.title,
+      target: read.target,
+      node: read.node,
+      note,
+    });
+    const payload = promptTag(annotation);
+    const backend = this.backend;
+    if (!backend) return { attached: false, tag: annotation.tag };
+    const panes = await backend.panes();
+    const browserPane = findBrowserPane(panes, this.ctx.key);
+    const binding = loadBindings().find((candidate) => candidate.browserKey === this.ctx.key);
+    const destination = await resolveBindingPane(backend, browserPane?.pane ?? null, binding);
+    if (destination === undefined) return { attached: false, tag: annotation.tag };
+    await sendToPane(backend, destination, payload, browserPane?.pane ?? null);
+    return { attached: true, tag: annotation.tag };
   }
 
   private openUrlEdit() {

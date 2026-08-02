@@ -1,4 +1,5 @@
 import { AgentError } from "../protocol/errors";
+import { MAX_TARGET_INDEX } from "../protocol/types";
 import { matchesWaitElementState } from "./element-state";
 import type {
   JsonValue,
@@ -25,6 +26,11 @@ export interface SnapshotQueryResult {
 
 export interface ResolvedTarget {
   ref: SnapshotRef;
+  node: SnapshotNode;
+}
+
+export interface SnapshotPointSelection {
+  target: Target;
   node: SnapshotNode;
 }
 
@@ -63,6 +69,94 @@ export function querySnapshot(
       ? false
       : hiddenCandidates.length < hiddenMatches.length || snapshot.truncated === true,
   };
+}
+
+export function selectSnapshotTargetAt(
+  snapshot: SnapshotView,
+  x: number,
+  y: number,
+): SnapshotPointSelection {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    throw new AgentError("INVALID_REQUEST", "point coordinates must be finite numbers");
+  }
+  const candidates = snapshot.nodes.filter((node) => {
+    const box = node.box;
+    return node.visible && box !== undefined && box.width > 0 && box.height > 0 &&
+      x >= box.x && x <= box.x + box.width && y >= box.y && y <= box.y + box.height;
+  });
+  if (candidates.length === 0) {
+    throw new AgentError("TARGET_NOT_FOUND", "no visible snapshot node contains the point", {
+      retryable: true,
+      details: { x, y },
+    });
+  }
+  const node = candidates
+    .slice()
+    .sort((left, right) => pointCandidateCompare(left, right))[0];
+  return { node, target: semanticTargetForNode(node, snapshot) };
+}
+
+export function semanticTargetForNode(node: SnapshotNode, snapshot: SnapshotView): Target {
+  const attributes = node.attributes ?? {};
+  const frameId = node.frameId;
+  const target = (locator: Locator): Target => ({ locator, frameId });
+  let locator: Locator | null = null;
+
+  if (attributes["data-testid"]) {
+    locator = { kind: "testid", value: attributes["data-testid"] };
+  } else if (isCssIdentifier(attributes.id)) {
+    locator = { kind: "css", value: `#${attributes.id}` };
+  } else if (node.role !== "generic") {
+    locator = {
+      kind: "role",
+      role: node.role,
+      ...(node.name ? { name: node.name, exact: true } : {}),
+    };
+  } else if (attributes.placeholder) {
+    locator = { kind: "placeholder", text: attributes.placeholder, exact: true };
+  } else if (node.text || node.name) {
+    locator = { kind: "text", text: node.text || node.name, exact: true };
+  }
+
+  if (!locator) return { ref: node.ref };
+
+  let matches: SnapshotQueryResult | null = null;
+  try {
+    matches = querySnapshot(locator, snapshot, {
+      frameId,
+      includeHidden: true,
+      limit: MAX_TARGET_INDEX + 1,
+    });
+  } catch (error) {
+    if (!(error instanceof AgentError) || error.code !== "INVALID_REQUEST") throw error;
+  }
+  if (!matches) return target(locator);
+  const index = matches.candidates.findIndex((candidate) => candidate.ref === node.ref);
+  if (index < 0) return { ref: node.ref };
+  return matches.candidates.length > 1
+    ? { ...target(locator), index }
+    : target(locator);
+}
+
+function pointCandidateCompare(left: SnapshotNode, right: SnapshotNode): number {
+  const semanticDifference = pointSemanticRank(left) - pointSemanticRank(right);
+  if (semanticDifference !== 0) return semanticDifference;
+  const leftArea = (left.box?.width ?? Number.POSITIVE_INFINITY) * (left.box?.height ?? Number.POSITIVE_INFINITY);
+  const rightArea = (right.box?.width ?? Number.POSITIVE_INFINITY) * (right.box?.height ?? Number.POSITIVE_INFINITY);
+  if (leftArea !== rightArea) return leftArea - rightArea;
+  return String(left.ref).localeCompare(String(right.ref));
+}
+
+function pointSemanticRank(node: SnapshotNode): number {
+  if (node.role !== "generic") return 0;
+  if (node.attributes?.["data-testid"] || isCssIdentifier(node.attributes?.id)) return 1;
+  if (node.attributes?.placeholder || node.attributes?.["aria-label"] || node.attributes?.title) return 2;
+  if (node.text || node.name) return 3;
+  return 4;
+}
+
+function isCssIdentifier(value: string | undefined): value is string {
+  return value !== undefined && /^[A-Za-z_][A-Za-z0-9_-]*$/.test(value);
 }
 
 export class SnapshotLocatorResolver implements LocatorResolver {
