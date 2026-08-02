@@ -18,6 +18,7 @@ import { superviseAgentConnection, type AgentConnectionLifecycle, type AgentConn
 
 export const MCP_PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"] as const;
 export const MCP_SERVER_PROTOCOL_VERSION = MCP_PROTOCOL_VERSIONS[0];
+export const MCP_CONNECTION_RECONNECT_METHOD = "terminal-browser/connection/reconnect";
 
 type RpcId = string | number | null;
 
@@ -34,6 +35,10 @@ interface PendingCall {
   cancel: () => Promise<boolean>;
 }
 
+export interface McpServerSessionOptions {
+  reconnect?: (options?: AgentCallOptions) => Promise<void>;
+}
+
 export class McpServerSession {
   private manifestValue: AgentToolManifest | null = null;
   private initialized = false;
@@ -43,6 +48,7 @@ export class McpServerSession {
   constructor(
     private readonly tools: McpToolProvider,
     private readonly emit: (message: unknown) => void,
+    private readonly options: McpServerSessionOptions = {},
   ) {}
 
   async handle(line: string): Promise<void> {
@@ -114,6 +120,9 @@ export class McpServerSession {
         case "ping":
           this.emit(successResponse(id, {}));
           return;
+        case MCP_CONNECTION_RECONNECT_METHOD:
+          this.emit(successResponse(id, await this.reconnectConnection(params)));
+          return;
         case "tools/list":
           this.emit(successResponse(id, await this.listTools(params)));
           return;
@@ -178,6 +187,19 @@ export class McpServerSession {
     };
   }
 
+  private async reconnectConnection(params: unknown): Promise<Record<string, unknown>> {
+    this.requireInitialized();
+    const input = params === undefined ? {} : requireRecord(params, "connection reconnect params");
+    const deadlineMs = requestDeadline(input.deadlineMs);
+    if (!this.options.reconnect) {
+      throw new AgentError("TRANSPORT_CLOSED", "agent connection recovery is unavailable", { retryable: true });
+    }
+    await this.options.reconnect({
+      ...(deadlineMs === undefined ? {} : { deadlineMs }),
+    });
+    return { state: "connected" };
+  }
+
   private async callTool(id: RpcId, params: unknown): Promise<void> {
     this.requireInitialized();
     const input = requireRecord(params, "tools/call params");
@@ -238,9 +260,14 @@ export async function agentMcpCommand(backend: Backend, options: AgentMcpOptions
     clientId: "terminal-browser-cli-mcp",
   });
   const tools = new AgentToolClient(client);
-  const session = new McpServerSession(tools, write);
+  let supervisor: AgentConnectionSupervisor | null = null;
+  const session = new McpServerSession(tools, write, {
+    reconnect: (options) => supervisor?.reconnect(options) ?? Promise.reject(
+      new AgentError("TRANSPORT_CLOSED", "agent connection supervisor is unavailable", { retryable: true }),
+    ),
+  });
   const unsubscribe = tools.onEvent((event) => session.notifyEvent(event));
-  const supervisor: AgentConnectionSupervisor = superviseAgentConnection(tools, (lifecycle) => {
+  supervisor = superviseAgentConnection(tools, (lifecycle) => {
     session.notifyConnection(lifecycle);
   });
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -253,7 +280,7 @@ export async function agentMcpCommand(backend: Backend, options: AgentMcpOptions
     return 0;
   } finally {
     lines.close();
-    supervisor.dispose();
+    supervisor?.dispose();
     unsubscribe();
     await tools.close();
   }
@@ -288,6 +315,14 @@ function errorResponse(id: RpcId, code: number, message: string): Record<string,
 function requireRecord(value: unknown, field: string): Record<string, unknown> {
   if (!isRecord(value)) throw new AgentError("INVALID_REQUEST", `${field} must be an object`);
   return value;
+}
+
+function requestDeadline(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new AgentError("INVALID_REQUEST", "deadlineMs must be a non-negative safe integer");
+  }
+  return value as number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

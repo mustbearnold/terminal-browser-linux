@@ -41,6 +41,10 @@ It makes one reconnect attempt per transport loss, and `connected` is emitted
 only after hello negotiation and observation replay finish. In-flight calls
 remain failed and are never replayed implicitly. MCP reports the same lifecycle
 through `notifications/message` with logger `terminal-browser.agent.connection`.
+After an automatic recovery attempt fails, a JSONL host can request another
+attempt with `{"kind":"control","id":"r1","op":"connection.reconnect"}`;
+MCP hosts can use the namespaced request method
+`terminal-browser/connection/reconnect`.
 
 For the browser-compatible control path:
 ```

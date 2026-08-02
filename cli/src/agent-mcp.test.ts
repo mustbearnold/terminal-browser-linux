@@ -17,7 +17,7 @@ import type {
   AgentToolManifest,
 } from "terminal-browser-agent";
 
-import { McpServerSession, type McpToolProvider } from "./agent-mcp";
+import { MCP_CONNECTION_RECONNECT_METHOD, McpServerSession, type McpToolProvider } from "./agent-mcp";
 import type { AgentConnectionLifecycle } from "./agent-recovery";
 
 interface PendingCall {
@@ -193,4 +193,35 @@ test("publishes connection lifecycle notifications and refreshes the manifest", 
     description: AGENT_TOOL_DEFINITIONS[0].description,
     inputSchema: AGENT_TOOL_DEFINITIONS[0].inputSchema,
   }]);
+});
+
+test("supports an explicit MCP reconnect request outside the tool manifest", async () => {
+  const tools = new FakeMcpTools();
+  const messages: Record<string, unknown>[] = [];
+  let reconnects = 0;
+  const session = new McpServerSession(
+    tools,
+    (message) => messages.push(message as Record<string, unknown>),
+    { reconnect: async () => { reconnects += 1; } },
+  );
+
+  await session.handle(JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1" } },
+  }));
+  await session.handle(JSON.stringify({
+    jsonrpc: "2.0",
+    id: 2,
+    method: MCP_CONNECTION_RECONNECT_METHOD,
+    params: { deadlineMs: 5000 },
+  }));
+
+  assert.equal(reconnects, 1);
+  assert.deepEqual(messages[1], {
+    jsonrpc: "2.0",
+    id: 2,
+    result: { state: "connected" },
+  });
 });

@@ -31,6 +31,10 @@ export interface AgentToolInvoker {
   ): Promise<AgentToolCall<unknown>>;
 }
 
+export interface AgentToolLineSessionOptions {
+  reconnect?: (options?: AgentCallOptions) => Promise<void>;
+}
+
 export async function agentToolsCommand(backend: Backend, options: AgentToolsOptions): Promise<number> {
   const browser = await selectBrowser(backend, options.browserKey);
   const client = await AgentClient.connect(agentSocketPath(browser), {
@@ -49,7 +53,11 @@ export async function agentToolsCommand(backend: Backend, options: AgentToolsOpt
     unsubscribe = tools.onEvent((event) => write({ kind: "event", event }));
     supervisor = superviseAgentConnection(tools, (lifecycle) => write({ kind: "connection", ...lifecycle }));
     write({ kind: "connection", state: "connected" });
-    const session = new AgentToolLineSession(tools, write);
+    const session = new AgentToolLineSession(tools, write, {
+      reconnect: (options) => supervisor?.reconnect(options) ?? Promise.reject(
+        new AgentError("TRANSPORT_CLOSED", "agent connection supervisor is unavailable", { retryable: true }),
+      ),
+    });
     const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
     try {
       for await (const line of lines) {
@@ -74,6 +82,7 @@ export class AgentToolLineSession {
   constructor(
     private readonly tools: AgentToolInvoker,
     private readonly emit: (value: unknown) => void,
+    private readonly options: AgentToolLineSessionOptions = {},
   ) {}
 
   async handle(line: string): Promise<void> {
@@ -99,6 +108,10 @@ export class AgentToolLineSession {
       return;
     }
     const id = toolRequestId(parsed.id);
+    if (parsed.kind === "control") {
+      await this.handleControl(parsed, id);
+      return;
+    }
     if (Object.prototype.hasOwnProperty.call(parsed, "cancelRequestId")) {
       await this.cancel(parsed, id);
       return;
@@ -153,6 +166,31 @@ export class AgentToolLineSession {
 
   async drain(): Promise<void> {
     await Promise.allSettled([...this.pending.values()].map((entry) => entry.completion));
+  }
+
+  private async handleControl(request: Record<string, unknown>, id: ToolRequestId): Promise<void> {
+    if (request.op !== "connection.reconnect") {
+      this.emit({
+        kind: "control",
+        id,
+        op: request.op ?? null,
+        ok: false,
+        error: { code: "INVALID_REQUEST", message: "unsupported control operation" },
+      });
+      return;
+    }
+    try {
+      const deadlineMs = requestDeadline(request.deadlineMs);
+      if (!this.options.reconnect) {
+        throw new AgentError("TRANSPORT_CLOSED", "agent connection recovery is unavailable", { retryable: true });
+      }
+      await this.options.reconnect({
+        ...(deadlineMs === undefined ? {} : { deadlineMs }),
+      });
+      this.emit({ kind: "control", id, op: request.op, ok: true, state: "connected" });
+    } catch (error) {
+      this.emit({ kind: "control", id, op: request.op, ok: false, error: errorPayload(error) });
+    }
   }
 
   private async cancel(request: Record<string, unknown>, id: ToolRequestId): Promise<void> {

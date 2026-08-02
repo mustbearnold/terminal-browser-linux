@@ -98,6 +98,7 @@ Options:
 Request shape:
   {"id":"1","name":"terminal_browser_page_snapshot","arguments":{},"deadlineMs":5000}
   {"id":"2","cancelRequestId":"page.wait-3"}
+  {"kind":"control","id":"r1","op":"connection.reconnect"}
 `,
   },
   mcp: {
@@ -108,6 +109,8 @@ Connects to the selected browser and exposes the negotiated agent operations
 through the Model Context Protocol over stdin/stdout. It supports the MCP
 initialize lifecycle, tools/list, tools/call, cancellation, agent events, and
 connection lifecycle notifications.
+Hosts can request another recovery attempt with the namespaced method
+terminal-browser/connection/reconnect.
 
 Options:
   --browser <key>     A browser key from terminal-browser ls

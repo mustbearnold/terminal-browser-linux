@@ -101,3 +101,30 @@ test("reports malformed JSONL requests without stopping the session", async () =
   assert.equal((messages[1].error as { code: string }).code, "INVALID_REQUEST");
   await session.drain();
 });
+
+test("routes an explicit reconnect control through the session supervisor", async () => {
+  const invoker = new FakeToolInvoker();
+  const messages: Record<string, unknown>[] = [];
+  let reconnects = 0;
+  const session = new AgentToolLineSession(
+    invoker,
+    (message) => messages.push(message as Record<string, unknown>),
+    { reconnect: async () => { reconnects += 1; } },
+  );
+
+  await session.handle(JSON.stringify({
+    kind: "control",
+    id: "reconnect",
+    op: "connection.reconnect",
+    deadlineMs: 5000,
+  }));
+
+  assert.equal(reconnects, 1);
+  assert.deepEqual(messages, [{
+    kind: "control",
+    id: "reconnect",
+    op: "connection.reconnect",
+    ok: true,
+    state: "connected",
+  }]);
+});
