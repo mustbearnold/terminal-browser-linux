@@ -56,7 +56,7 @@ const crossOriginChildHtml = `<!doctype html><label>Frame name <input aria-label
 const navigationStartHtml = `<!doctype html><meta charset="utf-8"><title>Navigation start</title><button aria-label="Start action">Start action</button><output>Navigation start</output>`;
 const navigationNextHtml = `<!doctype html><meta charset="utf-8"><title>Navigation next</title><label>Recovered name <input aria-label="Recovered name"></label><button aria-label="Next action" onclick="document.querySelector('output').textContent='Next clicked'">Next action</button><output>Next ready</output>`;
 const eventHtml = `<!doctype html><meta charset="utf-8"><title>Native event fixture</title><button aria-label="Emit console" onclick="console.warn('agent console probe')">Emit console</button><button aria-label="Emit dialog" onclick="alert('agent dialog probe')">Emit dialog</button><button aria-label="Emit confirm" onclick="document.querySelector('#dialog-status').textContent = confirm('agent confirm probe') ? 'Confirmed' : 'Dismissed'">Emit confirm</button><button id="unlock" aria-label="Unlock" disabled>Unlock</button><button aria-label="Schedule update" onclick="setTimeout(() => { document.querySelector('#async-status').textContent = 'Asynchronous update'; document.querySelector('#unlock').disabled = false; setTimeout(() => { document.querySelector('#async-status').textContent = 'Settled' }, 80) }, 180)">Schedule update</button><span id="dialog-status">Idle</span><span id="async-status">Idle</span>`;
-const largeWindowHtml = `<!doctype html><meta charset="utf-8"><title>Large window fixture</title><output id="status">Idle</output><div id="controls">${Array.from({ length: 1099 }, (_, index) => `<button id="large-${index}" aria-label="Large ${index}">Large ${index}</button>`).join("")}<button id="tail" aria-label="Tail action" onclick="document.querySelector('#status').textContent='Tail clicked'">Tail action</button><button id="add-control" aria-label="Add control" onclick="const b=document.createElement('button');b.id='dynamic-control';b.setAttribute('aria-label','Dynamic control');b.textContent='Dynamic control';document.querySelector('#controls').append(b)">Add control</button></div>`;
+const largeWindowHtml = `<!doctype html><meta charset="utf-8"><title>Large window fixture</title><output id="status">Idle</output><div id="controls">${Array.from({ length: 1099 }, (_, index) => `<button id="large-${index}" aria-label="Large ${index}">Large ${index}</button>`).join("")}<button id="tail" data-testid="tail-control" aria-label="Tail action" onclick="document.querySelector('#status').textContent='Tail clicked'">Tail action</button><button id="add-control" aria-label="Add control" onclick="const b=document.createElement('button');b.id='dynamic-control';b.setAttribute('aria-label','Dynamic control');b.textContent='Dynamic control';document.querySelector('#controls').append(b)">Add control</button><button id="retag-control" aria-label="Retag control" onclick="document.querySelector('#tail').setAttribute('data-testid','renamed-tail')">Retag control</button></div>`;
 
 async function expectCode(promise, code) {
   await assert.rejects(promise, (error) => error && error.code === code);
@@ -304,6 +304,16 @@ function queryScenarios(pageId) {
           },
         ],
       });
+      const indexedTestId = await client.call("page.query", {
+        pageId,
+        locator: { kind: "testid", value: "tail-control" },
+        options: { limit: 1, diagnostics: "summary" },
+      });
+      const cssStateFiltered = await client.call("page.query", {
+        pageId,
+        locator: { kind: "css", value: "#tail", state: { visible: false } },
+        options: { limit: 1, diagnostics: "summary" },
+      });
       const batchBroad = queryBatch.queries[0];
       const tail = queryBatch.queries[1];
       const plannedFirst = plannedBatch.queries[0];
@@ -319,6 +329,21 @@ function queryScenarios(pageId) {
         pageId,
         target: { ref: tail.nodes[0]?.ref },
         token: snapshotToken(queryBatch),
+      });
+      const retagged = await client.call("page.act", {
+        pageId,
+        action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Retag control", exact: true } } },
+        output: { snapshot: "none" },
+      });
+      const renamedTestId = await client.call("page.query", {
+        pageId,
+        locator: { kind: "testid", value: "renamed-tail" },
+        options: { limit: 1, diagnostics: "summary" },
+      });
+      const oldTestId = await client.call("page.query", {
+        pageId,
+        locator: { kind: "testid", value: "tail-control" },
+        options: { limit: 1, diagnostics: "summary" },
       });
       const inserted = await client.call("page.act", {
         pageId,
@@ -348,8 +373,15 @@ function queryScenarios(pageId) {
           && plannedFirst.matchCount === plannedSecond.matchCount
           && plannedFirst.nodes.length === 8
           && plannedSecond.nodes.length === 1
+          && indexedTestId.nodes[0]?.attributes?.id === "tail"
+          && indexedTestId.diagnostics?.queries[0]?.elementsEvaluated === 1
+          && cssStateFiltered.matchCount === 0
           && read.node.attributes?.id === "tail"
           && read.revision === queryBatch.revision
+          && retagged.verified
+          && renamedTestId.nodes[0]?.attributes?.id === "tail"
+          && renamedTestId.diagnostics?.queries[0]?.elementsEvaluated === 1
+          && oldTestId.matchCount === 0
           && (plannedBatch.diagnostics.elementIndexHits ?? 0) > 0
           && inserted.verified
           && rebuilt.nodes[0]?.attributes?.id === "dynamic-control"
@@ -362,6 +394,11 @@ function queryScenarios(pageId) {
           queryBatchSharedRevision: Number(read.revision === queryBatch.revision),
           queryPlanCacheHits: plannedBatch.diagnostics?.planCacheHits ?? 0,
           queryPlanReuse: Number((plannedBatch.diagnostics?.planCacheHits ?? 0) > 0),
+          indexedAttributeCandidates: indexedTestId.diagnostics?.queries[0]?.elementsEvaluated ?? 0,
+          attributeIndexMutation: Number(retagged.verified
+            && renamedTestId.nodes[0]?.attributes?.id === "tail"
+            && oldTestId.matchCount === 0),
+          cssStateFiltered: cssStateFiltered.matchCount === 0 ? 1 : 0,
           elementIndexHits: plannedBatch.diagnostics?.elementIndexHits ?? 0,
           elementIndexRebuilds: rebuilt.diagnostics?.elementIndexRebuilds ?? 0,
           elementIndexFallback: Number((rebuilt.diagnostics?.elementIndexRebuilds ?? 0) > 0),

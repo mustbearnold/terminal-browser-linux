@@ -2658,6 +2658,9 @@ function agentStateSetupScript(key: string, frameId: string): string {
         elementIndexElements: [],
         elementIndexReady: false,
         elementIndexDirty: false,
+        elementIndexById: new Map(),
+        elementIndexByTestId: new Map(),
+        elementIndexAttributeDirty: false,
       };
       const emit = () => {
         const binding = window.__pixelEmit;
@@ -2687,6 +2690,7 @@ function agentStateSetupScript(key: string, frameId: string): string {
       };
       const observer = new MutationObserver((records) => {
         if (records.some((record) => record.type === "childList")) state.elementIndexDirty = true;
+        if (records.some((record) => record.type === "attributes")) state.elementIndexAttributeDirty = true;
         invalidate("mutation", null);
       });
       const observedRoots = new WeakSet();
@@ -2705,6 +2709,23 @@ function agentStateSetupScript(key: string, frameId: string): string {
         for (const event of ["input", "change", "focusin", "focusout"]) {
           root.addEventListener(event, invalidateEvent, true);
         }
+      };
+      const appendElementIndexValue = (index, value, element) => {
+        if (value === null) return;
+        const bucket = index.get(value);
+        if (bucket) bucket.push(element);
+        else index.set(value, [element]);
+      };
+      const rebuildElementAttributeIndex = () => {
+        const byId = new Map();
+        const byTestId = new Map();
+        for (const element of state.elementIndexElements) {
+          appendElementIndexValue(byId, element.getAttribute("id"), element);
+          appendElementIndexValue(byTestId, element.getAttribute("data-testid"), element);
+        }
+        state.elementIndexById = byId;
+        state.elementIndexByTestId = byTestId;
+        state.elementIndexAttributeDirty = false;
       };
       const rebuildElementIndex = () => {
         state.elementIndexReady = false;
@@ -2726,6 +2747,7 @@ function agentStateSetupScript(key: string, frameId: string): string {
         }
         state.elementIndexRoots = roots;
         state.elementIndexElements = elements;
+        rebuildElementAttributeIndex();
         state.elementIndexReady = true;
         state.elementIndexDirty = false;
         return false;
@@ -2734,6 +2756,10 @@ function agentStateSetupScript(key: string, frameId: string): string {
         const reused = state.elementIndexReady && !state.elementIndexDirty;
         if (reused) return true;
         return rebuildElementIndex();
+      };
+      state.ensureElementAttributeIndex = () => {
+        state.ensureElementIndex();
+        if (state.elementIndexAttributeDirty) rebuildElementAttributeIndex();
       };
       state.observeRoot = observeRoot;
       observeRoot(document);
@@ -2951,13 +2977,27 @@ function liveLocatorBatchScript(
     };
     const matchesLocator = (el, locator) => {
       if (locator.kind === "css") {
-        return locator.within === undefined || matchesWithin(el, locator.within);
+        return matchesBase(el, locator)
+          && (locator.within === undefined || matchesWithin(el, locator.within));
       }
       return matchesScoped(el, locator);
     };
     const elementIndexReused = state.ensureElementIndex();
+    state.ensureElementAttributeIndex();
     const roots = state.elementIndexRoots;
     const elements = state.elementIndexElements;
+    const simpleIdFor = (selector) => {
+      const match = /^#([A-Za-z_][A-Za-z0-9_-]*)$/.exec(selector);
+      return match ? match[1] : null;
+    };
+    const indexedCandidates = (locator) => {
+      if (locator.kind === "testid") return state.elementIndexByTestId.get(locator.value) || [];
+      if (locator.kind === "css") {
+        const id = simpleIdFor(locator.value);
+        if (id !== null) return state.elementIndexById.get(id) || [];
+      }
+      return elements;
+    };
     const capturedNodes = new Map();
     const capture = (el) => {
       if (capturedNodes.has(el)) return capturedNodes.get(el);
@@ -2970,8 +3010,8 @@ function liveLocatorBatchScript(
     const queryDiagnostics = [];
     const results = queries.map(({ locator, includeHidden, maxCandidates, diagnostics }, queryIndex) => {
       invalid = false;
-      let matches = elements;
-      if (locator.kind === "css") {
+      let matches = indexedCandidates(locator);
+      if (locator.kind === "css" && simpleIdFor(locator.value) === null) {
         if (cssSelectorCache.has(locator.value)) {
           planCacheHits += 1;
           matches = cssSelectorCache.get(locator.value);

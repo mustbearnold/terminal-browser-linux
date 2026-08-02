@@ -123,7 +123,9 @@ directly across frames and shadow roots. This keeps locator and text search
 independent of the first snapshot's node cap; ambiguous matches fail with
 bounded diagnostics instead of being guessed. Global text waits reuse the same
 per-frame element index as live locators and rebuild it when the DOM structure
-changes.
+changes. Exact `testid` and simple `#id` CSS locators use stable lookup buckets
+when available; complex selectors and semantic text retain the conservative
+full-index fallback.
 
 Set `expect.quietMs` when a verified post-action state must remain unchanged for
 that revision interval before the action is reported complete.
