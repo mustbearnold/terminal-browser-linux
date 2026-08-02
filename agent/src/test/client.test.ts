@@ -3,9 +3,11 @@ import test from "node:test";
 
 import { MemoryTrace, TraceRecorder } from "../core/trace";
 import { AgentClient } from "../client";
+import { AgentRequestRouter } from "../core/router";
 import { AgentError } from "../protocol/errors";
 import { AGENT_PROTOCOL, AGENT_PROTOCOL_VERSION, type AgentMessage } from "../protocol/types";
-import { createFixtureAgentClient } from "../evaluation/loopback";
+import { RouterLoopbackTransport, createFixtureAgentClient } from "../evaluation/loopback";
+import { FixtureRuntime } from "./fixture";
 import { FIXTURE_PAGE_ID } from "./fixture";
 import type { AgentTransport } from "../transport/types";
 
@@ -101,6 +103,94 @@ test("correlates typed calls and delivers observed events", async () => {
     assert.deepEqual(events, ["dom.changed"]);
   } finally {
     unsubscribe();
+    await client.close();
+  }
+});
+
+test("reconnects explicitly and resumes observations from the latest requested event", async () => {
+  const router = new AgentRequestRouter(new FixtureRuntime());
+  const firstTransport = new RouterLoopbackTransport(router);
+  let reconnects = 0;
+  const client = new AgentClient(firstTransport, {
+    clientId: "reconnect-client",
+    reconnect: async () => {
+      reconnects += 1;
+      return new RouterLoopbackTransport(router);
+    },
+  });
+  const events: number[] = [];
+  const unsubscribe = client.onEvent((event) => events.push(event.sequence));
+  const second = new AgentClient(new RouterLoopbackTransport(router), { clientId: "reconnect-peer" });
+  const click = {
+    pageId: FIXTURE_PAGE_ID,
+    action: { type: "click" as const, target: { locator: { kind: "role" as const, role: "button", name: "Continue", exact: true } } },
+    output: { snapshot: "none" as const },
+  };
+  const focus = {
+    pageId: FIXTURE_PAGE_ID,
+    action: { type: "focus" as const, target: { locator: { kind: "role" as const, role: "textbox", name: "Name", exact: true } } },
+    output: { snapshot: "none" as const },
+  };
+  try {
+    await client.hello();
+    await client.observe(FIXTURE_PAGE_ID, ["dom.changed"]);
+    await client.call("page.act", click);
+    assert.deepEqual(events, [1]);
+
+    await firstTransport.close();
+    assert.equal(client.state, "disconnected");
+    await assert.rejects(
+      client.call("pages.list", {}),
+      (error: unknown) => error instanceof AgentError && error.code === "TRANSPORT_CLOSED",
+    );
+
+    await second.hello();
+    await second.call("page.act", focus);
+    const [firstHello, secondHello] = await Promise.all([client.reconnect(), client.reconnect()]);
+    assert.equal(firstHello.clientId, "reconnect-client");
+    assert.equal(secondHello.clientId, "reconnect-client");
+    assert.equal(reconnects, 1);
+    assert.deepEqual(events, [1, 2]);
+
+    await client.call("page.act", click);
+    assert.deepEqual(events, [1, 2, 4]);
+  } finally {
+    unsubscribe();
+    await second.close();
+    await client.close();
+  }
+});
+
+test("keeps multiple same-page observation cursors independent during replay", async () => {
+  const router = new AgentRequestRouter(new FixtureRuntime());
+  const firstTransport = new RouterLoopbackTransport(router);
+  const client = new AgentClient(firstTransport, {
+    clientId: "multi-observation-client",
+    reconnect: async () => new RouterLoopbackTransport(router),
+  });
+  const peer = new AgentClient(new RouterLoopbackTransport(router), { clientId: "multi-observation-peer" });
+  const events: number[] = [];
+  const unsubscribe = client.onEvent((event) => events.push(event.sequence));
+  const click = {
+    pageId: FIXTURE_PAGE_ID,
+    action: { type: "click" as const, target: { locator: { kind: "role" as const, role: "button", name: "Continue", exact: true } } },
+    output: { snapshot: "none" as const },
+  };
+  try {
+    await client.hello();
+    await client.observe(FIXTURE_PAGE_ID, ["dom.changed"]);
+    await client.observe(FIXTURE_PAGE_ID, ["dom.changed"]);
+    await client.call("page.act", click);
+    assert.deepEqual(events, [1, 1]);
+
+    await firstTransport.close();
+    await peer.hello();
+    await peer.call("page.act", click);
+    await client.reconnect();
+    assert.deepEqual(events, [1, 1, 2, 2]);
+  } finally {
+    unsubscribe();
+    await peer.close();
     await client.close();
   }
 });

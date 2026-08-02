@@ -181,8 +181,16 @@ export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
 export class AgentToolClient {
   private helloResult: AgentHelloResult | null = null;
   private helloPromise: Promise<AgentHelloResult> | null = null;
+  private readonly unsubscribeConnection: () => void;
 
-  constructor(private readonly client: AgentClient) {}
+  constructor(private readonly client: AgentClient) {
+    this.unsubscribeConnection = client.onConnectionState((state) => {
+      if (state === "connected" || state === "disconnected" || state === "closed") {
+        this.helloResult = null;
+        this.helloPromise = null;
+      }
+    });
+  }
 
   async initialize(options?: AgentCallOptions): Promise<AgentHelloResult> {
     if (this.helloResult) return this.helloResult;
@@ -220,6 +228,10 @@ export class AgentToolClient {
 
   onEvent(listener: AgentToolEventListener): () => void {
     return this.client.onEvent(listener);
+  }
+
+  reconnect(options?: AgentCallOptions): Promise<AgentHelloResult> {
+    return this.client.reconnect(options);
   }
 
   async startTool<Name extends AgentToolName>(
@@ -279,6 +291,7 @@ export class AgentToolClient {
   }
 
   close(): Promise<void> {
+    this.unsubscribeConnection();
     return this.client.close();
   }
 }

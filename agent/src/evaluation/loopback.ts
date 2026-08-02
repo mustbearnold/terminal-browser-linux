@@ -11,7 +11,7 @@ export interface FixtureAgentHarness {
   trace: MemoryTrace;
 }
 
-class RouterLoopbackTransport implements AgentTransport {
+export class RouterLoopbackTransport implements AgentTransport {
   private readonly messageListeners = new Set<(message: AgentMessage) => void>();
   private readonly errorListeners = new Set<(error: unknown) => void>();
   private readonly closeListeners = new Set<() => void>();

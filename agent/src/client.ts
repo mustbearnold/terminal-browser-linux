@@ -60,7 +60,14 @@ export interface AgentClientOptions {
   maxPendingRequests?: number;
   maxPendingActionsPerPage?: number;
   trace?: TraceRecorder;
+  reconnect?: AgentTransportFactory;
 }
+
+export type AgentTransportFactory = () => Promise<AgentTransport>;
+
+export type AgentConnectionState = "connected" | "disconnected" | "closed";
+
+export type AgentConnectionStateListener = (state: AgentConnectionState) => void;
 
 export interface AgentCallOptions {
   deadlineMs?: number;
@@ -126,23 +133,41 @@ interface PendingRequest {
   reject(error: unknown): void;
 }
 
+interface ResumableObservation {
+  readonly id: number;
+  readonly pageId: PageId;
+  readonly events: readonly AgentEventType[];
+  cursor: PageEventCursor;
+  subscriptionId: string;
+  serverSubscriptionId: string;
+}
+
 export class AgentClient {
   private readonly clientId: string;
   private readonly capabilities: readonly AgentCapability[] | undefined;
   private readonly defaultDeadlineMs: number | undefined;
+  private readonly reconnectTransport: AgentTransportFactory | undefined;
   private maxPendingRequests: number;
   private maxPendingActionsPerPage: number;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly pendingActions = new Map<PageId, number>();
   private readonly eventListeners = new Set<AgentClientEventListener>();
-  private readonly unsubscribeMessage: () => void;
-  private readonly unsubscribeError: () => void;
-  private readonly unsubscribeClose: () => void;
+  private readonly connectionStateListeners = new Set<AgentConnectionStateListener>();
+  private readonly observations = new Map<number, ResumableObservation>();
   private readonly trace: TraceRecorder | undefined;
+  private transport: AgentTransport;
+  private unsubscribeMessage: (() => void) | null = null;
+  private unsubscribeError: (() => void) | null = null;
+  private unsubscribeClose: (() => void) | null = null;
   private requestSequence = 0;
+  private observationSequence = 0;
+  private resumingObservationId: number | null = null;
+  private readonly resumedObservationIds = new Set<number>();
+  private connectionState: AgentConnectionState = "connected";
+  private reconnectPromise: Promise<AgentHelloResult> | null = null;
   private closed = false;
 
-  constructor(private readonly transport: AgentTransport, options: AgentClientOptions = {}) {
+  constructor(transport: AgentTransport, options: AgentClientOptions = {}) {
     validateDeadline(options.defaultDeadlineMs);
     validateRequestBudget(options.maxPendingRequests);
     validateRequestBudget(options.maxPendingActionsPerPage);
@@ -152,18 +177,34 @@ export class AgentClient {
     this.maxPendingRequests = options.maxPendingRequests ?? MAX_AGENT_IN_FLIGHT_REQUESTS;
     this.maxPendingActionsPerPage = options.maxPendingActionsPerPage ?? MAX_AGENT_QUEUED_ACTIONS_PER_PAGE;
     this.trace = options.trace;
-    this.unsubscribeMessage = transport.onMessage((message) => this.handleMessage(message));
-    this.unsubscribeError = transport.onError((error) => this.failPending(transportError(error)));
-    this.unsubscribeClose = transport.onClose(() => this.handleClose());
+    this.reconnectTransport = options.reconnect;
+    this.transport = transport;
+    this.bindTransport(transport);
   }
 
   static async connect(socketPath: string, options: AgentClientOptions = {}): Promise<AgentClient> {
-    return new AgentClient(await connectUnixSocket(socketPath), options);
+    return new AgentClient(await connectUnixSocket(socketPath), {
+      ...options,
+      reconnect: options.reconnect ?? (() => connectUnixSocket(socketPath)),
+    });
   }
 
   onEvent(listener: AgentClientEventListener): () => void {
     this.eventListeners.add(listener);
     return () => this.eventListeners.delete(listener);
+  }
+
+  onConnectionState(listener: AgentConnectionStateListener): () => void {
+    this.connectionStateListeners.add(listener);
+    return () => this.connectionStateListeners.delete(listener);
+  }
+
+  get state(): AgentConnectionState {
+    return this.connectionState;
+  }
+
+  get canReconnect(): boolean {
+    return !this.closed && this.reconnectTransport !== undefined;
   }
 
   hello(options?: AgentCallOptions): Promise<AgentHelloResult> {
@@ -184,6 +225,15 @@ export class AgentClient {
         throw error;
       }
     });
+  }
+
+  reconnect(options?: AgentCallOptions): Promise<AgentHelloResult> {
+    if (!this.reconnectPromise) {
+      this.reconnectPromise = this.reconnectOnce(options).finally(() => {
+        this.reconnectPromise = null;
+      });
+    }
+    return this.reconnectPromise;
   }
 
   cancel(targetRequestId: string, options?: AgentCallOptions): Promise<boolean> {
@@ -335,11 +385,32 @@ export class AgentClient {
     fields: AgentRequestFields<Operation>,
     options: AgentCallOptions = {},
   ): AgentCall<AgentOperationResults[Operation]> {
+    return this.startInternal(operation, fields, options, true);
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    const transport = this.transport;
+    this.unbindTransport();
+    this.connectionState = "closed";
+    this.failPending(new AgentError("TRANSPORT_CLOSED", "agent transport closed", { retryable: true }));
+    this.observations.clear();
+    this.notifyConnectionState("closed");
+    await transport.close();
+  }
+
+  private startInternal<Operation extends AgentOperation>(
+    operation: Operation,
+    fields: AgentRequestFields<Operation>,
+    options: AgentCallOptions,
+    trackObservation: boolean,
+  ): AgentCall<AgentOperationResults[Operation]> {
     const deadlineMs = options.deadlineMs ?? this.defaultDeadlineMs;
     validateDeadline(deadlineMs);
     throwIfAborted(options.signal);
     const requestId = this.nextRequestId(operation);
-    const request = {
+    let request = {
       kind: "request",
       protocol: AGENT_PROTOCOL,
       version: AGENT_PROTOCOL_VERSION,
@@ -348,9 +419,15 @@ export class AgentClient {
       ...(deadlineMs === undefined ? {} : { deadlineMs }),
       ...fields,
     } as AgentRequest;
+    if (request.op === "page.observe.cancel") {
+      const observation = this.findObservation(request.pageId, request.subscriptionId);
+      if (observation) request = { ...request, subscriptionId: observation.serverSubscriptionId };
+    }
     const promise = this.send(request, { ...options, deadlineMs }).then((response) => {
       if (!response.ok) throw responseError(response);
-      return response.result as AgentOperationResults[Operation];
+      const result = response.result as AgentOperationResults[Operation];
+      if (trackObservation) this.trackObservationResult(request, result);
+      return result;
     });
     return {
       requestId,
@@ -359,14 +436,37 @@ export class AgentClient {
     };
   }
 
-  async close(): Promise<void> {
-    if (this.closed) return;
-    this.handleClose();
-    await this.transport.close();
+  private async reconnectOnce(options?: AgentCallOptions): Promise<AgentHelloResult> {
+    if (this.closed) throw closedClientError();
+    if (this.connectionState === "connected") {
+      throw new AgentError("INVALID_REQUEST", "agent transport is already connected");
+    }
+    if (!this.reconnectTransport) {
+      throw new AgentError("TRANSPORT_CLOSED", "agent client has no reconnect transport", { retryable: true });
+    }
+    const transport = await this.reconnectTransport();
+    if (this.closed) {
+      await transport.close();
+      throw closedClientError();
+    }
+    this.bindTransport(transport);
+    this.connectionState = "connected";
+    this.notifyConnectionState("connected");
+    let negotiated = false;
+    try {
+      const hello = await this.hello(options);
+      negotiated = true;
+      await this.resumeObservations(options?.signal);
+      return hello;
+    } catch (error) {
+      if (!negotiated && !this.closed) this.handleClose();
+      if (this.connectionState !== "connected") await transport.close();
+      throw error;
+    }
   }
 
   private send(request: AgentRequest, options: AgentCallOptions): Promise<AgentResponse> {
-    if (this.closed) return Promise.reject(new AgentError("TRANSPORT_CLOSED", "agent transport is closed", { retryable: true }));
+    if (this.closed || this.connectionState !== "connected") return Promise.reject(closedClientError());
     if (request.op !== "request.cancel" && this.pending.size >= this.maxPendingRequests) {
       return Promise.reject(new AgentError("RESOURCE_EXHAUSTED", "too many agent requests are pending", {
         retryable: true,
@@ -453,6 +553,7 @@ export class AgentClient {
   private handleMessage(message: AgentMessage): void {
     if (message.kind === "request") return;
     if (message.kind === "event") {
+      this.advanceObservationCursors(message);
       this.trace?.record("event", message);
       for (const listener of this.eventListeners) {
         try {
@@ -466,12 +567,11 @@ export class AgentClient {
   }
 
   private handleClose(): void {
-    if (this.closed) return;
-    this.closed = true;
+    if (this.closed || this.connectionState !== "connected") return;
+    this.unbindTransport();
+    this.connectionState = "disconnected";
     this.failPending(new AgentError("TRANSPORT_CLOSED", "agent transport closed", { retryable: true }));
-    this.unsubscribeMessage();
-    this.unsubscribeError();
-    this.unsubscribeClose();
+    this.notifyConnectionState("disconnected");
   }
 
   private failPending(error: AgentError): void {
@@ -491,6 +591,120 @@ export class AgentClient {
     const current = this.pendingActions.get(pageId) ?? 0;
     if (current <= 1) this.pendingActions.delete(pageId);
     else this.pendingActions.set(pageId, current - 1);
+  }
+
+  private bindTransport(transport: AgentTransport): void {
+    this.transport = transport;
+    this.unsubscribeMessage = transport.onMessage((message) => this.handleMessage(message));
+    this.unsubscribeError = transport.onError((error) => this.failPending(transportError(error)));
+    this.unsubscribeClose = transport.onClose(() => this.handleClose());
+  }
+
+  private unbindTransport(): void {
+    this.unsubscribeMessage?.();
+    this.unsubscribeError?.();
+    this.unsubscribeClose?.();
+    this.unsubscribeMessage = null;
+    this.unsubscribeError = null;
+    this.unsubscribeClose = null;
+  }
+
+  private notifyConnectionState(state: AgentConnectionState): void {
+    for (const listener of this.connectionStateListeners) {
+      try {
+        listener(state);
+      } catch {}
+    }
+  }
+
+  private trackObservationResult(request: AgentRequest, result: unknown): void {
+    if (request.op === "page.observe") {
+      const observation = result as PageObserveResult;
+      this.observations.set(++this.observationSequence, {
+        id: this.observationSequence,
+        pageId: request.pageId,
+        events: [...request.events],
+        cursor: observation.cursor,
+        subscriptionId: observation.subscriptionId,
+        serverSubscriptionId: observation.subscriptionId,
+      });
+      return;
+    }
+    if (request.op === "page.observe.cancel") {
+      const canceled = result as PageObserveCancelResult;
+      if (canceled.canceled) this.removeObservation(request.pageId, request.subscriptionId);
+      return;
+    }
+    if (request.op === "pages.close") {
+      for (const observation of this.observations.values()) {
+        if (observation.pageId === request.pageId) this.observations.delete(observation.id);
+      }
+    }
+  }
+
+  private advanceObservationCursors(event: AgentEvent): void {
+    for (const observation of this.observations.values()) {
+      if (
+        observation.pageId === event.pageId &&
+        observation.events.includes(event.event) &&
+        (
+          this.resumingObservationId === null ||
+          observation.id === this.resumingObservationId ||
+          this.resumedObservationIds.has(observation.id)
+        ) &&
+        event.sequence > observation.cursor.sequence
+      ) {
+        observation.cursor = { pageId: event.pageId, sequence: event.sequence };
+      }
+    }
+  }
+
+  private async resumeObservations(signal: AbortSignal | undefined): Promise<void> {
+    let firstError: unknown;
+    this.resumedObservationIds.clear();
+    try {
+      for (const observation of [...this.observations.values()]) {
+        if (this.connectionState !== "connected") break;
+        this.resumingObservationId = observation.id;
+        try {
+          const result = await this.startInternal("page.observe", {
+            pageId: observation.pageId,
+            events: observation.events,
+            after: observation.cursor,
+          }, signal === undefined ? {} : { signal }, false).promise;
+          observation.serverSubscriptionId = result.subscriptionId;
+          if (result.cursor.sequence > observation.cursor.sequence) {
+            observation.cursor = result.cursor;
+          }
+          this.resumedObservationIds.add(observation.id);
+        } catch (error) {
+          if (error instanceof AgentError && (error.code === "EVENT_GAP" || error.code === "PAGE_NOT_FOUND")) {
+            this.observations.delete(observation.id);
+          }
+          firstError ??= error;
+          this.resumingObservationId = null;
+        }
+      }
+    } finally {
+      this.resumingObservationId = null;
+      this.resumedObservationIds.clear();
+    }
+    if (firstError) throw firstError;
+  }
+
+  private findObservation(pageId: PageId, subscriptionId: string): ResumableObservation | undefined {
+    for (const observation of this.observations.values()) {
+      if (observation.pageId === pageId && observation.subscriptionId === subscriptionId) return observation;
+    }
+    for (const observation of this.observations.values()) {
+      if (observation.pageId === pageId && observation.serverSubscriptionId === subscriptionId) return observation;
+    }
+    return undefined;
+  }
+
+  private removeObservation(pageId: PageId, subscriptionId: string): void {
+    const observation = this.findObservation(pageId, subscriptionId);
+    if (observation) this.observations.delete(observation.id);
   }
 }
 
@@ -613,4 +827,8 @@ function transportError(error: unknown): AgentError {
   return new AgentError("TRANSPORT_CLOSED", error instanceof Error ? error.message : "agent transport failed", {
     retryable: true,
   });
+}
+
+function closedClientError(): AgentError {
+  return new AgentError("TRANSPORT_CLOSED", "agent transport is closed", { retryable: true });
 }
