@@ -27,6 +27,7 @@ const html = `<!doctype html>
 <label for="upload-single">Upload document</label><input id="upload-single" type="file">
 <label for="upload-many">Upload attachments</label><input id="upload-many" type="file" multiple>
 <input id="upload-hidden" type="file" aria-label="Hidden upload" hidden>
+<output id="upload-status">Idle</output>
 <label for="full-name">Full name</label><input id="full-name" placeholder="Ignored by label" value="" required>
 <button id="schedule-silent-value" aria-label="Schedule silent value" onclick="setTimeout(() => { document.getElementById('full-name').value = 'Silent value'; document.getElementById('silent-button').value = 'New silent action'; document.getElementById('silent-check').checked = true; document.getElementById('silent-choices').options[1].selected = true }, 500)">Schedule silent value</button>
 <input id="silent-button" type="button" value="Old silent action">
@@ -59,14 +60,15 @@ const html = `<!doctype html>
   document.getElementById('double').addEventListener('dblclick', event => { document.getElementById('status').textContent = 'Double dblclick ' + event.detail + ' trusted ' + event.isTrusted; });
   document.getElementById('expand').addEventListener('click', event => event.currentTarget.setAttribute('aria-expanded', String(event.currentTarget.getAttribute('aria-expanded') !== 'true')));
   document.getElementById('remove').addEventListener('click', event => event.currentTarget.remove());
+  for (const id of ['upload-single', 'upload-many', 'upload-hidden']) for (const type of ['input', 'change']) document.getElementById(id).addEventListener(type, event => document.getElementById('upload-status').textContent = id + ' ' + type + ' ' + event.isTrusted + ' ' + event.currentTarget.files.length);
   document.getElementById('drag-source').addEventListener('dragstart', event => event.dataTransfer.setData('text/plain', 'drag payload'));
   document.getElementById('drop-target').addEventListener('dragover', event => event.preventDefault());
   document.getElementById('drop-target').addEventListener('drop', event => { event.preventDefault(); document.getElementById('status').textContent = 'Dropped ' + event.dataTransfer.getData('text/plain'); });
 </script>`;
 
-const shadowHtml = `<!doctype html><meta charset="utf-8"><title>Shadow evaluation fixture</title><x-control></x-control><x-late></x-late><button aria-label="Attach late control" onclick="const root=document.querySelector('x-late').attachShadow({mode:'closed'});root.innerHTML='<button aria-label=&quot;Late action&quot;>Late action</button>'">Attach late control</button><script>customElements.define('x-control',class extends HTMLElement{constructor(){super();const root=this.attachShadow({mode:'open'});root.innerHTML='<label>Shadow name <input aria-label="Shadow name"></label><button aria-label="Shadow action">Shadow action</button><span id="status">Idle</span>';root.querySelector('button').addEventListener('click',()=>{root.querySelector('#status').textContent='Clicked';const dynamic=document.createElement('button');dynamic.setAttribute('aria-label','Dynamic action');dynamic.textContent='Dynamic action';root.append(dynamic)})}});</script>`;
+const shadowHtml = `<!doctype html><meta charset="utf-8"><title>Shadow evaluation fixture</title><x-control></x-control><x-late></x-late><button aria-label="Attach late control" onclick="const root=document.querySelector('x-late').attachShadow({mode:'closed'});root.innerHTML='<button aria-label=&quot;Late action&quot;>Late action</button>'">Attach late control</button><script>customElements.define('x-control',class extends HTMLElement{constructor(){super();const root=this.attachShadow({mode:'open'});root.innerHTML='<label>Shadow name <input aria-label="Shadow name"></label><label>Shadow upload <input type="file" aria-label="Shadow upload"></label><output id="upload-status">Idle</output><button aria-label="Shadow action">Shadow action</button><span id="status">Idle</span>';const upload=root.querySelector('input[type=file]');for(const type of ['input','change']) upload.addEventListener(type,event=>root.querySelector('#upload-status').textContent=type+' '+event.isTrusted+' '+upload.files.length);root.querySelector('button').addEventListener('click',()=>{root.querySelector('#status').textContent='Clicked';const dynamic=document.createElement('button');dynamic.setAttribute('aria-label','Dynamic action');dynamic.textContent='Dynamic action';root.append(dynamic)})}});</script>`;
 
-const frameChildHtml = `<!doctype html><label>Frame name <input aria-label="Frame name"></label><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
+const frameChildHtml = `<!doctype html><label>Frame name <input aria-label="Frame name"></label><label>Frame upload <input type="file" aria-label="Frame upload" oninput="document.querySelector('#frame-upload-status').textContent='input '+event.isTrusted+' '+this.files.length" onchange="document.querySelector('#frame-upload-status').textContent='change '+event.isTrusted+' '+this.files.length"></label><output id="frame-upload-status">Idle</output><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
 const frameHtml = `<!doctype html><meta charset="utf-8"><title>Frame evaluation fixture</title><iframe title="Control frame"></iframe><script>document.querySelector('iframe').srcdoc=${JSON.stringify(frameChildHtml)}</script>`;
 
 const crossOriginChildHtml = `<!doctype html><label>Frame name <input id="frame-name" aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input id="frame-enabled" type="checkbox" aria-label="Frame enabled">Frame enabled</label><div id="frame-drag-source" draggable="true" aria-label="Frame drag source" style="display:inline-block;border:1px solid #888;padding:10px;margin:8px">Frame drag source</div><div id="frame-drop-target" aria-label="Frame drop target" style="display:inline-block;border:1px dashed #888;padding:10px;margin:8px">Frame drop target</div><output id="frame-drag-status">Idle</output><input id="frame-upload" type="file" aria-label="Frame upload"><button id="schedule-frame-silent" aria-label="Schedule frame silent" onclick="setTimeout(() => { document.getElementById('frame-name').value = 'Silent frame name'; document.getElementById('frame-silent-button').value = 'New frame action'; document.getElementById('frame-enabled').checked = true; document.getElementById('frame-silent-choice').options[1].selected = true }, 500)">Schedule frame silent</button><input id="frame-silent-button" type="button" value="Old frame action"><select id="frame-silent-choice" multiple aria-label="Frame silent choices"><option value="one" selected>Frame silent one</option><option value="two">Frame silent two</option></select><div id="frame-scroll-region" role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span><script>document.getElementById('frame-drag-source').addEventListener('dragstart', event => event.dataTransfer.setData('text/plain', 'frame payload'));document.getElementById('frame-drop-target').addEventListener('dragover', event => event.preventDefault());document.getElementById('frame-drop-target').addEventListener('drop', event => { event.preventDefault(); document.getElementById('frame-drag-status').textContent = 'Frame dropped ' + event.dataTransfer.getData('text/plain'); });document.getElementById('frame-drop-target').addEventListener('mousedown', event => { if (event.button === 1) document.getElementById('frame-drag-status').textContent = 'Middle click ' + event.button + ' ' + event.isTrusted; });document.getElementById('frame-scroll-region').addEventListener('wheel', event => { document.getElementById('frame-drag-status').textContent = 'Wheel ' + event.deltaY + ' ' + event.isTrusted; });</script>`;
@@ -897,6 +899,10 @@ function uploadScenarios(pageId, uploadPaths) {
         expect: { element: { target: { locator: { kind: "css", value: "#upload-hidden" } }, state: { fileCount: 0 } }, timeoutMs: 1_000 },
         output: { snapshot: "none" },
       });
+      const uploadStatus = await client.call("page.read", {
+        pageId,
+        target: { locator: { kind: "css", value: "#upload-status" } },
+      });
       const passed = single?.state?.fileCount === 0
         && many?.state?.fileCount === 0
         && hiddenQuery.nodes[0]?.attributes?.id === "upload-hidden"
@@ -910,7 +916,8 @@ function uploadScenarios(pageId, uploadPaths) {
         && hiddenUpload.verified
         && hiddenUpload.proof?.fileCount === 1
         && cleared.verified
-        && cleared.proof?.fileCount === 0;
+        && cleared.proof?.fileCount === 0
+        && uploadStatus.node.text === "upload-hidden change false 0";
       return {
         passed,
         metrics: {
@@ -920,6 +927,7 @@ function uploadScenarios(pageId, uploadPaths) {
           multipleUpload: Number(manyUpload.verified && manyUpload.proof?.fileCount === 2),
           hiddenUpload: Number(hiddenUpload.verified),
           clearUpload: Number(cleared.verified && cleared.proof?.fileCount === 0),
+          clearUploadEvent: Number(uploadStatus.node.text === "upload-hidden change false 0"),
           singleAfterFileCount: singleAfter.nodes[0]?.state?.fileCount ?? -1,
           volatileFileStateRefresh: Number(singleAfter.diagnostics?.queries[0]?.cacheHit === false),
         },
@@ -977,7 +985,7 @@ function dragScenarios(pageId) {
   }];
 }
 
-function shadowScenarios(pageId) {
+function shadowScenarios(pageId, uploadPaths) {
   return [{
     id: "shadow-dom-resolution-and-mutation",
     name: "shadow-dom-resolution-and-mutation",
@@ -1008,6 +1016,32 @@ function shadowScenarios(pageId) {
         action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Shadow action", exact: true } } },
         expect: { text: "Clicked", timeoutMs: 3_000 },
       });
+      const shadowUpload = await client.call("page.query", {
+        pageId,
+        locator: { kind: "css", value: 'input[aria-label="Shadow upload"]' },
+        options: { limit: 1, diagnostics: "summary" },
+      });
+      const shadowUploaded = await client.call("page.act", {
+        pageId,
+        action: { type: "upload", target: { ref: shadowUpload.nodes[0].ref }, paths: [uploadPaths[0]] },
+        expect: { element: { target: { locator: { kind: "css", value: 'input[aria-label="Shadow upload"]' } }, state: { fileCount: 1 } }, timeoutMs: 1_000 },
+        output: { snapshot: "none" },
+      });
+      const shadowClearTarget = await client.call("page.query", {
+        pageId,
+        locator: { kind: "css", value: 'input[aria-label="Shadow upload"]' },
+        options: { limit: 1, diagnostics: "summary" },
+      });
+      const shadowCleared = await client.call("page.act", {
+        pageId,
+        action: { type: "upload", target: { ref: shadowClearTarget.nodes[0].ref }, paths: [] },
+        expect: { element: { target: { locator: { kind: "css", value: 'input[aria-label="Shadow upload"]' } }, state: { fileCount: 0 } }, timeoutMs: 1_000 },
+        output: { snapshot: "none" },
+      });
+      const shadowUploadStatus = await client.call("page.read", {
+        pageId,
+        target: { locator: { kind: "css", value: "#upload-status" } },
+      });
       const after = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
       const dynamic = after.nodes.find((node) => node.name === "Dynamic action");
       const attachedLate = await client.call("page.act", {
@@ -1027,7 +1061,11 @@ function shadowScenarios(pageId) {
         && late.matchCount === 1
         && late.nodes[0]?.name === "Late action"
         && late.nodes[0]?.parent
-        && late.diagnostics?.queries[0]?.elementsEvaluated === 1;
+        && late.diagnostics?.queries[0]?.elementsEvaluated === 1
+        && shadowUpload.nodes[0]?.name === "Shadow upload"
+        && shadowUploaded.verified && shadowUploaded.proof?.fileCount === 1
+        && shadowCleared.verified && shadowCleared.proof?.fileCount === 0
+        && shadowUploadStatus.node.text === "change false 0";
       return {
         passed,
         metrics: {
@@ -1036,13 +1074,16 @@ function shadowScenarios(pageId) {
           shadowAncestry: Number(Boolean(liveShadowButton?.parent)),
           lateShadowRoot: Number(attachedLate.verified && late.matchCount === 1),
           lateShadowCandidates: late.diagnostics?.queries[0]?.elementsEvaluated ?? 0,
+          shadowFileUpload: Number(shadowUploaded.verified && shadowUploaded.proof?.fileCount === 1),
+          shadowFileClear: Number(shadowCleared.verified && shadowCleared.proof?.fileCount === 0),
+          shadowFileClearEvent: Number(shadowUploadStatus.node.text === "change false 0"),
         },
       };
     },
   }];
 }
 
-function frameScenarios(pageId) {
+function frameScenarios(pageId, uploadPaths) {
   return [{
     id: "same-origin-frame-resolution-and-mutation",
     name: "same-origin-frame-resolution-and-mutation",
@@ -1063,6 +1104,32 @@ function frameScenarios(pageId) {
         pageId,
         action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Frame name", exact: true } }, value: "Ada" },
       });
+      const frameUpload = await client.call("page.query", {
+        pageId,
+        locator: { kind: "css", value: 'input[aria-label="Frame upload"]' },
+        options: { limit: 1, diagnostics: "summary" },
+      });
+      const frameUploaded = await client.call("page.act", {
+        pageId,
+        action: { type: "upload", target: { ref: frameUpload.nodes[0].ref }, paths: [uploadPaths[0]] },
+        expect: { element: { target: { locator: { kind: "css", value: 'input[aria-label="Frame upload"]' } }, state: { fileCount: 1 } }, timeoutMs: 1_000 },
+        output: { snapshot: "none" },
+      });
+      const frameClearTarget = await client.call("page.query", {
+        pageId,
+        locator: { kind: "css", value: 'input[aria-label="Frame upload"]' },
+        options: { limit: 1, diagnostics: "summary" },
+      });
+      const frameCleared = await client.call("page.act", {
+        pageId,
+        action: { type: "upload", target: { ref: frameClearTarget.nodes[0].ref }, paths: [] },
+        expect: { element: { target: { locator: { kind: "css", value: 'input[aria-label="Frame upload"]' } }, state: { fileCount: 0 } }, timeoutMs: 1_000 },
+        output: { snapshot: "none" },
+      });
+      const frameUploadStatus = await client.call("page.read", {
+        pageId,
+        target: { locator: { kind: "css", value: "#frame-upload-status" } },
+      });
       const clicked = await client.call("page.act", {
         pageId,
         action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Frame action", exact: true } } },
@@ -1072,8 +1139,20 @@ function frameScenarios(pageId) {
       const dynamic = after.nodes.find((node) => node.name === "Frame dynamic");
       const passed = Boolean(frameButton?.frameId && frameButton.frameId !== "main")
         && frameTextbox?.frameId === frameButton.frameId && frameButton.box?.width > 0
-        && filled.verified && clicked.verified && dynamic?.frameId === frameButton.frameId;
-      return { passed, metrics: { frameControls: [frameButton, frameTextbox].filter(Boolean).length, frameMutations: dynamic ? 1 : 0 } };
+        && filled.verified && frameUploaded.verified && frameUploaded.proof?.fileCount === 1
+        && frameCleared.verified && frameCleared.proof?.fileCount === 0
+        && frameUploadStatus.node.text === "change false 0"
+        && clicked.verified && dynamic?.frameId === frameButton.frameId;
+      return {
+        passed,
+        metrics: {
+          frameControls: [frameButton, frameTextbox].filter(Boolean).length,
+          frameMutations: dynamic ? 1 : 0,
+          frameFileUpload: Number(frameUploaded.verified && frameUploaded.proof?.fileCount === 1),
+          frameFileClear: Number(frameCleared.verified && frameCleared.proof?.fileCount === 0),
+          frameFileClearEvent: Number(frameUploadStatus.node.text === "change false 0"),
+        },
+      };
     },
   }];
 }
@@ -1789,8 +1868,8 @@ async function run() {
       ...dragScenarios(pageId),
       ...semanticScenarios(pageId),
       ...uploadScenarios(uploadPageId, uploadPaths),
-      ...shadowScenarios(shadowPageId),
-      ...frameScenarios(framePageId),
+      ...shadowScenarios(shadowPageId, uploadPaths),
+      ...frameScenarios(framePageId, uploadPaths),
       ...crossOriginScenarios(crossOriginPageId, uploadPaths),
       ...topLevelNavigationScenarios(navigationPageId, {
         next: `http://127.0.0.1:${navigationServer.port}/next.html`,

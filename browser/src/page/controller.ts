@@ -630,21 +630,36 @@ export class BrowserController {
         };
         const backendNodeId = described.node?.backendNodeId;
         if (typeof backendNodeId !== "number") throw new Error("file input target has no backend DOM node");
-        if (paths.length > 0) {
-          await this.cdp("DOM.setFileInputFiles", { backendNodeId, files: [...paths] });
+        await this.cdp("DOM.setFileInputFiles", { backendNodeId, files: [...paths] });
+        const readFileCount = async (): Promise<number> => {
+          const inspected = (await this.cdp("Runtime.callFunctionOn", {
+            objectId,
+            functionDeclaration: "function() { return this.files ? this.files.length : -1; }",
+            returnByValue: true,
+          })) as { result?: { value?: unknown } };
+          const fileCount = inspected.result?.value;
+          if (!Number.isSafeInteger(fileCount) || Number(fileCount) < 0) {
+            throw new Error("file input assignment returned no file count");
+          }
+          return Number(fileCount);
+        };
+        const readFileCountAfterClear = async (): Promise<number> => {
+          const cleared = (await this.cdp("Runtime.callFunctionOn", {
+            objectId,
+            functionDeclaration: "function() { const view = this.ownerDocument.defaultView || window; const DataTransferCtor = view.DataTransfer || DataTransfer; this.files = new DataTransferCtor().files; const EventCtor = view.Event || Event; this.dispatchEvent(new EventCtor('input', { bubbles: true })); this.dispatchEvent(new EventCtor('change', { bubbles: true })); return this.files ? this.files.length : -1; }",
+            returnByValue: true,
+          })) as { result?: { value?: unknown } };
+          const fileCount = cleared.result?.value;
+          if (!Number.isSafeInteger(fileCount) || Number(fileCount) < 0) {
+            throw new Error("file input clear returned no file count");
+          }
+          return Number(fileCount);
+        };
+        let fileCount = await readFileCount();
+        if (paths.length === 0 && fileCount !== 0) {
+          fileCount = await readFileCountAfterClear();
         }
-        const inspected = (await this.cdp("Runtime.callFunctionOn", {
-          objectId,
-          functionDeclaration: paths.length === 0
-            ? "function() { this.value = ''; const view = this.ownerDocument.defaultView || window; const EventCtor = view.Event || Event; this.dispatchEvent(new EventCtor('input', { bubbles: true })); this.dispatchEvent(new EventCtor('change', { bubbles: true })); return this.files ? this.files.length : -1; }"
-            : "function() { return this.files ? this.files.length : -1; }",
-          returnByValue: true,
-        })) as { result?: { value?: unknown } };
-        const fileCount = inspected.result?.value;
-        if (!Number.isSafeInteger(fileCount) || Number(fileCount) < 0) {
-          throw new Error("file input assignment returned no file count");
-        }
-        return Number(fileCount);
+        return fileCount;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (frameId !== "main" && attempt === 0 && /context|frame/i.test(message)) {
