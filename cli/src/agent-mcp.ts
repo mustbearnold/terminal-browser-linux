@@ -14,6 +14,7 @@ import type {
 import type { Backend } from "pixel-terminals";
 
 import { agentSocketPath, selectBrowser } from "./agent";
+import { superviseAgentConnection, type AgentConnectionLifecycle, type AgentConnectionSupervisor } from "./agent-recovery";
 
 export const MCP_PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"] as const;
 export const MCP_SERVER_PROTOCOL_VERSION = MCP_PROTOCOL_VERSIONS[0];
@@ -79,6 +80,21 @@ export class McpServerSession {
         level: "info",
         logger: "terminal-browser.agent",
         data: event,
+      },
+    });
+  }
+
+  notifyConnection(lifecycle: AgentConnectionLifecycle): void {
+    if (lifecycle.state === "disconnected" || lifecycle.state === "connected") {
+      this.manifestValue = null;
+    }
+    this.emit({
+      jsonrpc: "2.0",
+      method: "notifications/message",
+      params: {
+        level: lifecycle.state === "failed" ? "error" : "info",
+        logger: "terminal-browser.agent.connection",
+        data: lifecycle,
       },
     });
   }
@@ -224,6 +240,9 @@ export async function agentMcpCommand(backend: Backend, options: AgentMcpOptions
   const tools = new AgentToolClient(client);
   const session = new McpServerSession(tools, write);
   const unsubscribe = tools.onEvent((event) => session.notifyEvent(event));
+  const supervisor: AgentConnectionSupervisor = superviseAgentConnection(tools, (lifecycle) => {
+    session.notifyConnection(lifecycle);
+  });
   const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
   try {
     for await (const line of lines) {
@@ -234,6 +253,7 @@ export async function agentMcpCommand(backend: Backend, options: AgentMcpOptions
     return 0;
   } finally {
     lines.close();
+    supervisor.dispose();
     unsubscribe();
     await tools.close();
   }

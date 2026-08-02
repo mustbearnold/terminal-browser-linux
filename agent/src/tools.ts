@@ -11,6 +11,7 @@ import {
 import {
   AgentClient,
   type AgentCallOptions,
+  type AgentConnectionState,
   type AgentHelloResult,
   type AgentOperation,
   type AgentOperationResults,
@@ -228,6 +229,10 @@ export class AgentToolClient {
 
   onEvent(listener: AgentToolEventListener): () => void {
     return this.client.onEvent(listener);
+  }
+
+  onConnectionState(listener: (state: AgentConnectionState) => void): () => void {
+    return this.client.onConnectionState(listener);
   }
 
   reconnect(options?: AgentCallOptions): Promise<AgentHelloResult> {

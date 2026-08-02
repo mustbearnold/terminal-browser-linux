@@ -9,6 +9,7 @@ import type { AgentCallOptions, AgentToolCall } from "terminal-browser-agent";
 import type { Backend } from "pixel-terminals";
 
 import { agentSocketPath, selectBrowser } from "./agent";
+import { superviseAgentConnection, type AgentConnectionSupervisor } from "./agent-recovery";
 
 export interface AgentToolsOptions {
   browserKey?: string;
@@ -37,6 +38,7 @@ export async function agentToolsCommand(backend: Backend, options: AgentToolsOpt
   });
   const tools = new AgentToolClient(client);
   let unsubscribe = () => {};
+  let supervisor: AgentConnectionSupervisor | null = null;
   try {
     const manifest = await tools.manifest();
     if (options.list) {
@@ -45,6 +47,8 @@ export async function agentToolsCommand(backend: Backend, options: AgentToolsOpt
     }
 
     unsubscribe = tools.onEvent((event) => write({ kind: "event", event }));
+    supervisor = superviseAgentConnection(tools, (lifecycle) => write({ kind: "connection", ...lifecycle }));
+    write({ kind: "connection", state: "connected" });
     const session = new AgentToolLineSession(tools, write);
     const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
     try {
@@ -58,6 +62,7 @@ export async function agentToolsCommand(backend: Backend, options: AgentToolsOpt
     }
     return 0;
   } finally {
+    supervisor?.dispose();
     unsubscribe();
     await tools.close();
   }

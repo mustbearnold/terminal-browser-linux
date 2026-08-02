@@ -18,6 +18,7 @@ import type {
 } from "terminal-browser-agent";
 
 import { McpServerSession, type McpToolProvider } from "./agent-mcp";
+import type { AgentConnectionLifecycle } from "./agent-recovery";
 
 interface PendingCall {
   resolve(value: unknown): void;
@@ -27,9 +28,11 @@ interface PendingCall {
 
 class FakeMcpTools implements McpToolProvider {
   readonly calls = new Map<string, PendingCall>();
+  manifestCalls = 0;
   private sequence = 0;
 
   manifest(): Promise<AgentToolManifest> {
+    this.manifestCalls += 1;
     return Promise.resolve({
       protocol: AGENT_TOOL_PROTOCOL,
       version: AGENT_TOOL_VERSION,
@@ -158,4 +161,36 @@ test("preserves agent events as MCP logging notifications", async () => {
     method: "notifications/message",
     params: { level: "info", logger: "terminal-browser.agent", data: event },
   });
+});
+
+test("publishes connection lifecycle notifications and refreshes the manifest", async () => {
+  const tools = new FakeMcpTools();
+  const messages: Record<string, unknown>[] = [];
+  const session = new McpServerSession(tools, (message) => messages.push(message as Record<string, unknown>));
+
+  await session.handle(JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1" } },
+  }));
+  session.notifyConnection({ state: "disconnected" });
+  session.notifyConnection({ state: "reconnecting" });
+  session.notifyConnection({ state: "connected" });
+  await session.handle(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }));
+
+  const connections = messages
+    .filter((message) => message.method === "notifications/message")
+    .map((message) => (message.params as { data: AgentConnectionLifecycle }).data);
+  assert.deepEqual(connections, [
+    { state: "disconnected" },
+    { state: "reconnecting" },
+    { state: "connected" },
+  ]);
+  assert.equal(tools.manifestCalls, 2);
+  assert.deepEqual((messages.at(-1)?.result as { tools: unknown[] }).tools, [{
+    name: AGENT_TOOL_DEFINITIONS[0].name,
+    description: AGENT_TOOL_DEFINITIONS[0].description,
+    inputSchema: AGENT_TOOL_DEFINITIONS[0].inputSchema,
+  }]);
 });

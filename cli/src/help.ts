@@ -88,6 +88,8 @@ Connects to the selected browser and exposes the negotiated agent operations
 as named tools. Pass --list to print the tool manifest. Without --list, read
 one JSON tool request per line from stdin. Calls are concurrent: each first
 returns an accepted line, then a correlated result or event line.
+Streaming mode also reports connection lifecycle lines and performs one
+reconnect attempt after transport loss; in-flight calls are not replayed.
 
 Options:
   --browser <key>     A browser key from terminal-browser ls
@@ -104,7 +106,8 @@ Request shape:
     body: `
 Connects to the selected browser and exposes the negotiated agent operations
 through the Model Context Protocol over stdin/stdout. It supports the MCP
-initialize lifecycle, tools/list, tools/call, cancellation, and agent events.
+initialize lifecycle, tools/list, tools/call, cancellation, agent events, and
+connection lifecycle notifications.
 
 Options:
   --browser <key>     A browser key from terminal-browser ls

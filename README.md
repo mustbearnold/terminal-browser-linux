@@ -35,6 +35,13 @@ For line-oriented named tool calls without an MCP host:
 terminal-browser tools --browser <browser-key> --list
 ```
 
+The streaming `tools` mode emits `kind: "connection"` lines for
+`disconnected`, `reconnecting`, `connected`, `failed`, and `closed` states.
+It makes one reconnect attempt per transport loss, and `connected` is emitted
+only after hello negotiation and observation replay finish. In-flight calls
+remain failed and are never replayed implicitly. MCP reports the same lifecycle
+through `notifications/message` with logger `terminal-browser.agent.connection`.
+
 For the browser-compatible control path:
 ```
 pnpm agent:live-smoke
