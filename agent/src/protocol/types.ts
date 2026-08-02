@@ -114,6 +114,8 @@ export interface PageQueryDiagnostics {
   shadowRootsSearched: number;
   elementsScanned: number;
   planCacheHits: number;
+  elementIndexHits: number;
+  elementIndexRebuilds: number;
   queries: readonly PageQueryDiagnostic[];
 }
 

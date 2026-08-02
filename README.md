@@ -93,6 +93,9 @@ have no new traversal cost. In a query batch those shared search counts are not
 additive per query. `planCacheHits` counts selector and nested-ancestor matcher
 work reused within this batch; each entry's `index` identifies the requested
 query, and entries are returned only for queries that requested diagnostics.
+`elementIndexHits` and `elementIndexRebuilds` show whether the live backend
+reused its per-frame element index or conservatively rebuilt it after a
+structural DOM mutation.
 
 Use `page.read` when one control is expected. The result contains the node plus
 the document, revision, and read token that prove which page state was observed;

@@ -832,6 +832,8 @@ function snapshotQueryDiagnostics(
     shadowRootsSearched: 0,
     elementsScanned: snapshot.nodes.length,
     planCacheHits: 0,
+    elementIndexHits: 0,
+    elementIndexRebuilds: 0,
     queries: queries.map((query) => ({
       ...query,
       cacheHit: false,

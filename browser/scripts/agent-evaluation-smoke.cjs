@@ -56,7 +56,7 @@ const crossOriginChildHtml = `<!doctype html><label>Frame name <input aria-label
 const navigationStartHtml = `<!doctype html><meta charset="utf-8"><title>Navigation start</title><button aria-label="Start action">Start action</button><output>Navigation start</output>`;
 const navigationNextHtml = `<!doctype html><meta charset="utf-8"><title>Navigation next</title><label>Recovered name <input aria-label="Recovered name"></label><button aria-label="Next action" onclick="document.querySelector('output').textContent='Next clicked'">Next action</button><output>Next ready</output>`;
 const eventHtml = `<!doctype html><meta charset="utf-8"><title>Native event fixture</title><button aria-label="Emit console" onclick="console.warn('agent console probe')">Emit console</button><button aria-label="Emit dialog" onclick="alert('agent dialog probe')">Emit dialog</button><button aria-label="Emit confirm" onclick="document.querySelector('#dialog-status').textContent = confirm('agent confirm probe') ? 'Confirmed' : 'Dismissed'">Emit confirm</button><button id="unlock" aria-label="Unlock" disabled>Unlock</button><button aria-label="Schedule update" onclick="setTimeout(() => { document.querySelector('#async-status').textContent = 'Asynchronous update'; document.querySelector('#unlock').disabled = false; setTimeout(() => { document.querySelector('#async-status').textContent = 'Settled' }, 80) }, 180)">Schedule update</button><span id="dialog-status">Idle</span><span id="async-status">Idle</span>`;
-const largeWindowHtml = `<!doctype html><meta charset="utf-8"><title>Large window fixture</title><output id="status">Idle</output><div id="controls">${Array.from({ length: 1099 }, (_, index) => `<button id="large-${index}" aria-label="Large ${index}">Large ${index}</button>`).join("")}<button id="tail" aria-label="Tail action" onclick="document.querySelector('#status').textContent='Tail clicked'">Tail action</button></div>`;
+const largeWindowHtml = `<!doctype html><meta charset="utf-8"><title>Large window fixture</title><output id="status">Idle</output><div id="controls">${Array.from({ length: 1099 }, (_, index) => `<button id="large-${index}" aria-label="Large ${index}">Large ${index}</button>`).join("")}<button id="tail" aria-label="Tail action" onclick="document.querySelector('#status').textContent='Tail clicked'">Tail action</button><button id="add-control" aria-label="Add control" onclick="const b=document.createElement('button');b.id='dynamic-control';b.setAttribute('aria-label','Dynamic control');b.textContent='Dynamic control';document.querySelector('#controls').append(b)">Add control</button></div>`;
 
 async function expectCode(promise, code) {
   await assert.rejects(promise, (error) => error && error.code === code);
@@ -305,6 +305,16 @@ function queryScenarios(pageId) {
         target: { ref: tail.nodes[0]?.ref },
         token: snapshotToken(queryBatch),
       });
+      const inserted = await client.call("page.act", {
+        pageId,
+        action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Add control", exact: true } } },
+        output: { snapshot: "none" },
+      });
+      const rebuilt = await client.call("page.query", {
+        pageId,
+        locator: { kind: "css", value: "#dynamic-control" },
+        options: { limit: 1, diagnostics: "summary" },
+      });
       return {
         passed: broad.matchCount === 1099
           && broad.nodes.length === 5
@@ -324,7 +334,11 @@ function queryScenarios(pageId) {
           && plannedFirst.nodes.length === 8
           && plannedSecond.nodes.length === 1
           && read.node.attributes?.id === "tail"
-          && read.revision === queryBatch.revision,
+          && read.revision === queryBatch.revision
+          && (plannedBatch.diagnostics.elementIndexHits ?? 0) > 0
+          && inserted.verified
+          && rebuilt.nodes[0]?.attributes?.id === "dynamic-control"
+          && (rebuilt.diagnostics?.elementIndexRebuilds ?? 0) > 0,
         metrics: {
           queryMatchCount: broad.matchCount,
           queryCandidates: broad.nodes.length,
@@ -333,6 +347,9 @@ function queryScenarios(pageId) {
           queryBatchSharedRevision: Number(read.revision === queryBatch.revision),
           queryPlanCacheHits: plannedBatch.diagnostics?.planCacheHits ?? 0,
           queryPlanReuse: Number((plannedBatch.diagnostics?.planCacheHits ?? 0) > 0),
+          elementIndexHits: plannedBatch.diagnostics?.elementIndexHits ?? 0,
+          elementIndexRebuilds: rebuilt.diagnostics?.elementIndexRebuilds ?? 0,
+          elementIndexFallback: Number((rebuilt.diagnostics?.elementIndexRebuilds ?? 0) > 0),
           indexedLocatorRead: Number(indexed.node.attributes?.id === "large-4"),
           readRevisionBound: Number(read.revision === queryBatch.revision),
         },

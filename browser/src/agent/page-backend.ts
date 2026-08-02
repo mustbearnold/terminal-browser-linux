@@ -140,6 +140,8 @@ type LiveLocatorRuntimeDiagnostics = {
   elementsScanned: number;
   shadowRootsSearched: number;
   planCacheHits: number;
+  elementIndexHits: number;
+  elementIndexRebuilds: number;
   queries: LiveLocatorRuntimeQueryDiagnostics[];
 };
 type LiveLocatorRuntimeQueryDiagnostics = {
@@ -431,6 +433,8 @@ export class ElectronPageBackend implements PageBackend {
     let elementsScanned = 0;
     let shadowRootsSearched = 0;
     let planCacheHits = 0;
+    let elementIndexHits = 0;
+    let elementIndexRebuilds = 0;
     const queryDiagnostics = queries.map((query, index): PageQueryDiagnostic | null => (
       query.diagnostics
         ? {
@@ -449,6 +453,8 @@ export class ElectronPageBackend implements PageBackend {
         elementsScanned += value.raw.diagnostics.elementsScanned;
         shadowRootsSearched += value.raw.diagnostics.shadowRootsSearched;
         planCacheHits += value.raw.diagnostics.planCacheHits;
+        elementIndexHits += value.raw.diagnostics.elementIndexHits;
+        elementIndexRebuilds += value.raw.diagnostics.elementIndexRebuilds;
         for (const diagnostic of value.raw.diagnostics.queries) {
           const entry = value.entries[diagnostic.index];
           if (!entry) continue;
@@ -526,6 +532,8 @@ export class ElectronPageBackend implements PageBackend {
           shadowRootsSearched,
           elementsScanned,
           planCacheHits,
+          elementIndexHits,
+          elementIndexRebuilds,
           queries: queryDiagnostics.filter((diagnostic): diagnostic is PageQueryDiagnostic => diagnostic !== null),
         },
       } : {}),
@@ -2646,6 +2654,10 @@ function agentStateSetupScript(key: string, frameId: string): string {
         pendingChanges: [],
         invalidationScheduled: false,
         snapshotRevision: -1,
+        elementIndexRoots: [],
+        elementIndexElements: [],
+        elementIndexReady: false,
+        elementIndexDirty: false,
       };
       const emit = () => {
         const binding = window.__pixelEmit;
@@ -2673,7 +2685,10 @@ function agentStateSetupScript(key: string, frameId: string): string {
           emit();
         });
       };
-      const observer = new MutationObserver(() => invalidate("mutation", null));
+      const observer = new MutationObserver((records) => {
+        if (records.some((record) => record.type === "childList")) state.elementIndexDirty = true;
+        invalidate("mutation", null);
+      });
       const observedRoots = new WeakSet();
       const handledEvents = new WeakSet();
       const invalidateEvent = (event) => {
@@ -2684,11 +2699,41 @@ function agentStateSetupScript(key: string, frameId: string): string {
       };
       const observeRoot = (root) => {
         if (observedRoots.has(root)) return;
+        if (state.elementIndexReady && !state.elementIndexRoots.includes(root)) state.elementIndexDirty = true;
         observedRoots.add(root);
         observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
         for (const event of ["input", "change", "focusin", "focusout"]) {
           root.addEventListener(event, invalidateEvent, true);
         }
+      };
+      const rebuildElementIndex = () => {
+        state.elementIndexReady = false;
+        const roots = [document];
+        const visitedRoots = new Set(roots);
+        const elements = [];
+        const visitedElements = new Set();
+        for (let rootIndex = 0; rootIndex < roots.length; rootIndex += 1) {
+          for (const element of roots[rootIndex].querySelectorAll("*")) {
+            if (visitedElements.has(element)) continue;
+            visitedElements.add(element);
+            elements.push(element);
+            if (element.shadowRoot && !visitedRoots.has(element.shadowRoot)) {
+              visitedRoots.add(element.shadowRoot);
+              roots.push(element.shadowRoot);
+              observeRoot(element.shadowRoot);
+            }
+          }
+        }
+        state.elementIndexRoots = roots;
+        state.elementIndexElements = elements;
+        state.elementIndexReady = true;
+        state.elementIndexDirty = false;
+        return false;
+      };
+      state.ensureElementIndex = () => {
+        const reused = state.elementIndexReady && !state.elementIndexDirty;
+        if (reused) return true;
+        return rebuildElementIndex();
       };
       state.observeRoot = observeRoot;
       observeRoot(document);
@@ -2910,22 +2955,9 @@ function liveLocatorBatchScript(
       }
       return matchesScoped(el, locator);
     };
-    const roots = [document];
-    const visitedRoots = new Set(roots);
-    const elements = [];
-    const visitedElements = new Set();
-    for (let rootIndex = 0; rootIndex < roots.length; rootIndex += 1) {
-      for (const element of roots[rootIndex].querySelectorAll("*")) {
-        if (!visitedElements.has(element)) {
-          visitedElements.add(element);
-          elements.push(element);
-          if (element.shadowRoot && !visitedRoots.has(element.shadowRoot)) {
-            visitedRoots.add(element.shadowRoot);
-            roots.push(element.shadowRoot);
-          }
-        }
-      }
-    }
+    const elementIndexReused = state.ensureElementIndex();
+    const roots = state.elementIndexRoots;
+    const elements = state.elementIndexElements;
     const capturedNodes = new Map();
     const capture = (el) => {
       if (capturedNodes.has(el)) return capturedNodes.get(el);
@@ -3005,6 +3037,8 @@ function liveLocatorBatchScript(
           elementsScanned: elements.length,
           shadowRootsSearched: Math.max(0, roots.length - 1),
           planCacheHits,
+          elementIndexHits: elementIndexReused ? 1 : 0,
+          elementIndexRebuilds: elementIndexReused ? 0 : 1,
           queries: queryDiagnostics,
         },
       } : {}),
@@ -3378,7 +3412,13 @@ function isLiveLocatorBatchResult(value: unknown): value is LiveLocatorBatchResu
 function isLiveLocatorRuntimeDiagnostics(value: unknown): value is LiveLocatorRuntimeDiagnostics {
   if (!value || typeof value !== "object") return false;
   const diagnostics = value as Record<string, unknown>;
-  return [diagnostics.elementsScanned, diagnostics.shadowRootsSearched, diagnostics.planCacheHits].every((entry) =>
+  return [
+    diagnostics.elementsScanned,
+    diagnostics.shadowRootsSearched,
+    diagnostics.planCacheHits,
+    diagnostics.elementIndexHits,
+    diagnostics.elementIndexRebuilds,
+  ].every((entry) =>
     Number.isSafeInteger(entry) && Number(entry) >= 0,
   ) && Array.isArray(diagnostics.queries) && diagnostics.queries.every(isLiveLocatorRuntimeQueryDiagnostics);
 }
