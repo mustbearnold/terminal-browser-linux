@@ -56,7 +56,7 @@ const crossOriginChildHtml = `<!doctype html><label>Frame name <input aria-label
 const navigationStartHtml = `<!doctype html><meta charset="utf-8"><title>Navigation start</title><button aria-label="Start action">Start action</button><output>Navigation start</output>`;
 const navigationNextHtml = `<!doctype html><meta charset="utf-8"><title>Navigation next</title><label>Recovered name <input aria-label="Recovered name"></label><button aria-label="Next action" onclick="document.querySelector('output').textContent='Next clicked'">Next action</button><output>Next ready</output>`;
 const eventHtml = `<!doctype html><meta charset="utf-8"><title>Native event fixture</title><button aria-label="Emit console" onclick="console.warn('agent console probe')">Emit console</button><button aria-label="Emit dialog" onclick="alert('agent dialog probe')">Emit dialog</button><button aria-label="Emit confirm" onclick="document.querySelector('#dialog-status').textContent = confirm('agent confirm probe') ? 'Confirmed' : 'Dismissed'">Emit confirm</button><button id="unlock" aria-label="Unlock" disabled>Unlock</button><button aria-label="Schedule update" onclick="setTimeout(() => { document.querySelector('#async-status').textContent = 'Asynchronous update'; document.querySelector('#unlock').disabled = false; setTimeout(() => { document.querySelector('#async-status').textContent = 'Settled' }, 80) }, 180)">Schedule update</button><span id="dialog-status">Idle</span><span id="async-status">Idle</span>`;
-const largeWindowHtml = `<!doctype html><meta charset="utf-8"><title>Large window fixture</title><output id="status">Idle</output><div id="controls">${Array.from({ length: 1099 }, (_, index) => `<button id="large-${index}" aria-label="Large ${index}">Large ${index}</button>`).join("")}<button id="tail" data-testid="tail-control" aria-label="Tail action" onclick="document.querySelector('#status').textContent='Tail clicked'">Tail action</button><button id="add-control" aria-label="Add control" onclick="const b=document.createElement('button');b.id='dynamic-control';b.setAttribute('aria-label','Dynamic control');b.textContent='Dynamic control';document.querySelector('#controls').append(b)">Add control</button><button id="retag-control" aria-label="Retag control" onclick="document.querySelector('#tail').setAttribute('data-testid','renamed-tail')">Retag control</button></div>`;
+const largeWindowHtml = `<!doctype html><meta charset="utf-8"><title>Large window fixture</title><output id="status">Idle</output><div id="controls">${Array.from({ length: 1099 }, (_, index) => `<button id="large-${index}" aria-label="Large ${index}">Large ${index}</button>`).join("")}<button id="tail" data-testid="tail-control" aria-label="Tail action" onclick="document.querySelector('#status').textContent='Tail clicked'">Tail action</button><button id="add-control" aria-label="Add control" onclick="const b=document.createElement('button');b.id='dynamic-control';b.setAttribute('aria-label','Dynamic control');b.textContent='Dynamic control';document.querySelector('#controls').append(b)">Add control</button><button id="retag-control" aria-label="Retag control" onclick="const target=document.querySelector('#tail');target.setAttribute('data-testid','renamed-tail');target.setAttribute('aria-label','Renamed tail')">Retag control</button></div>`;
 
 async function expectCode(promise, code) {
   await assert.rejects(promise, (error) => error && error.code === code);
@@ -78,6 +78,11 @@ function largeWindowScenarios(pageId) {
     async run(client) {
       const tailLocator = { locator: { kind: "role", role: "button", name: "Tail action", exact: true } };
       const liveRead = await client.call("page.read", { pageId, target: tailLocator });
+      const roleNameQuery = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "Tail action", exact: true },
+        options: { limit: 1, diagnostics: "summary" },
+      });
       const liveGlobalTextWait = await client.call("page.wait", {
         pageId,
         condition: { type: "text", value: "Tail action" },
@@ -163,6 +168,9 @@ function largeWindowScenarios(pageId) {
       const ambiguityDetails = ambiguity?.details;
       return {
         passed: liveRead.node.attributes?.id === "tail"
+          && roleNameQuery.nodes[0]?.attributes?.id === "tail"
+          && roleNameQuery.diagnostics?.queries[0]?.elementsEvaluated === 1
+          && roleNameQuery.diagnostics.queries[0].elementsEvaluated < roleNameQuery.diagnostics.elementsScanned
           && liveGlobalTextWait.satisfied
           && liveTargetedTextWait.satisfied
           && liveElementWait.satisfied
@@ -183,6 +191,7 @@ function largeWindowScenarios(pageId) {
           largeWindowNodes: current.totalNodes,
           largeTargetOffset: current.offset,
           liveLocatorRead: liveRead.node.attributes?.id === "tail" ? 1 : 0,
+          roleNameIndexedCandidates: roleNameQuery.diagnostics?.queries[0]?.elementsEvaluated ?? 0,
           liveGlobalTextWait: liveGlobalTextWait.satisfied ? 1 : 0,
           liveTargetedTextWait: liveTargetedTextWait.satisfied ? 1 : 0,
           liveElementWait: liveElementWait.satisfied ? 1 : 0,
@@ -340,6 +349,16 @@ function queryScenarios(pageId) {
         locator: { kind: "testid", value: "renamed-tail" },
         options: { limit: 1, diagnostics: "summary" },
       });
+      const renamedRole = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "Renamed tail", exact: true },
+        options: { limit: 1, diagnostics: "summary" },
+      });
+      const oldRole = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "Tail action", exact: true },
+        options: { limit: 1, diagnostics: "summary" },
+      });
       const oldTestId = await client.call("page.query", {
         pageId,
         locator: { kind: "testid", value: "tail-control" },
@@ -353,6 +372,11 @@ function queryScenarios(pageId) {
       const rebuilt = await client.call("page.query", {
         pageId,
         locator: { kind: "css", value: "#dynamic-control" },
+        options: { limit: 1, diagnostics: "summary" },
+      });
+      const dynamicRole = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "Dynamic control", exact: true },
         options: { limit: 1, diagnostics: "summary" },
       });
       return {
@@ -382,10 +406,17 @@ function queryScenarios(pageId) {
           && renamedTestId.nodes[0]?.attributes?.id === "tail"
           && renamedTestId.diagnostics?.queries[0]?.elementsEvaluated === 1
           && oldTestId.matchCount === 0
+          && renamedRole.nodes[0]?.attributes?.id === "tail"
+          && renamedRole.diagnostics?.queries[0]?.elementsEvaluated === 1
+          && oldRole.matchCount === 0
           && (plannedBatch.diagnostics.elementIndexHits ?? 0) > 0
           && inserted.verified
           && rebuilt.nodes[0]?.attributes?.id === "dynamic-control"
-          && (rebuilt.diagnostics?.elementIndexRebuilds ?? 0) > 0,
+          && (rebuilt.diagnostics?.elementIndexRebuilds ?? 0) > 0
+          && dynamicRole.matchCount === 2
+          && dynamicRole.nodes.length === 1
+          && dynamicRole.nodes[0]?.attributes?.id === "dynamic-control"
+          && dynamicRole.diagnostics?.queries[0]?.elementsEvaluated === 2,
         metrics: {
           queryMatchCount: broad.matchCount,
           queryCandidates: broad.nodes.length,
@@ -403,6 +434,7 @@ function queryScenarios(pageId) {
           elementIndexRebuilds: rebuilt.diagnostics?.elementIndexRebuilds ?? 0,
           elementIndexFallback: Number((rebuilt.diagnostics?.elementIndexRebuilds ?? 0) > 0),
           indexedLocatorRead: Number(indexed.node.attributes?.id === "large-4"),
+          roleNameMutationCandidates: dynamicRole.diagnostics?.queries[0]?.elementsEvaluated ?? 0,
           readRevisionBound: Number(read.revision === queryBatch.revision),
         },
       };
