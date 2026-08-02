@@ -218,6 +218,7 @@ class Session {
           else this.setDevtoolsDockSide(action === "dock-bottom" ? "bottom" : "right");
         },
         onPageMenu: (params) => this.openPageMenu(params),
+        onTabClosed: (id) => this.agentRuntime?.tabClosed(id),
         onTabsChanged: () => this.registry?.update(),
         onActiveState: (state, urlChanged) => {
           if (urlChanged) rememberUrl(state.url);

@@ -24,6 +24,7 @@ interface Entry {
 
 export class BrowserAgentRuntime implements AgentRuntime {
   private readonly entries = new Map<PageId, Entry>();
+  private readonly pageClosedListeners = new Set<(pageId: PageId) => void>();
 
   constructor(
     private readonly key: string,
@@ -95,7 +96,18 @@ export class BrowserAgentRuntime implements AgentRuntime {
     const tab = this.tabFor(pageId);
     if (!tab) throw new AgentError("PAGE_NOT_FOUND", `unknown page: ${pageId}`);
     this.tabs.close(tab.id);
-    this.entries.delete(pageId);
+    this.tabClosed(tab.id);
+  }
+
+  onPageClosed(listener: (pageId: PageId) => void): () => void {
+    this.pageClosedListeners.add(listener);
+    return () => this.pageClosedListeners.delete(listener);
+  }
+
+  tabClosed(tabId: number): void {
+    const pageId = this.pageId(tabId);
+    if (!this.entries.delete(pageId)) return;
+    for (const listener of this.pageClosedListeners) listener(pageId);
   }
 
   private entry(tab: Tab): Entry {

@@ -8,4 +8,5 @@ export interface AgentRuntime {
   openPage(url: string): Promise<PageIdentity>;
   activatePage(pageId: PageId): Promise<PageIdentity>;
   closePage(pageId: PageId): Promise<void>;
+  onPageClosed?(listener: (pageId: PageId) => void): () => void;
 }

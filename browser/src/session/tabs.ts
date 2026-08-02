@@ -35,6 +35,7 @@ export interface TabHost {
   onDevtoolsChanged(): void;
   onDevtoolsAction(action: DevtoolsAction): void;
   onPageMenu(params: Electron.ContextMenuParams): void;
+  onTabClosed(id: number): void;
   onTabsChanged(): void;
   requestRender(): void;
 }
@@ -131,6 +132,7 @@ export class TabManager {
     if (at < 0) return;
     const [closed] = this.tabs.splice(at, 1);
     closed.controller.stop();
+    this.host.onTabClosed(closed.id);
     if (this.activeId === id) {
       const fallback = this.tabs[Math.min(at, this.tabs.length - 1)];
       if (fallback) this.activate(fallback.id);

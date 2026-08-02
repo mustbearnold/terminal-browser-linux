@@ -294,6 +294,55 @@ test("releases page observations when a page closes", async () => {
   assert.equal(cleanupRemoved, 1);
 });
 
+test("releases page observations across connections when the runtime closes a page", async () => {
+  let unsubscribed = 0;
+  let cleanupRemoved = 0;
+  let notifyPageClosed: ((candidate: typeof pageId) => void) | undefined;
+  const observedPage: PageSession = {
+    ...page(),
+    subscribe: async () => ({
+      sequence: 0,
+      replayed: 0,
+      unsubscribe: () => {
+        unsubscribed += 1;
+      },
+    }),
+  };
+  const closeRuntime: AgentRuntime = {
+    ...runtime(),
+    capabilities: () => [...runtime().capabilities(), "pages.close", "page.observe"],
+    getPage: (candidate) => (candidate === pageId ? observedPage : undefined),
+    onPageClosed: (listener) => {
+      notifyPageClosed = listener;
+      return () => {
+        notifyPageClosed = undefined;
+      };
+    },
+    closePage: async (candidate) => {
+      assert.equal(candidate, pageId);
+      notifyPageClosed?.(candidate);
+    },
+  };
+  const router = new AgentRequestRouter(closeRuntime);
+  const context = (clientId: string) => ({
+    clientId,
+    emit: () => {},
+    addSubscription: () => () => {
+      cleanupRemoved += 1;
+    },
+  });
+  const first = context("page-close-first");
+  const second = context("page-close-second");
+
+  assert.equal((await router.handle(envelope({ op: "page.observe", pageId, events: ["dom.changed"] }), first)).ok, true);
+  assert.equal((await router.handle(envelope({ op: "page.observe", pageId, events: ["dom.changed"] }), second)).ok, true);
+  const closed = await router.handle(envelope({ op: "pages.close", pageId }), first);
+
+  assert.equal(closed.ok, true);
+  assert.equal(unsubscribed, 2);
+  assert.equal(cleanupRemoved, 2);
+});
+
 test("routes page reads through a live page target resolver when available", async () => {
   let resolved = false;
   const resolvedPage: PageSession = {

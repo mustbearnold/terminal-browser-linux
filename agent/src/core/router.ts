@@ -38,6 +38,7 @@ export class AgentRequestRouter {
   private readonly requests = new WeakMap<AgentConnectionContext, RequestCancellationRegistry>();
   private readonly subscriptions = new WeakMap<AgentConnectionContext, Map<string, ActiveSubscription>>();
   private readonly subscriptionSequences = new WeakMap<AgentConnectionContext, number>();
+  private readonly contexts = new Set<AgentConnectionContext>();
   private readonly actionJournal: ActionJournal<ActionResult>;
   private readonly defaultContext = idleContext();
   readonly trace: TraceRecorder;
@@ -50,6 +51,7 @@ export class AgentRequestRouter {
   ) {
     this.trace = trace;
     this.actionJournal = actionJournal;
+    this.runtime.onPageClosed?.((pageId) => this.pageClosed(pageId));
   }
 
   close(context: AgentConnectionContext): void {
@@ -58,10 +60,12 @@ export class AgentRequestRouter {
       this.cancelSubscription(context, subscriptionId);
     }
     this.registry(context).cancelAll();
+    if (context !== this.defaultContext) this.contexts.delete(context);
   }
 
   async handle(request: AgentRequest, context?: AgentConnectionContext): Promise<AgentResponse> {
     const connection = context ?? this.defaultContext;
+    this.contexts.add(connection);
     this.record("inbound", request);
     if (request.op === "request.cancel") {
       const response = this.success(request, {
@@ -129,7 +133,7 @@ export class AgentRequestRouter {
         return await this.runtime.activatePage(request.pageId);
       case "pages.close":
         await this.runtime.closePage(request.pageId);
-        this.cancelSubscriptionsForPage(context, request.pageId);
+        this.pageClosed(request.pageId);
         return { pageId: request.pageId };
       case "page.frames":
         return await this.page(request.pageId).frames(signal);
@@ -358,6 +362,10 @@ export class AgentRequestRouter {
     for (const [subscriptionId, entry] of subscriptions) {
       if (entry.pageId === pageId) this.cancelSubscription(context, subscriptionId, pageId);
     }
+  }
+
+  private pageClosed(pageId: PageId): void {
+    for (const context of this.contexts) this.cancelSubscriptionsForPage(context, pageId);
   }
 
   private success(request: AgentRequest, result: unknown): AgentResponse {
