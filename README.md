@@ -8,6 +8,33 @@ pnpm install
 pnpm agent:check
 ```
 
+Install and run the packaged browser:
+```
+pnpm install
+pnpm dist
+terminal-browser open https://example.com right
+```
+
+`pnpm dist` builds the Electron runtime, bundles the terminal UI, and installs
+the resulting local release. The `right` argument keeps the browser beside
+the terminal that launched it. `terminal-browser ls` reports the browser key
+and open tabs.
+
+To pair a browser with the coding-agent pane on its left:
+```
+terminal-browser workspace open https://example.com right --left
+terminal-browser workspace list
+```
+
+While the page is open, right-click an element and choose `add DOM note`, type
+the note, and press Enter. The note is stored against a revision-bound
+semantic target and its compact `@tb-*` tag is pasted into the attached agent
+pane without submitting the prompt. The same operation is available from a
+shell when a point is known:
+```
+terminal-browser workspace note --browser <browser-key> --at 280 160 --note 'the heading needs a clearer explanation'
+```
+
 The agent transport is a versioned JSON-lines session exposed through the
 running browser. The CLI can bridge stdin/stdout to it:
 ```
