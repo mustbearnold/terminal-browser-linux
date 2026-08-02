@@ -80,20 +80,21 @@ function browserLaunchCommand(argv: string[]): { command: string[]; cwd: string 
   }
   // Chromium decides on the sandbox before the main script runs, so the
   // switch has to be on the real command line.
+  const chromiumFlags: string[] = [];
   if (process.platform === "linux" && !linuxSandboxAvailable(electron)) {
-    argv = [...argv, "--no-sandbox"];
+    chromiumFlags.push("--no-sandbox");
   }
   // Rendering is offscreen (into the terminal), so a display server is only
   // ceremony — headless ozone lets the browser run on plain SSH sessions.
   // Its virtual screen defaults to 1x1 and windows clamp to it, so give it
   // room for any pane size.
   if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
-    argv = [...argv, "--ozone-platform=headless", "--ozone-override-screen-size=8192,8192"];
+    chromiumFlags.push("--ozone-platform=headless", "--ozone-override-screen-size=8192,8192");
   }
   ensureDataDir();
   const logDir = LOGS_DIR;
   fs.mkdirSync(logDir, { recursive: true });
-  const quoted = [electron, main, ...argv]
+  const quoted = [electron, ...chromiumFlags, main, ...argv]
     .map((arg) => `'${arg.replaceAll("'", `'\\''`)}'`)
     .join(" ");
   const line = `exec ${quoted} 2>>'${logDir.replaceAll("'", `'\\''`)}/stderr.log'`;
