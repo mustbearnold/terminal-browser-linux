@@ -6,8 +6,15 @@ export const MAX_PAGE_QUERY_BATCH = 32 as const;
 export const MAX_UPLOAD_FILES = 64 as const;
 export const MAX_UPLOAD_PATH_LENGTH = 4096 as const;
 export const MAX_CLICK_COUNT = 10 as const;
+export const MAX_AGENT_OUTBOUND_QUEUE_MESSAGES = 256 as const;
+export const MAX_AGENT_OUTBOUND_QUEUE_BYTES = 8_388_608 as const;
 
-export interface AgentLimits {
+export interface AgentOutboundQueueLimits {
+  maxOutboundQueueMessages: number;
+  maxOutboundQueueBytes: number;
+}
+
+export interface AgentLimits extends AgentOutboundQueueLimits {
   maxInFlightRequests: number;
   maxQueuedActionsPerPage: number;
 }

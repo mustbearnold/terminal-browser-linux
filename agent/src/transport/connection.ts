@@ -1,3 +1,4 @@
+import { AgentError } from "../protocol/errors";
 import type { AgentMessage } from "../protocol/types";
 import { AgentRequestRouter, type AgentConnectionContext } from "../core/router";
 import type { AgentTransport } from "./types";
@@ -10,9 +11,10 @@ export function attachAgentConnection(
   let closed = false;
   const context: AgentConnectionContext = {
     clientId: "anonymous",
+    outboundQueueLimits: transport.outboundQueueLimits,
     emit: (message) => {
       if (closed) return;
-      return transport.send(message).catch(() => {});
+      void transport.send(message).catch((error) => failForBackpressure(error));
     },
     addSubscription: (cleanup) => {
       subscriptions.add(cleanup);
@@ -30,12 +32,18 @@ export function attachAgentConnection(
     offClose();
   };
 
+  const failForBackpressure = (error: unknown): void => {
+    if (closed || !(error instanceof AgentError) || error.code !== "RESOURCE_EXHAUSTED") return;
+    cleanup();
+    void Promise.resolve(transport.close()).catch(() => {});
+  };
+
   const offMessage = transport.onMessage((message: AgentMessage) => {
     if (message.kind !== "request") return;
     void router.handle(message, context)
       .then((response) => {
         if (closed) return;
-        return transport.send(response);
+        return transport.send(response).catch((error) => failForBackpressure(error));
       })
       .catch(() => {});
   });

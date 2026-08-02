@@ -181,6 +181,16 @@ export class AgentClient {
         throw new AgentError("INTERNAL_ERROR", "agent hello omitted its page action queue budget");
       }
       validateRequestBudget(negotiatedActions);
+      const negotiatedOutboundMessages = result.limits?.maxOutboundQueueMessages;
+      if (negotiatedOutboundMessages === undefined) {
+        throw new AgentError("INTERNAL_ERROR", "agent hello omitted its outbound message queue budget");
+      }
+      validateRequestBudget(negotiatedOutboundMessages);
+      const negotiatedOutboundBytes = result.limits?.maxOutboundQueueBytes;
+      if (negotiatedOutboundBytes === undefined) {
+        throw new AgentError("INTERNAL_ERROR", "agent hello omitted its outbound byte queue budget");
+      }
+      validateRequestBudget(negotiatedOutboundBytes);
       this.maxPendingRequests = Math.min(this.maxPendingRequests, negotiated);
       this.maxPendingActionsPerPage = Math.min(this.maxPendingActionsPerPage, negotiatedActions);
       return result;
@@ -549,6 +559,7 @@ function responseError(response: AgentResponse): AgentError {
 }
 
 function transportError(error: unknown): AgentError {
+  if (error instanceof AgentError) return error;
   return new AgentError("TRANSPORT_CLOSED", error instanceof Error ? error.message : "agent transport failed", {
     retryable: true,
   });

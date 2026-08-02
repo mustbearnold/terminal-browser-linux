@@ -19,7 +19,12 @@ test("correlates typed calls and delivers observed events", async () => {
     assert.equal(hello.clientId, "client-test");
     assert.equal(hello.accepted.includes("page.act"), true);
     assert.deepEqual(hello.unsupported, []);
-    assert.deepEqual(hello.limits, { maxInFlightRequests: 128, maxQueuedActionsPerPage: 64 });
+    assert.deepEqual(hello.limits, {
+      maxInFlightRequests: 128,
+      maxQueuedActionsPerPage: 64,
+      maxOutboundQueueMessages: 256,
+      maxOutboundQueueBytes: 8 * 1024 * 1024,
+    });
     assert.equal(pages.pages[0].pageId, FIXTURE_PAGE_ID);
     assert.deepEqual(frames, {
       pageId: FIXTURE_PAGE_ID,

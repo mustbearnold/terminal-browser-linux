@@ -2,9 +2,20 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 
+import { AgentError } from "../protocol/errors";
 import { LineJsonDecoder, encodeAgentMessage } from "./line-json";
-import type { AgentMessage } from "../protocol/types";
+import {
+  MAX_AGENT_OUTBOUND_QUEUE_BYTES,
+  MAX_AGENT_OUTBOUND_QUEUE_MESSAGES,
+  type AgentMessage,
+  type AgentOutboundQueueLimits,
+} from "../protocol/types";
 import type { AgentTransport, AgentTransportServer } from "./types";
+
+export interface UnixSocketTransportOptions {
+  maxPendingWrites?: number;
+  maxPendingBytes?: number;
+}
 
 export async function connectUnixSocket(socketPath: string): Promise<UnixSocketTransport> {
   const socket = net.createConnection(socketPath);
@@ -29,8 +40,19 @@ export class UnixSocketTransport implements AgentTransport {
   private decoderFailed = false;
   private writeTail: Promise<void> = Promise.resolve();
   private closePromise: Promise<void> | null = null;
+  private pendingWrites = 0;
+  private pendingBytes = 0;
+  private readonly maxPendingWrites: number;
+  private readonly maxPendingBytes: number;
 
-  constructor(private readonly socket: net.Socket) {
+  constructor(
+    private readonly socket: net.Socket,
+    options: UnixSocketTransportOptions = {},
+  ) {
+    this.maxPendingWrites = options.maxPendingWrites ?? MAX_AGENT_OUTBOUND_QUEUE_MESSAGES;
+    this.maxPendingBytes = options.maxPendingBytes ?? MAX_AGENT_OUTBOUND_QUEUE_BYTES;
+    validateQueueLimit(this.maxPendingWrites, "max pending writes");
+    validateQueueLimit(this.maxPendingBytes, "max pending bytes");
     socket.on("data", (chunk) => {
       try {
         for (const message of this.decoder.push(chunk)) {
@@ -59,9 +81,46 @@ export class UnixSocketTransport implements AgentTransport {
 
   send(message: AgentMessage): Promise<void> {
     if (this.closed || this.closing || this.socket.destroyed) return Promise.reject(new Error("transport is closed"));
-    const write = this.writeTail.then(() => this.write(message));
+    let frame: string;
+    try {
+      frame = encodeAgentMessage(message);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const bytes = Buffer.byteLength(frame, "utf8");
+    if (this.pendingWrites >= this.maxPendingWrites || bytes > this.maxPendingBytes - this.pendingBytes) {
+      return Promise.reject(new AgentError("RESOURCE_EXHAUSTED", "agent transport outbound queue is full", {
+        retryable: true,
+        details: {
+          scope: "transport-outbound",
+          maxOutboundQueueMessages: this.maxPendingWrites,
+          maxOutboundQueueBytes: this.maxPendingBytes,
+          pendingMessages: this.pendingWrites,
+          pendingBytes: this.pendingBytes,
+          frameBytes: bytes,
+        },
+      }));
+    }
+    this.pendingWrites += 1;
+    this.pendingBytes += bytes;
+    const write = this.writeTail.then(() => this.writeFrame(frame));
     this.writeTail = write.catch(() => {});
-    return write;
+    return write.then(
+      () => {
+        this.releaseWrite(bytes);
+      },
+      (error) => {
+        this.releaseWrite(bytes);
+        throw error;
+      },
+    );
+  }
+
+  get outboundQueueLimits(): AgentOutboundQueueLimits {
+    return {
+      maxOutboundQueueMessages: this.maxPendingWrites,
+      maxOutboundQueueBytes: this.maxPendingBytes,
+    };
   }
 
   onMessage(listener: (message: AgentMessage) => void): () => void {
@@ -94,14 +153,19 @@ export class UnixSocketTransport implements AgentTransport {
     return this.closePromise;
   }
 
-  private write(message: AgentMessage): Promise<void> {
+  private writeFrame(frame: string): Promise<void> {
     if (this.closed || this.socket.destroyed) return Promise.reject(new Error("transport is closed"));
     return new Promise((resolve, reject) => {
-      this.socket.write(encodeAgentMessage(message), (error?: Error | null) => {
+      this.socket.write(frame, (error?: Error | null) => {
         if (error) reject(error);
         else resolve();
       });
     });
+  }
+
+  private releaseWrite(bytes: number): void {
+    this.pendingWrites -= 1;
+    this.pendingBytes -= bytes;
   }
 
   private reportError(error: unknown): void {
@@ -114,14 +178,17 @@ export class UnixSocketAgentServer implements AgentTransportServer {
   private readonly transports = new Set<UnixSocketTransport>();
   private server: net.Server | null = null;
 
-  constructor(private readonly socketPath: string) {}
+  constructor(
+    private readonly socketPath: string,
+    private readonly transportOptions: UnixSocketTransportOptions = {},
+  ) {}
 
   async listen(): Promise<void> {
     if (this.server) return;
     fs.mkdirSync(path.dirname(this.socketPath), { recursive: true, mode: 0o700 });
     fs.rmSync(this.socketPath, { force: true });
     const server = net.createServer((socket) => {
-      const transport = new UnixSocketTransport(socket);
+      const transport = new UnixSocketTransport(socket, this.transportOptions);
       this.transports.add(transport);
       transport.onClose(() => this.transports.delete(transport));
       for (const listener of this.listeners) listener(transport);
@@ -152,4 +219,8 @@ export class UnixSocketAgentServer implements AgentTransportServer {
     }
     fs.rmSync(this.socketPath, { force: true });
   }
+}
+
+function validateQueueLimit(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value < 1) throw new RangeError(`${name} must be a positive safe integer`);
 }

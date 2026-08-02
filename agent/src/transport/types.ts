@@ -1,6 +1,7 @@
-import type { AgentMessage } from "../protocol/types";
+import type { AgentMessage, AgentOutboundQueueLimits } from "../protocol/types";
 
 export interface AgentTransport {
+  readonly outboundQueueLimits?: AgentOutboundQueueLimits;
   send(message: AgentMessage): Promise<void>;
   onMessage(listener: (message: AgentMessage) => void): () => void;
   onError(listener: (error: unknown) => void): () => void;

@@ -224,6 +224,8 @@ test("routes the first agent vertical slice", async () => {
   assert.deepEqual((hello.result as { limits: unknown }).limits, {
     maxInFlightRequests: 128,
     maxQueuedActionsPerPage: 64,
+    maxOutboundQueueMessages: 256,
+    maxOutboundQueueBytes: 8 * 1024 * 1024,
   });
   assert.equal(active.ok, true);
   assert.equal((active.result as { node: { name: string } }).node.name, "Continue");

@@ -21,6 +21,9 @@ Each page serializes and bounds its action queue at 64 actions by default.
 Queue exhaustion is retryable and marked safe to retry because the rejected
 action has not started; the negotiated limit is included in `hello` and the
 structured-tool manifest.
+The outbound Unix transport queue is capped at 256 messages or 8 MiB by
+default. If an event stream saturates it, the connection closes after
+canceling its subscriptions; reconnect and replay from the last page cursor.
 
 For MCP-compatible agent hosts, expose the same negotiated tools over stdio:
 ```

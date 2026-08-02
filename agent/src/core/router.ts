@@ -12,7 +12,10 @@ import type { EventSubscription } from "./events";
 import {
   AGENT_PROTOCOL,
   AGENT_PROTOCOL_VERSION,
+  MAX_AGENT_OUTBOUND_QUEUE_BYTES,
+  MAX_AGENT_OUTBOUND_QUEUE_MESSAGES,
   type AgentCapability,
+  type AgentOutboundQueueLimits,
   type PageId,
 } from "../protocol/types";
 import type { AgentRuntime } from "./runtime";
@@ -30,6 +33,7 @@ import { MemoryTrace, TraceRecorder, type TraceDirection } from "./trace";
 
 export interface AgentConnectionContext {
   clientId: string;
+  outboundQueueLimits?: AgentOutboundQueueLimits;
   emit(message: AgentMessage): Promise<void> | void;
   addSubscription(cleanup: () => void): void | (() => void);
 }
@@ -141,6 +145,8 @@ export class AgentRequestRouter {
           limits: {
             maxInFlightRequests: this.maxInFlightRequests,
             maxQueuedActionsPerPage: MAX_AGENT_QUEUED_ACTIONS_PER_PAGE,
+            maxOutboundQueueMessages: context.outboundQueueLimits?.maxOutboundQueueMessages ?? MAX_AGENT_OUTBOUND_QUEUE_MESSAGES,
+            maxOutboundQueueBytes: context.outboundQueueLimits?.maxOutboundQueueBytes ?? MAX_AGENT_OUTBOUND_QUEUE_BYTES,
           },
         };
       }
