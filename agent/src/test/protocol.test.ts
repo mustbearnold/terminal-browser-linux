@@ -263,6 +263,18 @@ test("validates nested agent request shapes at the wire boundary", () => {
   });
   assert.equal(upload.kind, "request");
 
+  const drag = parseAgentMessage({
+    ...listRequest(),
+    op: "page.act",
+    pageId: "page-1",
+    action: {
+      type: "drag",
+      source: { locator: { kind: "css", value: "#drag-source" } },
+      target: { locator: { kind: "css", value: "#drop-target" } },
+    },
+  });
+  assert.equal(drag.kind, "request");
+
   const history = parseAgentMessage({
     ...listRequest(),
     op: "page.act",
@@ -350,6 +362,8 @@ test("validates nested agent request shapes at the wire boundary", () => {
     action: { type: "upload", target: { ref: "r1" }, paths: Array.from({ length: 65 }, (_, index) => `/tmp/${index}.txt`) },
   });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "upload", target: { ref: "r1" }, paths: ["/tmp/a.txt"] }, expect: { element: { target: { ref: "r1" }, state: { fileCount: 65 } } } });
+  invalid({ op: "page.act", pageId: "page-1", action: { type: "drag", target: { ref: "r1" } } });
+  invalid({ op: "page.act", pageId: "page-1", action: { type: "drag", source: { ref: "r1", locator: { kind: "css", value: "#source" } }, target: { ref: "r2" } } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "reload", bypassCache: "yes" } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "history", direction: "sideways" } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, expect: { timeoutMs: -1 } });

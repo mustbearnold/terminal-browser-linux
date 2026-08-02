@@ -40,6 +40,7 @@ const html = `<!doctype html>
 <button id="pressed" aria-pressed="true">Pressed action</button>
 <button id="spaced">  Save <span> now </span> </button>
 <button id="continue" aria-label="Continue">Continue</button>
+<div id="drag-source" draggable="true" aria-label="Drag source" style="display:inline-block;border:1px solid #888;padding:12px;margin:8px">Drag source</div><div id="drop-target" aria-label="Drop target" style="display:inline-block;border:1px dashed #888;padding:12px;margin:8px">Drop target</div>
 <button id="hidden" hidden>Hidden action</button>
 <div aria-hidden="true"><button id="aria-hidden">ARIA hidden action</button></div>
 <div inert><button id="inert">Inert action</button></div>
@@ -54,6 +55,9 @@ const html = `<!doctype html>
   document.getElementById('notifications').addEventListener('click', event => event.currentTarget.setAttribute('aria-checked', String(event.currentTarget.getAttribute('aria-checked') !== 'true')));
   document.getElementById('expand').addEventListener('click', event => event.currentTarget.setAttribute('aria-expanded', String(event.currentTarget.getAttribute('aria-expanded') !== 'true')));
   document.getElementById('remove').addEventListener('click', event => event.currentTarget.remove());
+  document.getElementById('drag-source').addEventListener('dragstart', event => event.dataTransfer.setData('text/plain', 'drag payload'));
+  document.getElementById('drop-target').addEventListener('dragover', event => event.preventDefault());
+  document.getElementById('drop-target').addEventListener('drop', event => { event.preventDefault(); document.getElementById('status').textContent = 'Dropped ' + event.dataTransfer.getData('text/plain'); });
 </script>`;
 
 const shadowHtml = `<!doctype html><meta charset="utf-8"><title>Shadow evaluation fixture</title><x-control></x-control><x-late></x-late><button aria-label="Attach late control" onclick="const root=document.querySelector('x-late').attachShadow({mode:'closed'});root.innerHTML='<button aria-label=&quot;Late action&quot;>Late action</button>'">Attach late control</button><script>customElements.define('x-control',class extends HTMLElement{constructor(){super();const root=this.attachShadow({mode:'open'});root.innerHTML='<label>Shadow name <input aria-label="Shadow name"></label><button aria-label="Shadow action">Shadow action</button><span id="status">Idle</span>';root.querySelector('button').addEventListener('click',()=>{root.querySelector('#status').textContent='Clicked';const dynamic=document.createElement('button');dynamic.setAttribute('aria-label','Dynamic action');dynamic.textContent='Dynamic action';root.append(dynamic)})}});</script>`;
@@ -61,7 +65,7 @@ const shadowHtml = `<!doctype html><meta charset="utf-8"><title>Shadow evaluatio
 const frameChildHtml = `<!doctype html><label>Frame name <input aria-label="Frame name"></label><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
 const frameHtml = `<!doctype html><meta charset="utf-8"><title>Frame evaluation fixture</title><iframe title="Control frame"></iframe><script>document.querySelector('iframe').srcdoc=${JSON.stringify(frameChildHtml)}</script>`;
 
-const crossOriginChildHtml = `<!doctype html><label>Frame name <input id="frame-name" aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input id="frame-enabled" type="checkbox" aria-label="Frame enabled">Frame enabled</label><input id="frame-upload" type="file" aria-label="Frame upload"><button id="schedule-frame-silent" aria-label="Schedule frame silent" onclick="setTimeout(() => { document.getElementById('frame-name').value = 'Silent frame name'; document.getElementById('frame-silent-button').value = 'New frame action'; document.getElementById('frame-enabled').checked = true; document.getElementById('frame-silent-choice').options[1].selected = true }, 500)">Schedule frame silent</button><input id="frame-silent-button" type="button" value="Old frame action"><select id="frame-silent-choice" multiple aria-label="Frame silent choices"><option value="one" selected>Frame silent one</option><option value="two">Frame silent two</option></select><div role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
+const crossOriginChildHtml = `<!doctype html><label>Frame name <input id="frame-name" aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input id="frame-enabled" type="checkbox" aria-label="Frame enabled">Frame enabled</label><div id="frame-drag-source" draggable="true" aria-label="Frame drag source" style="display:inline-block;border:1px solid #888;padding:10px;margin:8px">Frame drag source</div><div id="frame-drop-target" aria-label="Frame drop target" style="display:inline-block;border:1px dashed #888;padding:10px;margin:8px">Frame drop target</div><output id="frame-drag-status">Idle</output><input id="frame-upload" type="file" aria-label="Frame upload"><button id="schedule-frame-silent" aria-label="Schedule frame silent" onclick="setTimeout(() => { document.getElementById('frame-name').value = 'Silent frame name'; document.getElementById('frame-silent-button').value = 'New frame action'; document.getElementById('frame-enabled').checked = true; document.getElementById('frame-silent-choice').options[1].selected = true }, 500)">Schedule frame silent</button><input id="frame-silent-button" type="button" value="Old frame action"><select id="frame-silent-choice" multiple aria-label="Frame silent choices"><option value="one" selected>Frame silent one</option><option value="two">Frame silent two</option></select><div role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span><script>document.getElementById('frame-drag-source').addEventListener('dragstart', event => event.dataTransfer.setData('text/plain', 'frame payload'));document.getElementById('frame-drop-target').addEventListener('dragover', event => event.preventDefault());document.getElementById('frame-drop-target').addEventListener('drop', event => { event.preventDefault(); document.getElementById('frame-drag-status').textContent = 'Frame dropped ' + event.dataTransfer.getData('text/plain'); });</script>`;
 const navigationStartHtml = `<!doctype html><meta charset="utf-8"><title>Navigation start</title><button aria-label="Start action">Start action</button><output>Navigation start</output>`;
 const navigationNextHtml = `<!doctype html><meta charset="utf-8"><title>Navigation next</title><label>Recovered name <input aria-label="Recovered name"></label><button aria-label="Next action" onclick="document.querySelector('output').textContent='Next clicked'">Next action</button><output>Next ready</output>`;
 const eventHtml = `<!doctype html><meta charset="utf-8"><title>Native event fixture</title><button aria-label="Emit console" onclick="console.warn('agent console probe')">Emit console</button><button aria-label="Emit dialog" onclick="alert('agent dialog probe')">Emit dialog</button><button aria-label="Emit confirm" onclick="document.querySelector('#dialog-status').textContent = confirm('agent confirm probe') ? 'Confirmed' : 'Dismissed'">Emit confirm</button><button id="unlock" aria-label="Unlock" disabled>Unlock</button><button aria-label="Schedule update" onclick="setTimeout(() => { document.querySelector('#async-status').textContent = 'Asynchronous update'; document.querySelector('#unlock').disabled = false; setTimeout(() => { document.querySelector('#async-status').textContent = 'Settled' }, 80) }, 180)">Schedule update</button><span id="dialog-status">Idle</span><span id="async-status">Idle</span>`;
@@ -904,6 +908,55 @@ function uploadScenarios(pageId, uploadPaths) {
   }];
 }
 
+function dragScenarios(pageId) {
+  return [{
+    id: "native-drag-and-drop-action",
+    name: "native-drag-and-drop-action",
+    async run(client) {
+      const source = await client.call("page.query", {
+        pageId,
+        locator: { kind: "css", value: "#drag-source" },
+        options: { limit: 1, diagnostics: "summary" },
+      });
+      const target = await client.call("page.query", {
+        pageId,
+        locator: { kind: "css", value: "#drop-target" },
+        options: { limit: 1, diagnostics: "summary" },
+      });
+      const dragged = await client.call("page.act", {
+        pageId,
+        action: {
+          type: "drag",
+          source: { ref: source.nodes[0].ref },
+          target: { ref: target.nodes[0].ref },
+        },
+        expect: { text: "Dropped drag payload", timeoutMs: 1_000 },
+        output: { snapshot: "none" },
+      });
+      const status = await client.call("page.read", {
+        pageId,
+        target: { locator: { kind: "css", value: "#status" } },
+      });
+      const passed = source.nodes[0]?.attributes?.id === "drag-source"
+        && target.nodes[0]?.attributes?.id === "drop-target"
+        && dragged.verified
+        && dragged.proof?.source === source.nodes[0].ref
+        && dragged.proof?.target === target.nodes[0].ref
+        && dragged.proof?.frameId === "main"
+        && status.node.text === "Dropped drag payload";
+      return {
+        passed,
+        metrics: {
+          sourceCandidates: source.matchCount,
+          targetCandidates: target.matchCount,
+          dragVerified: Number(dragged.verified),
+          dragProofEndpoints: Number(Boolean(dragged.proof?.source && dragged.proof?.target)),
+        },
+      };
+    },
+  }];
+}
+
 function shadowScenarios(pageId) {
   return [{
     id: "shadow-dom-resolution-and-mutation",
@@ -1101,6 +1154,32 @@ function crossOriginScenarios(pageId, uploadPaths) {
         },
         output: { snapshot: "none" },
       });
+      const frameDragSource = await client.call("page.query", {
+        pageId,
+        locator: { kind: "css", value: "#frame-drag-source" },
+        options: { frameId: frameButton.frameId, limit: 1, diagnostics: "summary" },
+      });
+      const frameDropTarget = await client.call("page.query", {
+        pageId,
+        locator: { kind: "css", value: "#frame-drop-target" },
+        options: { frameId: frameButton.frameId, limit: 1, diagnostics: "summary" },
+      });
+      const frameDragged = await client.call("page.act", {
+        pageId,
+        action: {
+          type: "drag",
+          source: { ref: frameDragSource.nodes[0].ref },
+          target: { ref: frameDropTarget.nodes[0].ref },
+        },
+        expect: {
+          element: {
+            target: { locator: { kind: "css", value: "#frame-drag-status" }, frameId: frameButton.frameId },
+            state: { text: "Frame dropped frame payload" },
+          },
+          timeoutMs: 1_000,
+        },
+        output: { snapshot: "none" },
+      });
       const childCacheSeed = await client.call("page.query", {
         pageId,
         locator: { kind: "role", role: "button", name: "Frame action", exact: true },
@@ -1224,6 +1303,12 @@ function crossOriginScenarios(pageId, uploadPaths) {
           && frameUploadQuery.nodes[0]?.state?.fileCount === 0
           && frameUpload.verified
           && frameUpload.proof?.fileCount === 1
+          && frameDragSource.nodes[0]?.attributes?.id === "frame-drag-source"
+          && frameDropTarget.nodes[0]?.attributes?.id === "frame-drop-target"
+          && frameDragged.verified
+          && frameDragged.proof?.source === frameDragSource.nodes[0].ref
+          && frameDragged.proof?.target === frameDropTarget.nodes[0].ref
+          && frameDragged.proof?.frameId === frameButton.frameId
           && childCacheSeed.diagnostics?.queries[0]?.cacheHit === false
           && parentMutation.verified
           && childCacheAfterParentMutation.diagnostics?.queries[0]?.cacheHit === true
@@ -1250,6 +1335,9 @@ function crossOriginScenarios(pageId, uploadPaths) {
             frameSilentPropertyDelta: Number(frameSilentDelta.revision > frameSilentBase.revision
               && frameSilentDelta.mode === "full"),
             frameUpload: Number(frameUpload.verified && frameUpload.proof?.fileCount === 1),
+            frameDrag: Number(frameDragged.verified
+              && frameDragged.proof?.source === frameDragSource.nodes[0]?.ref
+              && frameDragged.proof?.target === frameDropTarget.nodes[0]?.ref),
             frameScopedCachePreserved: Number(
               childCacheSeed.diagnostics?.queries[0]?.cacheHit === false
                 && parentMutation.verified
@@ -1638,6 +1726,7 @@ async function run() {
       ...largeWindowScenarios(largePageId),
       ...queryScenarios(largePageId),
       ...batchScenarios(pageId),
+      ...dragScenarios(pageId),
       ...semanticScenarios(pageId),
       ...uploadScenarios(uploadPageId, uploadPaths),
       ...shadowScenarios(shadowPageId),

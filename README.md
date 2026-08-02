@@ -117,6 +117,12 @@ actions focus and verify that element before dispatching input, so they do not
 depend on ambient focus; omitting the target keeps the compact active-element
 path.
 
+Use `page.act` with `action.type: "drag"` and semantic `source` and `target`
+references for native drag-and-drop. The live adapter resolves both elements,
+scrolls them into reach, sends a bounded native pointer path through Chromium,
+and returns proof for both references. The source and drop target must be
+reachable in the same viewport; a stale or occluded endpoint is rejected.
+
 In the live Electron runtime, semantic and CSS locators used by `page.read`,
 `page.act`, `page.wait`, and post-action expectations search the current DOM
 directly across frames and shadow roots. This keeps locator and text search

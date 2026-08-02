@@ -269,6 +269,10 @@ function validateAction(value: unknown): void {
       validateTarget(action.target, "action.target");
       requireUploadPaths(action.paths, "action.paths");
       return;
+    case "drag":
+      validateTarget(action.source, "action.source");
+      validateTarget(action.target, "action.target");
+      return;
     case "type":
       requireStringValue(action.text, "action.text");
       if (action.target !== undefined) validateTarget(action.target, "action.target");

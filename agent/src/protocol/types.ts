@@ -40,6 +40,7 @@ export type AgentCapability =
   | "page.act.click"
   | "page.act.fill"
   | "page.act.upload"
+  | "page.act.drag"
   | "page.act.type"
   | "page.act.press"
   | "page.act.select"
@@ -329,6 +330,7 @@ export type AgentAction =
   | { type: "click"; target: Target; button?: "left" | "middle" | "right"; clickCount?: number }
   | { type: "fill"; target: Target; value: string }
   | { type: "upload"; target: Target; paths: readonly string[] }
+  | { type: "drag"; source: Target; target: Target }
   | { type: "type"; text: string; target?: Target }
   | { type: "press"; key: string; target?: Target }
   | { type: "select"; target: Target; values: readonly string[] }
@@ -379,6 +381,7 @@ export interface ActionEffect {
 }
 
 export interface ActionProof extends PageRevision {
+  source?: SnapshotRef;
   target?: SnapshotRef;
   frameId?: FrameId;
   role?: string;

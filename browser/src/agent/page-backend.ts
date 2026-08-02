@@ -91,6 +91,7 @@ type ElementInspection = {
   ok: boolean;
   x?: number;
   y?: number;
+  inViewport?: boolean;
   visible?: boolean;
   enabled?: boolean;
   disabled?: boolean;
@@ -993,6 +994,8 @@ export class ElectronPageBackend implements PageBackend {
         return this.fill(action, token, expect, signal);
       case "upload":
         return this.upload(action, token, expect, signal);
+      case "drag":
+        return this.drag(action, token, expect, signal);
       case "select":
         return this.select(action, token, expect, signal);
       case "check":
@@ -1181,6 +1184,128 @@ export class ElectronPageBackend implements PageBackend {
       title: after.title,
     };
     return { verified: hasExpectation(expect) ? outcome.satisfied : true, effects, proof };
+  }
+
+  private async drag(
+    action: Extract<AgentAction, { type: "drag" }>,
+    token?: SnapshotToken,
+    expect?: ActionExpectation,
+    signal?: AbortSignal,
+  ): Promise<Omit<ActionResult, "snapshot">> {
+    const before = await this.identity(signal);
+    const source = await this.resolveActionTarget(action.source, token, before, signal);
+    const target = await this.resolveActionTarget(action.target, token, before, signal);
+    const sourceFrameId = String(source.node.frameId);
+    const targetFrameId = String(target.node.frameId);
+    const sourceInspection = await this.inspect(source.ref, sourceFrameId, signal);
+    const targetInspection = await this.inspect(target.ref, targetFrameId, signal);
+    const sourcePoint = await this.inspect(source.ref, sourceFrameId, signal, false);
+    const targetPoint = await this.inspect(target.ref, targetFrameId, signal, false);
+    if (
+      !sourcePoint.ok ||
+      !sourcePoint.visible ||
+      !sourcePoint.enabled ||
+      sourcePoint.occluded ||
+      sourcePoint.inViewport === false ||
+      sourcePoint.x === undefined ||
+      sourcePoint.y === undefined
+    ) {
+      throw new AgentError("NOT_INTERACTABLE", "drag source is not safely draggable", { retryable: true });
+    }
+    if (
+      !targetPoint.ok ||
+      !targetPoint.visible ||
+      targetPoint.occluded ||
+      targetPoint.inViewport === false ||
+      targetPoint.x === undefined ||
+      targetPoint.y === undefined
+    ) {
+      throw new AgentError("NOT_INTERACTABLE", "drag target is not safely reachable", { retryable: true });
+    }
+    if (
+      !sourceInspection.ok ||
+      !targetInspection.ok ||
+      sourceInspection.x === undefined ||
+      sourceInspection.y === undefined ||
+      targetInspection.x === undefined ||
+      targetInspection.y === undefined
+    ) {
+      throw new AgentError("ACTION_UNVERIFIED", "drag target geometry was not available", { retryable: true });
+    }
+
+    this.controller.focusContent();
+    let pressed = false;
+    try {
+      throwIfAborted(signal);
+      await this.controller.cdp("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: sourcePoint.x,
+        y: sourcePoint.y,
+      });
+      throwIfAborted(signal);
+      await this.controller.cdp("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x: sourcePoint.x,
+        y: sourcePoint.y,
+        button: "left",
+        clickCount: 1,
+        buttons: 1,
+      });
+      pressed = true;
+      for (const point of dragPath(sourcePoint.x, sourcePoint.y, targetPoint.x, targetPoint.y)) {
+        throwIfAborted(signal);
+        await this.controller.cdp("Input.dispatchMouseEvent", {
+          type: "mouseMoved",
+          x: point.x,
+          y: point.y,
+          button: "left",
+          buttons: 1,
+        });
+      }
+      throwIfAborted(signal);
+      await this.controller.cdp("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x: targetPoint.x,
+        y: targetPoint.y,
+        button: "left",
+        clickCount: 1,
+        buttons: 0,
+      });
+      pressed = false;
+    } finally {
+      if (pressed) {
+        await this.controller.cdp("Input.dispatchMouseEvent", {
+          type: "mouseReleased",
+          x: targetPoint.x,
+          y: targetPoint.y,
+          button: "left",
+          clickCount: 1,
+          buttons: 0,
+        }).catch(() => {});
+      }
+    }
+    this.invalidateFrameSnapshots(sourceFrameId);
+    if (targetFrameId !== sourceFrameId) this.invalidateFrameSnapshots(targetFrameId);
+    const outcome = await this.waitForOutcome(before, expect, signal);
+    const after = outcome.identity;
+    const proof: ActionProof = {
+      pageId: after.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
+      source: source.ref,
+      target: target.ref,
+      frameId: target.node.frameId,
+      role: targetInspection.role,
+      name: targetInspection.name,
+      value: targetInspection.value,
+      url: after.url,
+      title: after.title,
+    };
+    return {
+      verified: hasExpectation(expect) ? outcome.satisfied : true,
+      effects: this.transitionEffects(before, after),
+      proof,
+    };
   }
 
   private async typeText(
@@ -1853,9 +1978,14 @@ export class ElectronPageBackend implements PageBackend {
     this.observedPageState = { documentId, revision, mainRevision };
   }
 
-  private async inspect(ref: string, frameId: string, signal?: AbortSignal): Promise<ElementInspection> {
+  private async inspect(
+    ref: string,
+    frameId: string,
+    signal?: AbortSignal,
+    scrollIntoView = true,
+  ): Promise<ElementInspection> {
     throwIfAborted(signal);
-    const source = inspectScript(this.agentKey, ref, frameId);
+    const source = inspectScript(this.agentKey, ref, frameId, scrollIntoView);
     const value = frameId === "main"
       ? await this.controller.runJs(source)
       : await this.controller.runJsInFrame(frameId, source);
@@ -2906,13 +3036,13 @@ function agentStateSetupScript(key: string, frameId: string): string {
   `;
 }
 
-function inspectScript(key: string, ref: string, frameId: string): string {
+function inspectScript(key: string, ref: string, frameId: string, scrollIntoView: boolean): string {
   return `(() => {
     const state = window[${JSON.stringify(key)}];
     if (!state || state.frameId !== ${JSON.stringify(frameId)}) return { ok: false };
     const el = state && state.refs && state.refs.get(${JSON.stringify(ref)});
     if (!el || !el.isConnected) return { ok: false };
-    el.scrollIntoView({ block: "center", inline: "center" });
+    if (${scrollIntoView}) el.scrollIntoView({ block: "center", inline: "center" });
     ${semanticHelpersScript()}
     const rect = el.getBoundingClientRect();
     const x = rect.left + rect.width / 2;
@@ -2939,6 +3069,7 @@ function inspectScript(key: string, ref: string, frameId: string): string {
       ok: true,
       x,
       y,
+      inViewport: rect.right > 0 && rect.bottom > 0 && rect.left < window.innerWidth && rect.top < window.innerHeight,
       visible: visibleFor(el),
       enabled: enabledFor(el),
       disabled: disabledFor(el),
@@ -3631,6 +3762,16 @@ function isWindowFrameSnapshot(value: unknown): value is WindowFrameSnapshot {
   if (!isFrameSnapshot(value)) return false;
   const snapshot = value as Record<string, unknown>;
   return Number.isSafeInteger(snapshot.totalNodes) && Number(snapshot.totalNodes) >= 0;
+}
+
+function dragPath(sourceX: number, sourceY: number, targetX: number, targetY: number): readonly { x: number; y: number }[] {
+  return Array.from({ length: 6 }, (_, index) => {
+    const progress = (index + 1) / 6;
+    return {
+      x: sourceX + (targetX - sourceX) * progress,
+      y: sourceY + (targetY - sourceY) * progress,
+    };
+  });
 }
 
 function isInspection(value: unknown): value is ElementInspection {
