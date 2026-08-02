@@ -25,7 +25,10 @@ export class UnixSocketTransport implements AgentTransport {
   private readonly errorListeners = new Set<(error: unknown) => void>();
   private readonly closeListeners = new Set<() => void>();
   private closed = false;
+  private closing = false;
   private decoderFailed = false;
+  private writeTail: Promise<void> = Promise.resolve();
+  private closePromise: Promise<void> | null = null;
 
   constructor(private readonly socket: net.Socket) {
     socket.on("data", (chunk) => {
@@ -55,13 +58,10 @@ export class UnixSocketTransport implements AgentTransport {
   }
 
   send(message: AgentMessage): Promise<void> {
-    if (this.closed || this.socket.destroyed) return Promise.reject(new Error("transport is closed"));
-    return new Promise((resolve, reject) => {
-      this.socket.write(encodeAgentMessage(message), (error?: Error | null) => {
-        if (error) reject(error);
-        else resolve();
-      });
-    });
+    if (this.closed || this.closing || this.socket.destroyed) return Promise.reject(new Error("transport is closed"));
+    const write = this.writeTail.then(() => this.write(message));
+    this.writeTail = write.catch(() => {});
+    return write;
   }
 
   onMessage(listener: (message: AgentMessage) => void): () => void {
@@ -79,10 +79,29 @@ export class UnixSocketTransport implements AgentTransport {
     return () => this.closeListeners.delete(listener);
   }
 
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    this.socket.end();
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    if (this.closed || this.socket.destroyed) return Promise.resolve();
+    this.closing = true;
+    this.closePromise = this.writeTail.then(() => new Promise<void>((resolve) => {
+      if (this.socket.destroyed) {
+        resolve();
+        return;
+      }
+      this.socket.once("close", resolve);
+      this.socket.end();
+    }));
+    return this.closePromise;
+  }
+
+  private write(message: AgentMessage): Promise<void> {
+    if (this.closed || this.socket.destroyed) return Promise.reject(new Error("transport is closed"));
+    return new Promise((resolve, reject) => {
+      this.socket.write(encodeAgentMessage(message), (error?: Error | null) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
   }
 
   private reportError(error: unknown): void {
@@ -124,7 +143,7 @@ export class UnixSocketAgentServer implements AgentTransportServer {
   }
 
   async close(): Promise<void> {
-    for (const transport of this.transports) transport.close();
+    await Promise.all([...this.transports].map((transport) => transport.close()));
     this.transports.clear();
     const server = this.server;
     this.server = null;

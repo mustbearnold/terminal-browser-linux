@@ -60,6 +60,10 @@ test("bounds incomplete and complete transport frames", () => {
   );
 });
 
+test("rejects oversized encoded transport frames", () => {
+  assert.throws(() => encodeAgentMessage(listRequest(), 4), isFrameTooLarge);
+});
+
 test("rejects an unsupported protocol version", () => {
   assert.throws(
     () =>
