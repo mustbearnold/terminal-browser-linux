@@ -978,7 +978,7 @@ class Session {
     if (this.annotation) return;
     this.annotation = { pageX, pageY, submitting: false, error: null };
     this.blurToOverlay();
-    this.root?.setKeyCapture(["enter"]);
+    this.root?.setKeyCapture([]);
     this.render();
   }
 
