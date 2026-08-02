@@ -84,11 +84,8 @@ function browserLaunchCommand(argv: string[]): { command: string[]; cwd: string 
   if (process.platform === "linux" && !linuxSandboxAvailable(electron)) {
     chromiumFlags.push("--no-sandbox");
   }
-  // Rendering is offscreen (into the terminal), so a display server is only
-  // ceremony — headless ozone lets the browser run on plain SSH sessions.
-  // Its virtual screen defaults to 1x1 and windows clamp to it, so give it
-  // room for any pane size.
-  if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
+  // Rendering is offscreen into the terminal, so use a stable virtual screen on Linux.
+  if (process.platform === "linux") {
     chromiumFlags.push("--ozone-platform=headless", "--ozone-override-screen-size=8192,8192");
   }
   ensureDataDir();
