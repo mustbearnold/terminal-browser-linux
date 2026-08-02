@@ -7,6 +7,10 @@ export const MAX_UPLOAD_FILES = 64 as const;
 export const MAX_UPLOAD_PATH_LENGTH = 4096 as const;
 export const MAX_CLICK_COUNT = 10 as const;
 
+export interface AgentLimits {
+  maxInFlightRequests: number;
+}
+
 type Brand<T, Name extends string> = T & { readonly __brand: Name };
 
 export type PageId = Brand<string, "PageId">;

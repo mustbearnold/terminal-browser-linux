@@ -11,6 +11,7 @@ import {
   type AgentCapability,
   type AgentEvent,
   type AgentEventType,
+  type AgentLimits,
   type AgentMessage,
   type AgentRequest,
   type AgentResponse,
@@ -43,7 +44,11 @@ import {
   type WaitOutputOptions,
   type WaitResult,
 } from "./protocol/types";
-import { MAX_REQUEST_DEADLINE_MS, throwIfAborted } from "./core/cancellation";
+import {
+  MAX_AGENT_IN_FLIGHT_REQUESTS,
+  MAX_REQUEST_DEADLINE_MS,
+  throwIfAborted,
+} from "./core/cancellation";
 import { connectUnixSocket } from "./transport/unix";
 import type { AgentTransport } from "./transport/types";
 
@@ -51,6 +56,7 @@ export interface AgentClientOptions {
   clientId?: string;
   capabilities?: readonly AgentCapability[];
   defaultDeadlineMs?: number;
+  maxPendingRequests?: number;
   trace?: TraceRecorder;
 }
 
@@ -71,6 +77,7 @@ export interface AgentHelloResult {
   requested: readonly AgentCapability[];
   accepted: readonly AgentCapability[];
   unsupported: readonly AgentCapability[];
+  limits: AgentLimits;
 }
 
 export interface AgentOperationResults {
@@ -121,6 +128,7 @@ export class AgentClient {
   private readonly clientId: string;
   private readonly capabilities: readonly AgentCapability[] | undefined;
   private readonly defaultDeadlineMs: number | undefined;
+  private maxPendingRequests: number;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly eventListeners = new Set<AgentClientEventListener>();
   private readonly unsubscribeMessage: () => void;
@@ -132,9 +140,11 @@ export class AgentClient {
 
   constructor(private readonly transport: AgentTransport, options: AgentClientOptions = {}) {
     validateDeadline(options.defaultDeadlineMs);
+    validateRequestBudget(options.maxPendingRequests);
     this.clientId = options.clientId ?? "terminal-browser-agent-client";
     this.capabilities = options.capabilities;
     this.defaultDeadlineMs = options.defaultDeadlineMs;
+    this.maxPendingRequests = options.maxPendingRequests ?? MAX_AGENT_IN_FLIGHT_REQUESTS;
     this.trace = options.trace;
     this.unsubscribeMessage = transport.onMessage((message) => this.handleMessage(message));
     this.unsubscribeError = transport.onError((error) => this.failPending(transportError(error)));
@@ -154,7 +164,15 @@ export class AgentClient {
     return this.call("hello", {
       clientId: this.clientId,
       ...(this.capabilities === undefined ? {} : { capabilities: this.capabilities }),
-    }, options);
+    }, options).then((result) => {
+      const negotiated = result.limits?.maxInFlightRequests;
+      if (negotiated === undefined) {
+        throw new AgentError("INTERNAL_ERROR", "agent hello omitted its request budget");
+      }
+      validateRequestBudget(negotiated);
+      this.maxPendingRequests = Math.min(this.maxPendingRequests, negotiated);
+      return result;
+    });
   }
 
   cancel(targetRequestId: string, options?: AgentCallOptions): Promise<boolean> {
@@ -338,6 +356,12 @@ export class AgentClient {
 
   private send(request: AgentRequest, options: AgentCallOptions): Promise<AgentResponse> {
     if (this.closed) return Promise.reject(new AgentError("TRANSPORT_CLOSED", "agent transport is closed", { retryable: true }));
+    if (request.op !== "request.cancel" && this.pending.size >= this.maxPendingRequests) {
+      return Promise.reject(new AgentError("RESOURCE_EXHAUSTED", "too many agent requests are pending", {
+        retryable: true,
+        details: { maxPendingRequests: this.maxPendingRequests },
+      }));
+    }
     return new Promise<AgentResponse>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const signal = options.signal;
@@ -440,6 +464,12 @@ function validateDeadline(deadlineMs: number | undefined): void {
     (!Number.isSafeInteger(deadlineMs) || deadlineMs < 0 || deadlineMs > MAX_REQUEST_DEADLINE_MS)
   ) {
     throw new AgentError("INVALID_REQUEST", "deadlineMs must be a non-negative safe integer within timer limits");
+  }
+}
+
+function validateRequestBudget(maxPendingRequests: number | undefined): void {
+  if (maxPendingRequests !== undefined && (!Number.isSafeInteger(maxPendingRequests) || maxPendingRequests < 1)) {
+    throw new AgentError("INVALID_REQUEST", "maxPendingRequests must be a positive safe integer");
   }
 }
 

@@ -14,6 +14,10 @@ running browser. The CLI can bridge stdin/stdout to it:
 terminal-browser agent --browser <browser-key>
 ```
 
+The default connection budget is 128 in-flight requests. When that budget is
+reached, the agent returns retryable `RESOURCE_EXHAUSTED` errors; cancellation
+requests remain available so an agent can release capacity deliberately.
+
 For MCP-compatible agent hosts, expose the same negotiated tools over stdio:
 ```
 terminal-browser mcp --browser <browser-key>

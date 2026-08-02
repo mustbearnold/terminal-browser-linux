@@ -5,6 +5,7 @@ import {
   AGENT_PROTOCOL_VERSION,
   type AgentCapability,
   type AgentEvent,
+  type AgentLimits,
   type AgentRequest,
 } from "./protocol/types";
 import {
@@ -84,6 +85,7 @@ export interface AgentToolManifest {
   readonly protocol: typeof AGENT_TOOL_PROTOCOL;
   readonly version: typeof AGENT_TOOL_VERSION;
   readonly capabilities: readonly AgentCapability[];
+  readonly limits: AgentLimits;
   readonly tools: readonly AgentToolDefinition[];
 }
 
@@ -203,6 +205,7 @@ export class AgentToolClient {
       protocol: AGENT_TOOL_PROTOCOL,
       version: AGENT_TOOL_VERSION,
       capabilities: hello.accepted,
+      limits: hello.limits,
       tools: this.listTools(hello),
     };
   }

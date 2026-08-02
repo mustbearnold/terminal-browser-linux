@@ -246,6 +246,35 @@ test("routes the first agent vertical slice", async () => {
   assert.equal((wait.result as { satisfied: boolean }).satisfied, true);
 });
 
+test("returns retryable backpressure when a connection exceeds its request budget", async () => {
+  const router = new AgentRequestRouter(runtime(), undefined, undefined, undefined, 1);
+  const firstRequest = envelope({
+    op: "page.wait",
+    pageId,
+    condition: { type: "time", ms: 1000 },
+  });
+  const first = router.handle(firstRequest);
+  const rejected = await router.handle(envelope({ op: "pages.list" }));
+
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.error?.code, "RESOURCE_EXHAUSTED");
+  assert.equal(rejected.error?.retryable, true);
+  assert.deepEqual(rejected.error?.details, { maxInFlightRequests: 1 });
+
+  const canceled = await router.handle(envelope({
+    op: "request.cancel",
+    targetRequestId: firstRequest.requestId,
+  }));
+  assert.equal(canceled.ok, true);
+  assert.deepEqual(canceled.result, { requestId: firstRequest.requestId, canceled: true });
+  const firstResponse = await first;
+  assert.equal(firstResponse.ok, false);
+  assert.equal(firstResponse.error?.code, "REQUEST_CANCELLED");
+
+  const recovered = await router.handle(envelope({ op: "pages.list" }));
+  assert.equal(recovered.ok, true);
+});
+
 test("returns a typed error for an unknown page", async () => {
   const router = new AgentRequestRouter(runtime());
   const response = await router.handle(

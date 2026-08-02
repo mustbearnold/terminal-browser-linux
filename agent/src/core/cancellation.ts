@@ -1,6 +1,7 @@
 import { AgentError } from "../protocol/errors";
 
 export const MAX_REQUEST_DEADLINE_MS = 2_147_483_647;
+export const MAX_AGENT_IN_FLIGHT_REQUESTS = 128;
 
 export function throwIfAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return;

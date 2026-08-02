@@ -19,6 +19,7 @@ test("correlates typed calls and delivers observed events", async () => {
     assert.equal(hello.clientId, "client-test");
     assert.equal(hello.accepted.includes("page.act"), true);
     assert.deepEqual(hello.unsupported, []);
+    assert.deepEqual(hello.limits, { maxInFlightRequests: 128 });
     assert.equal(pages.pages[0].pageId, FIXTURE_PAGE_ID);
     assert.deepEqual(frames, {
       pageId: FIXTURE_PAGE_ID,
@@ -196,6 +197,28 @@ test("bounds client calls locally when a deadline expires", async () => {
         { deadlineMs: 10 },
       ),
       (error: unknown) => error instanceof AgentError && error.code === "TIMEOUT",
+    );
+  } finally {
+    await client.close();
+  }
+});
+
+test("bounds pending client calls while keeping cancellation available", async () => {
+  const client = createFixtureAgentClient({ clientId: "pending-budget-test", maxPendingRequests: 1 });
+  try {
+    const pending = client.start("page.wait", {
+      pageId: FIXTURE_PAGE_ID,
+      condition: { type: "time", ms: 1000 },
+      timeoutMs: 1000,
+    });
+    await assert.rejects(
+      client.call("pages.list", {}),
+      (error: unknown) => error instanceof AgentError && error.code === "RESOURCE_EXHAUSTED",
+    );
+    assert.equal(await pending.cancel(), true);
+    await assert.rejects(
+      pending.promise,
+      (error: unknown) => error instanceof AgentError && error.code === "REQUEST_CANCELLED",
     );
   } finally {
     await client.close();

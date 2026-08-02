@@ -19,7 +19,12 @@ import type { AgentRuntime } from "./runtime";
 import { actionCapability, operationCapability } from "./capabilities";
 import { IdempotencyCache, stableSerialize, type ActionJournal } from "./idempotency";
 import { DefaultPolicy, type PolicyContext, type PolicyEngine } from "./policy";
-import { RequestCancellationRegistry, throwIfAborted, type RequestExecution } from "./cancellation";
+import {
+  MAX_AGENT_IN_FLIGHT_REQUESTS,
+  RequestCancellationRegistry,
+  throwIfAborted,
+  type RequestExecution,
+} from "./cancellation";
 import { MemoryTrace, TraceRecorder, type TraceDirection } from "./trace";
 
 export interface AgentConnectionContext {
@@ -36,6 +41,7 @@ interface ActiveSubscription {
 
 export class AgentRequestRouter {
   private readonly requests = new WeakMap<AgentConnectionContext, RequestCancellationRegistry>();
+  private readonly inFlight = new WeakMap<AgentConnectionContext, number>();
   private readonly subscriptions = new WeakMap<AgentConnectionContext, Map<string, ActiveSubscription>>();
   private readonly subscriptionSequences = new WeakMap<AgentConnectionContext, number>();
   private readonly contexts = new Set<AgentConnectionContext>();
@@ -48,7 +54,11 @@ export class AgentRequestRouter {
     trace = new TraceRecorder(new MemoryTrace()),
     private readonly policy: PolicyEngine = new DefaultPolicy(),
     actionJournal: ActionJournal<ActionResult> = new IdempotencyCache<ActionResult>(),
+    private readonly maxInFlightRequests = MAX_AGENT_IN_FLIGHT_REQUESTS,
   ) {
+    if (!Number.isSafeInteger(maxInFlightRequests) || maxInFlightRequests < 1) {
+      throw new AgentError("INVALID_REQUEST", "max in-flight requests must be a positive safe integer");
+    }
     this.trace = trace;
     this.actionJournal = actionJournal;
     this.runtime.onPageClosed?.((pageId) => this.pageClosed(pageId));
@@ -76,9 +86,12 @@ export class AgentRequestRouter {
       return response;
     }
     let execution: RequestExecution | undefined;
+    let reserved = false;
     try {
+      this.reserve(connection);
+      reserved = true;
       execution = this.registry(connection).begin(request.requestId, request.deadlineMs, {
-      cancelOnClose: !isIdempotentActionRequest(request),
+        cancelOnClose: !isIdempotentActionRequest(request),
       });
       throwIfAborted(execution.signal);
       const result = await this.dispatch(request, connection, execution.signal);
@@ -100,6 +113,7 @@ export class AgentRequestRouter {
       return response;
     } finally {
       execution?.finish();
+      if (reserved) this.release(connection);
     }
   }
 
@@ -123,6 +137,7 @@ export class AgentRequestRouter {
           requested,
           accepted: requested.filter((capability) => supported.has(capability)),
           unsupported: requested.filter((capability) => !supported.has(capability)),
+          limits: { maxInFlightRequests: this.maxInFlightRequests },
         };
       }
       case "pages.list":
@@ -318,6 +333,23 @@ export class AgentRequestRouter {
       this.requests.set(context, registry);
     }
     return registry;
+  }
+
+  private reserve(context: AgentConnectionContext): void {
+    const current = this.inFlight.get(context) ?? 0;
+    if (current >= this.maxInFlightRequests) {
+      throw new AgentError("RESOURCE_EXHAUSTED", "too many agent requests are in flight", {
+        retryable: true,
+        details: { maxInFlightRequests: this.maxInFlightRequests },
+      });
+    }
+    this.inFlight.set(context, current + 1);
+  }
+
+  private release(context: AgentConnectionContext): void {
+    const current = this.inFlight.get(context) ?? 0;
+    if (current <= 1) this.inFlight.delete(context);
+    else this.inFlight.set(context, current - 1);
   }
 
   private registerSubscription(

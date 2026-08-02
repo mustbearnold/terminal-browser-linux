@@ -21,6 +21,7 @@ export type AgentErrorCode =
   | "TIMEOUT"
   | "REQUEST_CANCELLED"
   | "POLICY_DENIED"
+  | "RESOURCE_EXHAUSTED"
   | "TRANSPORT_CLOSED"
   | "INTERNAL_ERROR";
 
