@@ -107,7 +107,6 @@ type ElementInspection = {
   checked?: boolean;
   selected?: boolean;
 };
-type ClickResult = { ok: boolean };
 type SelectResult = { ok: boolean; values?: string[] };
 type CheckResult = { ok: boolean; checked?: boolean };
 type ScrollResult = { ok: boolean; x?: number; y?: number; changed?: boolean };
@@ -1040,31 +1039,27 @@ export class ElectronPageBackend implements PageBackend {
     const button = action.button ?? "left";
     const clickCount = action.clickCount ?? 1;
     throwIfAborted(signal);
-    if (frameId === "main") {
-      await this.controller.cdp("Input.dispatchMouseEvent", {
-        type: "mousePressed",
-        x: inspection.x,
-        y: inspection.y,
-        button,
-        clickCount,
-      });
-      throwIfAborted(signal);
-      await this.controller.cdp("Input.dispatchMouseEvent", {
-        type: "mouseReleased",
-        x: inspection.x,
-        y: inspection.y,
-        button,
-        clickCount,
-      });
-    } else {
-      const value = await this.controller.runJsInFrame(
-        frameId,
-        clickScript(this.agentKey, target.ref, frameId, button, clickCount),
-      );
-      if (!isClickResult(value) || !value.ok) {
-        throw new AgentError("ACTION_UNVERIFIED", "frame click did not activate the target", { retryable: true });
-      }
-    }
+    await this.controller.cdp("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: inspection.x,
+      y: inspection.y,
+    });
+    throwIfAborted(signal);
+    await this.controller.cdp("Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      x: inspection.x,
+      y: inspection.y,
+      button,
+      clickCount,
+    });
+    throwIfAborted(signal);
+    await this.controller.cdp("Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      x: inspection.x,
+      y: inspection.y,
+      button,
+      clickCount,
+    });
     this.invalidateFrameSnapshots(frameId);
     const outcome = await this.waitForOutcome(before, expect, signal);
 
@@ -3567,18 +3562,6 @@ function scrollScript(key: string, ref: string | null, deltaX: number, deltaY: n
   })()`;
 }
 
-function clickScript(key: string, ref: string, frameId: string, button: string, clickCount: number): string {
-  return `(() => {
-    const state = window[${JSON.stringify(key)}];
-    if (!state || state.frameId !== ${JSON.stringify(frameId)}) return { ok: false };
-    const el = state.refs && state.refs.get(${JSON.stringify(ref)});
-    if (!el || !el.isConnected) return { ok: false };
-    if (${JSON.stringify(button)} !== "left") return { ok: false };
-    for (let count = 0; count < ${clickCount}; count += 1) el.click();
-    return { ok: true };
-  })()`;
-}
-
 function activeElementScript(): string {
   return `(() => {
     let el = document.activeElement;
@@ -3855,10 +3838,6 @@ function isLiveTextResult(value: unknown): value is LiveTextResult {
   if (!value || typeof value !== "object") return false;
   const result = value as Record<string, unknown>;
   return result.ok === true && typeof result.matches === "boolean";
-}
-
-function isClickResult(value: unknown): value is ClickResult {
-  return !!value && typeof value === "object" && typeof (value as Record<string, unknown>).ok === "boolean";
 }
 
 function isSelectResult(value: unknown): value is SelectResult & { values: string[] } {
