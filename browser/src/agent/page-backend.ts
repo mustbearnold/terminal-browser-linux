@@ -2655,6 +2655,7 @@ function agentStateSetupScript(key: string, frameId: string): string {
         invalidationScheduled: false,
         snapshotRevision: -1,
         elementIndexRoots: [],
+        elementIndexExtraRoots: [],
         elementIndexElements: [],
         elementIndexReady: false,
         elementIndexDirty: false,
@@ -2749,7 +2750,11 @@ function agentStateSetupScript(key: string, frameId: string): string {
       };
       const rebuildElementIndex = () => {
         state.elementIndexReady = false;
-        const roots = [document];
+        const extraRoots = (state.elementIndexExtraRoots || []).filter((root) => (
+          root && root.host && root.host.isConnected && root.host.ownerDocument === document
+        ));
+        state.elementIndexExtraRoots = extraRoots;
+        const roots = [document, ...extraRoots];
         const visitedRoots = new Set(roots);
         const elements = [];
         const visitedElements = new Set();
@@ -2783,6 +2788,24 @@ function agentStateSetupScript(key: string, frameId: string): string {
       };
       state.observeRoot = observeRoot;
       observeRoot(document);
+      const attachShadow = Element.prototype.attachShadow;
+      if (typeof attachShadow === "function" && !attachShadow.__terminalBrowserAgentObserver) {
+        const wrappedAttachShadow = function(...args) {
+          const root = attachShadow.apply(this, args);
+          if (!state.elementIndexExtraRoots.includes(root)) state.elementIndexExtraRoots.push(root);
+          state.elementIndexDirty = true;
+          state.elementIndexRoleDirty = true;
+          state.elementIndexRoleNameDirty = true;
+          observeRoot(root);
+          invalidate("shadowroot", this);
+          return root;
+        };
+        try {
+          Object.defineProperty(wrappedAttachShadow, "__terminalBrowserAgentObserver", { value: true });
+          const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, "attachShadow");
+          Object.defineProperty(Element.prototype, "attachShadow", { ...descriptor, value: wrappedAttachShadow });
+        } catch {}
+      }
       window[key] = state;
     }
     if (!state.nodeElements) state.nodeElements = new Map();

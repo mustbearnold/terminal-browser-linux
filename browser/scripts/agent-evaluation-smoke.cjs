@@ -47,7 +47,7 @@ const html = `<!doctype html>
   document.getElementById('remove').addEventListener('click', event => event.currentTarget.remove());
 </script>`;
 
-const shadowHtml = `<!doctype html><meta charset="utf-8"><title>Shadow evaluation fixture</title><x-control></x-control><script>customElements.define('x-control',class extends HTMLElement{constructor(){super();const root=this.attachShadow({mode:'open'});root.innerHTML='<label>Shadow name <input aria-label="Shadow name"></label><button aria-label="Shadow action">Shadow action</button><span id="status">Idle</span>';root.querySelector('button').addEventListener('click',()=>{root.querySelector('#status').textContent='Clicked';const dynamic=document.createElement('button');dynamic.setAttribute('aria-label','Dynamic action');dynamic.textContent='Dynamic action';root.append(dynamic)})}});</script>`;
+const shadowHtml = `<!doctype html><meta charset="utf-8"><title>Shadow evaluation fixture</title><x-control></x-control><x-late></x-late><button aria-label="Attach late control" onclick="const root=document.querySelector('x-late').attachShadow({mode:'closed'});root.innerHTML='<button aria-label=&quot;Late action&quot;>Late action</button>'">Attach late control</button><script>customElements.define('x-control',class extends HTMLElement{constructor(){super();const root=this.attachShadow({mode:'open'});root.innerHTML='<label>Shadow name <input aria-label="Shadow name"></label><button aria-label="Shadow action">Shadow action</button><span id="status">Idle</span>';root.querySelector('button').addEventListener('click',()=>{root.querySelector('#status').textContent='Clicked';const dynamic=document.createElement('button');dynamic.setAttribute('aria-label','Dynamic action');dynamic.textContent='Dynamic action';root.append(dynamic)})}});</script>`;
 
 const frameChildHtml = `<!doctype html><label>Frame name <input aria-label="Frame name"></label><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
 const frameHtml = `<!doctype html><meta charset="utf-8"><title>Frame evaluation fixture</title><iframe title="Control frame"></iframe><script>document.querySelector('iframe').srcdoc=${JSON.stringify(frameChildHtml)}</script>`;
@@ -756,15 +756,32 @@ function shadowScenarios(pageId) {
       });
       const after = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
       const dynamic = after.nodes.find((node) => node.name === "Dynamic action");
+      const attachedLate = await client.call("page.act", {
+        pageId,
+        action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Attach late control", exact: true } } },
+        output: { snapshot: "none" },
+      });
+      const late = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "Late action", exact: true },
+        options: { limit: 1, diagnostics: "summary" },
+      });
       const passed = shadowButton?.frameId === "main" && shadowTextbox?.frameId === "main"
         && Boolean(liveShadowButton?.parent)
-        && filled.verified && typed.proof?.value === "Ada Lovelace" && clicked.verified && Boolean(dynamic);
+        && filled.verified && typed.proof?.value === "Ada Lovelace" && clicked.verified && Boolean(dynamic)
+        && attachedLate.verified
+        && late.matchCount === 1
+        && late.nodes[0]?.name === "Late action"
+        && late.nodes[0]?.parent
+        && late.diagnostics?.queries[0]?.elementsEvaluated === 1;
       return {
         passed,
         metrics: {
           shadowControls: [shadowButton, shadowTextbox].filter(Boolean).length,
           shadowMutations: dynamic ? 1 : 0,
           shadowAncestry: Number(Boolean(liveShadowButton?.parent)),
+          lateShadowRoot: Number(attachedLate.verified && late.matchCount === 1),
+          lateShadowCandidates: late.diagnostics?.queries[0]?.elementsEvaluated ?? 0,
         },
       };
     },
