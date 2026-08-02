@@ -56,7 +56,7 @@ const shadowHtml = `<!doctype html><meta charset="utf-8"><title>Shadow evaluatio
 const frameChildHtml = `<!doctype html><label>Frame name <input aria-label="Frame name"></label><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
 const frameHtml = `<!doctype html><meta charset="utf-8"><title>Frame evaluation fixture</title><iframe title="Control frame"></iframe><script>document.querySelector('iframe').srcdoc=${JSON.stringify(frameChildHtml)}</script>`;
 
-const crossOriginChildHtml = `<!doctype html><label>Frame name <input aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input type="checkbox" aria-label="Frame enabled">Frame enabled</label><div role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
+const crossOriginChildHtml = `<!doctype html><label>Frame name <input id="frame-name" aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input id="frame-enabled" type="checkbox" aria-label="Frame enabled">Frame enabled</label><button id="schedule-frame-silent" aria-label="Schedule frame silent" onclick="setTimeout(() => { document.getElementById('frame-name').value = 'Silent frame name'; document.getElementById('frame-silent-button').value = 'New frame action'; document.getElementById('frame-enabled').checked = true; document.getElementById('frame-silent-choice').options[1].selected = true }, 500)">Schedule frame silent</button><input id="frame-silent-button" type="button" value="Old frame action"><select id="frame-silent-choice" multiple aria-label="Frame silent choices"><option value="one" selected>Frame silent one</option><option value="two">Frame silent two</option></select><div role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
 const navigationStartHtml = `<!doctype html><meta charset="utf-8"><title>Navigation start</title><button aria-label="Start action">Start action</button><output>Navigation start</output>`;
 const navigationNextHtml = `<!doctype html><meta charset="utf-8"><title>Navigation next</title><label>Recovered name <input aria-label="Recovered name"></label><button aria-label="Next action" onclick="document.querySelector('output').textContent='Next clicked'">Next action</button><output>Next ready</output>`;
 const eventHtml = `<!doctype html><meta charset="utf-8"><title>Native event fixture</title><button aria-label="Emit console" onclick="console.warn('agent console probe')">Emit console</button><button aria-label="Emit dialog" onclick="alert('agent dialog probe')">Emit dialog</button><button aria-label="Emit confirm" onclick="document.querySelector('#dialog-status').textContent = confirm('agent confirm probe') ? 'Confirmed' : 'Dismissed'">Emit confirm</button><button id="unlock" aria-label="Unlock" disabled>Unlock</button><button aria-label="Schedule update" onclick="setTimeout(() => { document.querySelector('#async-status').textContent = 'Asynchronous update'; document.querySelector('#unlock').disabled = false; setTimeout(() => { document.querySelector('#async-status').textContent = 'Settled' }, 80) }, 180)">Schedule update</button><span id="dialog-status">Idle</span><span id="async-status">Idle</span>`;
@@ -917,9 +917,73 @@ function crossOriginScenarios(pageId) {
         pageId,
         target: {
           locator: { kind: "css", value: "button" },
-          index: 0,
+          index: 1,
           frameId: frameButton?.frameId,
         },
+      });
+      const frameSilentValueSeed = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "textbox", name: "Frame name", exact: true },
+        options: { frameId: frameButton.frameId, limit: 1, diagnostics: "summary" },
+      });
+      const frameSilentNameSeed = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "Old frame action", exact: true },
+        options: { frameId: frameButton.frameId, limit: 1, diagnostics: "summary" },
+      });
+      const frameSilentCheckSeed = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "checkbox", name: "Frame enabled", exact: true },
+        options: { frameId: frameButton.frameId, limit: 1, diagnostics: "summary" },
+      });
+      const frameSilentOptionSeed = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "option", name: "Frame silent two", exact: true },
+        options: { frameId: frameButton.frameId, limit: 1, diagnostics: "summary" },
+      });
+      const frameSilentBase = await client.call("page.snapshot", {
+        pageId,
+        options: { interactiveOnly: false, includeGeometry: false },
+      });
+      const frameSilentSchedule = await client.call("page.act", {
+        pageId,
+        action: {
+          type: "click",
+          target: { locator: { kind: "role", role: "button", name: "Schedule frame silent", exact: true, frameId: frameButton.frameId } },
+        },
+        expect: {
+          element: {
+            target: { locator: { kind: "role", role: "button", name: "Schedule frame silent", exact: true, frameId: frameButton.frameId } },
+            state: { attached: true, visible: true },
+          },
+          timeoutMs: 1_000,
+        },
+        output: { snapshot: "none" },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      const frameSilentValueAfter = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "textbox", name: "Frame name", exact: true },
+        options: { frameId: frameButton.frameId, limit: 1, diagnostics: "summary" },
+      });
+      const frameSilentNameAfter = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "button", name: "New frame action", exact: true },
+        options: { frameId: frameButton.frameId, limit: 1, diagnostics: "summary" },
+      });
+      const frameSilentCheckAfter = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "checkbox", name: "Frame enabled", exact: true, state: { checked: true } },
+        options: { frameId: frameButton.frameId, limit: 1, diagnostics: "summary" },
+      });
+      const frameSilentOptionAfter = await client.call("page.query", {
+        pageId,
+        locator: { kind: "role", role: "option", name: "Frame silent two", exact: true, state: { selected: true } },
+        options: { frameId: frameButton.frameId, limit: 1, diagnostics: "summary" },
+      });
+      const frameSilentDelta = await client.call("page.snapshot.delta", {
+        pageId,
+        base: snapshotToken(frameSilentBase),
       });
       const childCacheSeed = await client.call("page.query", {
         pageId,
@@ -1024,6 +1088,23 @@ function crossOriginScenarios(pageId) {
         const passed = Boolean(childFrame && frameButton?.frameId && frameButton.frameId !== "main")
           && frameTextbox?.frameId === frameButton.frameId && frameButton.box?.width > 0
           && frameScopedRead.node.ref === frameButton.ref
+          && frameSilentSchedule.verified
+          && frameSilentValueSeed.nodes[0]?.state?.value === ""
+          && frameSilentValueAfter.nodes[0]?.state?.value === "Silent frame name"
+          && frameSilentValueAfter.diagnostics?.queries[0]?.cacheHit === false
+          && frameSilentNameSeed.nodes[0]?.attributes?.id === "frame-silent-button"
+          && frameSilentNameAfter.nodes[0]?.attributes?.id === "frame-silent-button"
+          && frameSilentNameAfter.diagnostics?.queries[0]?.elementsEvaluated === 1
+          && frameSilentCheckSeed.nodes[0]?.state?.checked === false
+          && frameSilentCheckAfter.nodes[0]?.attributes?.id === "frame-enabled"
+          && frameSilentCheckAfter.nodes[0]?.state?.checked === true
+          && frameSilentOptionSeed.nodes[0]?.state?.selected === false
+          && frameSilentOptionAfter.nodes[0]?.name === "Frame silent two"
+          && frameSilentOptionAfter.nodes[0]?.state?.selected === true
+          && frameSilentDelta.revision > frameSilentBase.revision
+          && frameSilentDelta.mode === "full"
+          && frameSilentDelta.updated.some((entry) => entry.node.attributes?.id === "frame-enabled")
+          && frameSilentDelta.updated.some((entry) => entry.node.name === "Frame silent two")
           && childCacheSeed.diagnostics?.queries[0]?.cacheHit === false
           && parentMutation.verified
           && childCacheAfterParentMutation.diagnostics?.queries[0]?.cacheHit === true
@@ -1041,6 +1122,14 @@ function crossOriginScenarios(pageId) {
           metrics: {
             crossOriginControls: [frameButton, frameTextbox].filter(Boolean).length,
             frameScopedIndexedRead: Number(frameScopedRead.node.ref === frameButton?.ref),
+            frameSilentRoleNameRefresh: Number(frameSilentNameAfter.nodes[0]?.attributes?.id === "frame-silent-button"
+              && frameSilentNameAfter.diagnostics?.queries[0]?.elementsEvaluated === 1),
+            frameSilentFormStateRefresh: Number(frameSilentValueAfter.nodes[0]?.state?.value === "Silent frame name"
+              && frameSilentValueAfter.diagnostics?.queries[0]?.cacheHit === false),
+            frameSilentCheckedRefresh: Number(frameSilentCheckAfter.nodes[0]?.state?.checked === true),
+            frameSilentSelectedRefresh: Number(frameSilentOptionAfter.nodes[0]?.state?.selected === true),
+            frameSilentPropertyDelta: Number(frameSilentDelta.revision > frameSilentBase.revision
+              && frameSilentDelta.mode === "full"),
             frameScopedCachePreserved: Number(
               childCacheSeed.diagnostics?.queries[0]?.cacheHit === false
                 && parentMutation.verified
