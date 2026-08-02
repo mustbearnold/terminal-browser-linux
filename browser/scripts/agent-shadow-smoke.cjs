@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const { AgentClient } = require("../../agent/dist");
 const { launchHost, listSockets, stopHost, waitForSocket, dataUrl } = require("./agent-smoke-support.cjs");
 
-const html = `<!doctype html><meta charset="utf-8"><title>Shadow control fixture</title><style>body{font:16px sans-serif;margin:24px}x-control{display:block;width:320px}button,input{font:16px sans-serif;margin:8px;padding:8px}</style><x-control></x-control><script>customElements.define('x-control',class extends HTMLElement{constructor(){super();const root=this.attachShadow({mode:'open'});root.innerHTML='<label>Shadow name <input aria-label="Shadow name"></label><button aria-label="Shadow action">Shadow action</button><span id="status">Idle</span><input id="input-status" aria-label="Input status" value="Idle">';root.querySelector('input[aria-label="Shadow name"]').addEventListener('input',event=>root.querySelector('#input-status').value=String(event.isTrusted));const shadowAction=root.querySelector('[aria-label="Shadow action"]');shadowAction.addEventListener('click',()=>{root.querySelector('#status').textContent='Clicked';const dynamic=document.createElement('button');dynamic.setAttribute('aria-label','Dynamic action');dynamic.textContent='Dynamic action';root.append(dynamic);for(const [name,text] of [['Primary card','Primary open'],['Secondary card','Secondary open']]){const region=document.createElement('div');region.setAttribute('role','region');region.setAttribute('aria-label',name);const open=document.createElement('button');open.setAttribute('aria-label','Open');open.textContent=text;open.addEventListener('click',()=>{root.querySelector('#status').textContent='Scoped clicked'});region.append(open);root.append(region)}})}});</script>`;
+const html = `<!doctype html><meta charset="utf-8"><title>Shadow control fixture</title><style>body{font:16px sans-serif;margin:24px}x-control{display:block;width:320px}button,input,select{font:16px sans-serif;margin:8px;padding:8px}</style><x-control></x-control><script>customElements.define('x-control',class extends HTMLElement{constructor(){super();const root=this.attachShadow({mode:'open'});root.innerHTML='<label>Shadow name <input aria-label="Shadow name"></label><select multiple aria-label="Shadow choices"><option value="one" selected>One</option><option value="two">Two</option></select><button aria-label="Shadow action">Shadow action</button><span id="status">Idle</span><input id="input-status" aria-label="Input status" value="Idle"><input id="select-status" aria-label="Select status" value="Idle">';root.querySelector('input[aria-label="Shadow name"]').addEventListener('input',event=>root.querySelector('#input-status').value=String(event.isTrusted));root.querySelector('select[aria-label="Shadow choices"]').addEventListener('input',event=>root.querySelector('#select-status').value=String(event.isTrusted));const shadowAction=root.querySelector('[aria-label="Shadow action"]');shadowAction.addEventListener('click',()=>{root.querySelector('#status').textContent='Clicked';const dynamic=document.createElement('button');dynamic.setAttribute('aria-label','Dynamic action');dynamic.textContent='Dynamic action';root.append(dynamic);for(const [name,text] of [['Primary card','Primary open'],['Secondary card','Secondary open']]){const region=document.createElement('div');region.setAttribute('role','region');region.setAttribute('aria-label',name);const open=document.createElement('button');open.setAttribute('aria-label','Open');open.textContent=text;open.addEventListener('click',()=>{root.querySelector('#status').textContent='Scoped clicked'});region.append(open);root.append(region)}})}});</script>`;
 
 async function run() {
   const existing = new Set(listSockets());
@@ -43,8 +43,10 @@ async function run() {
       });
       const shadowButton = initial.nodes.find((node) => node.name === "Shadow action");
       const shadowTextbox = initial.nodes.find((node) => node.name === "Shadow name");
+      const shadowSelect = initial.nodes.find((node) => node.name === "Shadow choices");
       assert.ok(shadowButton, "shadow button was not exposed in the snapshot");
       assert.ok(shadowTextbox, "shadow textbox was not exposed in the snapshot");
+      assert.equal(shadowSelect?.role, "listbox");
       assert.equal(shadowButton.frameId, "main");
       assert.equal(shadowTextbox.frameId, "main");
 
@@ -89,6 +91,24 @@ async function run() {
       });
       const typedDelta = await client.snapshotDelta(pageId, valueDelta);
       assert.equal(typedDelta.mode, "incremental", "typing did not use the incremental delta path");
+      const selected = await client.call("page.act", {
+        pageId,
+        action: {
+          type: "select",
+          target: { locator: { kind: "role", role: "listbox", name: "Shadow choices", exact: true } },
+          values: ["two"],
+        },
+      });
+      assert.equal(selected.proof?.value, "two");
+      await client.call("page.wait", {
+        pageId,
+        condition: {
+          type: "element",
+          target: { locator: { kind: "role", role: "textbox", name: "Select status", exact: true } },
+          state: { value: "true" },
+        },
+        timeoutMs: 1_000,
+      });
       const clicked = await client.call("page.act", {
         pageId,
         action: {

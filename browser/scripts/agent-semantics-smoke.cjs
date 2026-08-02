@@ -21,7 +21,8 @@ const html = `<!doctype html>
 <input id="search" type="search" placeholder="Search records">
 <input id="amount" type="number" value="3">
 <input id="volume" type="range" min="0" max="10" value="4">
-<select id="choices" multiple aria-label="Choices"><option value="a" selected>Alpha</option><option value="b">Beta</option></select>
+<select id="single-choice" aria-label="Single choice"><option value="">Choose one</option><option value="one">One</option><option value="two">Two</option></select>
+<select id="choices" multiple aria-label="Choices"><option id="choice-a" value="a" selected>Alpha</option><option id="choice-b" value="b">Beta</option><option value="blocked" disabled>Blocked</option></select>
 <div id="notifications" role="switch" aria-checked="false" aria-label="Notifications">Notifications</div>
 <button id="pressed" aria-pressed="true">Pressed action</button>
 <button id="spaced">  Save <span> now </span> </button>
@@ -29,10 +30,12 @@ const html = `<!doctype html>
 <div aria-hidden="true"><button id="aria-hidden">ARIA hidden action</button></div>
 <div inert><button id="inert">Inert action</button></div>
 <fieldset disabled><button id="disabled">Disabled action</button></fieldset>
-<output id="status">Idle</output><input id="input-status" aria-label="Input status" value="Idle">
+<output id="status">Idle</output><input id="input-status" aria-label="Input status" value="Idle"><input id="select-status" aria-label="Select status" value="Idle">
 <script>
   document.getElementById('launch').addEventListener('click', () => document.getElementById('status').textContent = 'Launched');
   for (const id of ['full-name', 'notes', 'editor']) document.getElementById(id).addEventListener('input', event => document.getElementById('input-status').value = event.isTrusted ? id : 'false');
+  for (const id of ['single-choice', 'choices']) document.getElementById(id).addEventListener('input', event => document.getElementById('select-status').value = event.isTrusted ? 'true' : 'false');
+  for (const id of ['single-choice', 'choices']) document.getElementById(id).addEventListener('change', event => document.getElementById('select-status').value = event.isTrusted ? 'true' : 'false');
   document.getElementById('notifications').addEventListener('click', (event) => event.currentTarget.setAttribute('aria-checked', String(event.currentTarget.getAttribute('aria-checked') !== 'true')));
   document.getElementById('disabled').addEventListener('click', () => document.getElementById('status').textContent = 'Disabled clicked');
 </script>`;
@@ -66,6 +69,7 @@ async function run() {
     const searchNode = byId("search");
     const amountNode = byId("amount");
     const volumeNode = byId("volume");
+    const singleChoiceNode = byId("single-choice");
     const choicesNode = byId("choices");
     const notificationsNode = byId("notifications");
     const pressedNode = byId("pressed");
@@ -87,6 +91,7 @@ async function run() {
     assert.equal(searchNode?.role, "searchbox");
     assert.equal(amountNode?.role, "spinbutton");
     assert.equal(volumeNode?.role, "slider");
+    assert.equal(singleChoiceNode?.role, "combobox");
     assert.equal(choicesNode?.role, "listbox");
     assert.equal(notificationsNode?.role, "switch");
     assert.equal(notificationsNode?.state?.checked, false);
@@ -158,6 +163,38 @@ async function run() {
       timeoutMs: 1_000,
     });
 
+    const singleSelected = await client.call("page.act", {
+      pageId,
+      action: { type: "select", target: { locator: { kind: "role", role: "combobox", name: "Single choice", exact: true } }, values: ["two"] },
+    });
+    assert.equal(singleSelected.proof?.value, "two");
+    const multipleSelected = await client.call("page.act", {
+      pageId,
+      action: { type: "select", target: { locator: { kind: "role", role: "listbox", name: "Choices", exact: true } }, values: ["a", "b"] },
+    });
+    assert.equal(multipleSelected.proof?.value, "a,b");
+    const multipleCleared = await client.call("page.act", {
+      pageId,
+      action: { type: "select", target: { locator: { kind: "role", role: "listbox", name: "Choices", exact: true } }, values: [] },
+    });
+    assert.equal(multipleCleared.proof?.value, "");
+    await client.call("page.wait", {
+      pageId,
+      condition: {
+        type: "element",
+        target: { locator: { kind: "role", role: "textbox", name: "Select status", exact: true } },
+        state: { value: "true" },
+      },
+      timeoutMs: 1_000,
+    });
+    await expectCode(
+      client.call("page.act", {
+        pageId,
+        action: { type: "select", target: { locator: { kind: "role", role: "listbox", name: "Choices", exact: true } }, values: ["blocked"] },
+      }),
+      "NOT_INTERACTABLE",
+    );
+
     const checked = await client.call("page.act", {
       pageId,
       action: { type: "check", target: { locator: { kind: "role", role: "switch", name: "Notifications", exact: true } }, checked: true },
@@ -168,12 +205,18 @@ async function run() {
     const afterName = after.nodes.find((node) => node.attributes?.id === "full-name");
     const afterNotes = after.nodes.find((node) => node.attributes?.id === "notes");
     const afterEditor = after.nodes.find((node) => node.attributes?.id === "editor");
+    const afterSingleChoice = after.nodes.find((node) => node.attributes?.id === "single-choice");
+    const afterChoiceA = after.nodes.find((node) => node.attributes?.id === "choice-a");
+    const afterChoiceB = after.nodes.find((node) => node.attributes?.id === "choice-b");
     const afterNotifications = after.nodes.find((node) => node.attributes?.id === "notifications");
     assert.equal(afterName?.name, "Full name");
     assert.equal(afterName?.state?.value, "Ada");
     assert.equal(afterName?.state?.invalid, undefined);
     assert.equal(afterNotes?.state?.value, "Native notes");
     assert.equal(afterEditor?.state?.value, "Native editor");
+    assert.equal(afterSingleChoice?.state?.value, "two");
+    assert.equal(afterChoiceA?.state?.selected, false);
+    assert.equal(afterChoiceB?.state?.selected, false);
     assert.equal(afterNotifications?.state?.checked, true);
 
     await expectCode(
@@ -204,6 +247,7 @@ async function run() {
     console.log(JSON.stringify({
       semanticNames: true,
       nativeRoles: [searchNode?.role, amountNode?.role, volumeNode?.role, choicesNode?.role],
+      nativeSelect: true,
       switchChecked: afterNotifications?.state?.checked,
       filledValue: afterName?.state?.value,
       unsafeTargetsRejected: true,

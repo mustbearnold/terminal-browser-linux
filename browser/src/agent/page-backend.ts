@@ -108,7 +108,8 @@ type ElementInspection = {
   checked?: boolean;
   selected?: boolean;
 };
-type SelectResult = { ok: boolean; values?: string[] };
+type SelectOptionInfo = { value: string; selected: boolean; disabled: boolean };
+type SelectInfo = { ok: boolean; multiple?: boolean; options?: SelectOptionInfo[] };
 type ScrollResult = { ok: boolean; x?: number; y?: number; changed?: boolean };
 type ActiveElementInfo = {
   ok: boolean;
@@ -1366,14 +1367,68 @@ export class ElectronPageBackend implements PageBackend {
       throw new AgentError("NOT_INTERACTABLE", "target is not a selectable control", { retryable: true });
     }
 
+    const initial = await this.readSelect(target, frameId, signal);
+    if (!initial.ok || initial.multiple === undefined || !initial.options) {
+      throw new AgentError("ACTION_UNVERIFIED", "select options could not be read", { retryable: true });
+    }
+    const options = initial.options;
+    const wanted = new Set(action.values);
+    if (wanted.size !== action.values.length) {
+      throw new AgentError("INVALID_REQUEST", "select values must be unique");
+    }
+    if (!initial.multiple && action.values.length > 1) {
+      throw new AgentError("INVALID_REQUEST", "single-select controls accept at most one value");
+    }
+    if (action.values.some((value) => !options.some((option) => option.value === value))) {
+      throw new AgentError("ACTION_UNVERIFIED", "requested select value does not exist", { retryable: true });
+    }
+    if (action.values.some((value) => options.some((option) => option.value === value && option.disabled))) {
+      throw new AgentError("NOT_INTERACTABLE", "requested select value is disabled", { retryable: true });
+    }
+
     this.controller.focusContent();
     throwIfAborted(signal);
-    const source = selectScript(this.agentKey, target.ref, action.values);
-    const raw = frameId === "main"
-      ? await this.controller.runJs(source)
-      : await this.controller.runJsInFrame(frameId, source);
+    const focused = await this.focusTarget(target, signal, "selecting");
+    if (!focused.ok || !focused.visible || !focused.enabled || !focused.focused) {
+      throw new AgentError("NOT_INTERACTABLE", "target is not a focusable select", { retryable: true });
+    }
+    const selectable = options.filter((option) => !option.disabled);
+    if (selectable.length === 0 && wanted.size > 0) {
+      throw new AgentError("NOT_INTERACTABLE", "select has no enabled options", { retryable: true });
+    }
+    if (!initial.multiple && wanted.size === 0) {
+      throw new AgentError("ACTION_UNVERIFIED", "single-select controls cannot be cleared with native input", { retryable: true });
+    }
+
+    const modifier = initial.multiple && process.platform === "darwin" ? MODIFIER_META : initial.multiple ? MODIFIER_CTRL : 0;
+    await this.dispatchSelectKey("Home", modifier, signal);
+    if (initial.multiple) {
+      for (let index = 0; index < selectable.length; index += 1) {
+        const option = selectable[index];
+        if (option.selected !== wanted.has(option.value)) {
+          await this.dispatchSelectKey("Space", modifier, signal);
+        }
+        if (index + 1 < selectable.length) await this.dispatchSelectKey("ArrowDown", modifier, signal);
+      }
+    } else {
+      let desired = -1;
+      for (let index = 0; index < options.length; index += 1) {
+        if (options[index].value === action.values[0] && !options[index].disabled) desired = selectable.indexOf(options[index]);
+      }
+      if (desired < 0) {
+        throw new AgentError("ACTION_UNVERIFIED", "requested select value could not be reached natively", { retryable: true });
+      }
+      for (let index = 0; index < desired; index += 1) await this.dispatchSelectKey("ArrowDown", 0, signal);
+    }
     throwIfAborted(signal);
-    if (!isSelectResult(raw) || !raw.ok || !sameStringSet(raw.values, action.values)) {
+    const raw = await this.readSelect(target, frameId, signal, target.node.nodeId);
+    if (!raw.ok || !raw.options) {
+      throw new AgentError("ACTION_UNVERIFIED", "selected values could not be read after native input", {
+        retryable: true,
+      });
+    }
+    const values = raw.options.filter((option) => option.selected).map((option) => option.value);
+    if (!sameStringSet(values, action.values)) {
       throw new AgentError("ACTION_UNVERIFIED", "selected values did not match the requested values", {
         retryable: true,
       });
@@ -1382,7 +1437,7 @@ export class ElectronPageBackend implements PageBackend {
     const outcome = await this.waitForOutcome(before, expect, signal);
     const after = outcome.identity;
     const effects = this.transitionEffects(before, after);
-    effects.push({ type: "value.changed", data: { values: raw.values } });
+    effects.push({ type: "value.changed", data: { values } });
     const proof: ActionProof = {
       pageId: after.pageId,
       documentId: after.documentId,
@@ -1391,7 +1446,7 @@ export class ElectronPageBackend implements PageBackend {
       frameId: target.node.frameId,
       role: inspection.role,
       name: inspection.name,
-      value: raw.values.join(","),
+      value: values.join(","),
       url: after.url,
       title: after.title,
     };
@@ -2175,6 +2230,49 @@ export class ElectronPageBackend implements PageBackend {
       throw new AgentError("INTERNAL_ERROR", `${actionName} target focus returned an invalid shape`);
     }
     return { ...value, frameId };
+  }
+
+  private async readSelect(
+    target: ResolvedTarget,
+    frameId: string,
+    signal?: AbortSignal,
+    nodeId?: string,
+  ): Promise<SelectInfo> {
+    throwIfAborted(signal);
+    const source = selectInfoScript(this.agentKey, String(target.ref), frameId, nodeId);
+    const value = frameId === "main"
+      ? await this.controller.runJs(source)
+      : await this.controller.runJsInFrame(frameId, source);
+    throwIfAborted(signal);
+    if (!isSelectInfo(value)) throw new AgentError("INTERNAL_ERROR", "select options returned an invalid shape");
+    return value;
+  }
+
+  private async dispatchSelectKey(
+    keyName: "Home" | "ArrowDown" | "Space",
+    modifiers: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const key = keyName === "Home"
+      ? { key: "Home", code: "Home", keyCode: 36 }
+      : keyName === "ArrowDown"
+        ? { key: "ArrowDown", code: "ArrowDown", keyCode: 40 }
+        : { key: " ", code: "Space", keyCode: 32 };
+    const base = {
+      key: key.key,
+      code: key.code,
+      windowsVirtualKeyCode: key.keyCode,
+      nativeVirtualKeyCode: key.keyCode,
+      modifiers,
+    };
+    throwIfAborted(signal);
+    await this.controller.cdp("Input.dispatchKeyEvent", { type: "rawKeyDown", ...base, autoRepeat: false });
+    if (keyName === "Space" && modifiers === 0) {
+      throwIfAborted(signal);
+      await this.controller.cdp("Input.dispatchKeyEvent", { type: "char", text: " ", ...base });
+    }
+    throwIfAborted(signal);
+    await this.controller.cdp("Input.dispatchKeyEvent", { type: "keyUp", ...base });
   }
 
   private assertToken(token: SnapshotToken | undefined, documentId: string, revision: number): void {
@@ -3582,26 +3680,27 @@ function focusElementScript(key: string, ref: string): string {
   })()`;
 }
 
-function selectScript(key: string, ref: string, values: readonly string[]): string {
+function selectInfoScript(key: string, ref: string, frameId: string, nodeId?: string): string {
   return `(() => {
     const state = window[${JSON.stringify(key)}];
-    const el = state && state.refs && state.refs.get(${JSON.stringify(ref)});
+    if (!state || state.frameId !== ${JSON.stringify(frameId)}) return { ok: false };
+    const held = ${nodeId === undefined ? "null" : `state && state.nodeElements && state.nodeElements.get(${JSON.stringify(nodeId)})`};
+    const heldElement = held && typeof held.deref === "function" ? held.deref() : null;
+    const el = (state.refs && state.refs.get(${JSON.stringify(ref)})) || heldElement;
     if (!el || !el.isConnected) return { ok: false };
     ${semanticHelpersScript()}
     if (el.tagName !== "SELECT" || !enabledFor(el) || !visibleFor(el)) {
       return { ok: false };
     }
-    const wanted = new Set(${JSON.stringify(values)});
-    const options = Array.from(el.options);
-    if (!el.multiple && wanted.size > 1) return { ok: false };
-    if (Array.from(wanted).some((value) => !options.some((option) => option.value === value))) return { ok: false };
-    el.focus();
-    for (const option of options) option.selected = wanted.has(option.value);
-    const view = el.ownerDocument.defaultView || window;
-    const EventCtor = view.Event || Event;
-    el.dispatchEvent(new EventCtor("input", { bubbles: true }));
-    el.dispatchEvent(new EventCtor("change", { bubbles: true }));
-    return { ok: true, values: Array.from(el.selectedOptions).map((option) => option.value) };
+    return {
+      ok: true,
+      multiple: el.multiple === true,
+      options: Array.from(el.options).map((option) => ({
+        value: String(option.value),
+        selected: option.selected === true,
+        disabled: option.disabled === true || !!(option.parentElement && option.parentElement.tagName === "OPTGROUP" && option.parentElement.disabled === true),
+      })),
+    };
   })()`;
 }
 
@@ -3933,10 +4032,14 @@ function isLiveTextResult(value: unknown): value is LiveTextResult {
   return result.ok === true && typeof result.matches === "boolean";
 }
 
-function isSelectResult(value: unknown): value is SelectResult & { values: string[] } {
+function isSelectInfo(value: unknown): value is SelectInfo & { multiple: boolean; options: SelectOptionInfo[] } {
   if (!value || typeof value !== "object") return false;
   const result = value as Record<string, unknown>;
-  return result.ok === true && Array.isArray(result.values) && result.values.every((item) => typeof item === "string");
+  return result.ok === true && typeof result.multiple === "boolean" && Array.isArray(result.options) && result.options.every((option) => {
+    if (!option || typeof option !== "object") return false;
+    const value = option as Record<string, unknown>;
+    return typeof value.value === "string" && typeof value.selected === "boolean" && typeof value.disabled === "boolean";
+  });
 }
 
 function isScrollResult(value: unknown): value is ScrollResult {
