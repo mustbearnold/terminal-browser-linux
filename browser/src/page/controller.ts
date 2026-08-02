@@ -662,6 +662,70 @@ export class BrowserController {
     throw new Error(`file input assignment failed for ${frameId}`);
   }
 
+  async focusElement(frameId: string, source: string): Promise<void> {
+    await this.runDomCommand(frameId, source, "DOM.focus");
+  }
+
+  async scrollElementIntoView(frameId: string, source: string): Promise<void> {
+    await this.runDomCommand(frameId, source, "DOM.scrollIntoViewIfNeeded");
+  }
+
+  private async runDomCommand(frameId: string, source: string, method: string): Promise<void> {
+    await this.attachCdp();
+    await this.cdp("DOM.enable");
+    let objectId: string | undefined;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        let contextId = frameId === "main" ? undefined : this.frameContexts.get(frameId);
+        if (frameId !== "main" && contextId === undefined) {
+          const world = (await this.cdp("Page.createIsolatedWorld", {
+            frameId,
+            worldName: "terminal-browser-agent",
+            grantUniveralAccess: true,
+          })) as { executionContextId?: number };
+          if (typeof world.executionContextId !== "number") throw new Error(`no execution context for frame ${frameId}`);
+          contextId = world.executionContextId;
+          this.frameContexts.set(frameId, contextId);
+        }
+        const evaluated = (await this.cdp("Runtime.evaluate", {
+          expression: source,
+          ...(contextId === undefined ? {} : { contextId }),
+          awaitPromise: true,
+          returnByValue: false,
+          userGesture: true,
+        })) as {
+          result?: { objectId?: string };
+          exceptionDetails?: { text?: string; exception?: { description?: string } };
+        };
+        if (evaluated.exceptionDetails) {
+          throw new Error(evaluated.exceptionDetails.exception?.description ?? evaluated.exceptionDetails.text ?? "frame evaluation failed");
+        }
+        objectId = evaluated.result?.objectId;
+        if (!objectId) throw new Error("DOM target did not return a DOM object");
+        const described = (await this.cdp("DOM.describeNode", { objectId })) as {
+          node?: { backendNodeId?: number };
+        };
+        const backendNodeId = described.node?.backendNodeId;
+        if (typeof backendNodeId !== "number") throw new Error("DOM target has no backend node");
+        await this.cdp(method, { backendNodeId });
+        return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (frameId !== "main" && attempt === 0 && /context|frame/i.test(message)) {
+          this.frameContexts.delete(frameId);
+          continue;
+        }
+        throw error;
+      } finally {
+        if (objectId) {
+          await this.cdp("Runtime.releaseObject", { objectId }).catch(() => {});
+          objectId = undefined;
+        }
+      }
+    }
+    throw new Error(`DOM command failed for ${frameId}`);
+  }
+
   find(text: string) {
     this.findText = text;
     if (!text) {

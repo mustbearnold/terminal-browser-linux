@@ -2153,7 +2153,11 @@ export class ElectronPageBackend implements PageBackend {
     nodeId?: string,
   ): Promise<ElementInspection> {
     throwIfAborted(signal);
-    const source = inspectScript(this.agentKey, ref, frameId, scrollIntoView, nodeId);
+    if (scrollIntoView) {
+      await this.controller.scrollElementIntoView(frameId, elementReferenceScript(this.agentKey, ref, frameId, nodeId));
+      throwIfAborted(signal);
+    }
+    const source = inspectScript(this.agentKey, ref, frameId, nodeId);
     const value = frameId === "main"
       ? await this.controller.runJs(source)
       : await this.controller.runJsInFrame(frameId, source);
@@ -2221,7 +2225,20 @@ export class ElectronPageBackend implements PageBackend {
   ): Promise<ActiveElementInfo> {
     throwIfAborted(signal);
     const frameId = String(target.node.frameId);
-    const source = focusElementScript(this.agentKey, String(target.ref));
+    const source = focusElementScript(this.agentKey, String(target.ref), target.node.nodeId);
+    const initial = frameId === "main"
+      ? await this.controller.runJs(source)
+      : await this.controller.runJsInFrame(frameId, source);
+    throwIfAborted(signal);
+    if (!isActiveElementInfo(initial)) {
+      throw new AgentError("INTERNAL_ERROR", `${actionName} target focus returned an invalid shape`);
+    }
+    if (!initial.ok || initial.enabled === false || initial.visible === false) {
+      return { ...initial, frameId };
+    }
+    this.controller.focusContent();
+    await this.controller.focusElement(frameId, elementReferenceScript(this.agentKey, String(target.ref), frameId, target.node.nodeId));
+    throwIfAborted(signal);
     const value = frameId === "main"
       ? await this.controller.runJs(source)
       : await this.controller.runJsInFrame(frameId, source);
@@ -3269,7 +3286,18 @@ function agentStateSetupScript(key: string, frameId: string): string {
   `;
 }
 
-function inspectScript(key: string, ref: string, frameId: string, scrollIntoView: boolean, nodeId?: string): string {
+function elementReferenceScript(key: string, ref: string, frameId: string, nodeId?: string): string {
+  return `(() => {
+    const state = window[${JSON.stringify(key)}];
+    if (!state || state.frameId !== ${JSON.stringify(frameId)}) return null;
+    const held = ${nodeId === undefined ? "null" : `state && state.nodeElements && state.nodeElements.get(${JSON.stringify(nodeId)})`};
+    const heldElement = held && typeof held.deref === "function" ? held.deref() : null;
+    const el = (state && state.refs && state.refs.get(${JSON.stringify(ref)})) || heldElement;
+    return el && el.isConnected ? el : null;
+  })()`;
+}
+
+function inspectScript(key: string, ref: string, frameId: string, nodeId?: string): string {
   return `(() => {
     const state = window[${JSON.stringify(key)}];
     if (!state || state.frameId !== ${JSON.stringify(frameId)}) return { ok: false };
@@ -3277,7 +3305,6 @@ function inspectScript(key: string, ref: string, frameId: string, scrollIntoView
     const heldElement = held && typeof held.deref === "function" ? held.deref() : null;
     const el = (state && state.refs && state.refs.get(${JSON.stringify(ref)})) || heldElement;
     if (!el || !el.isConnected) return { ok: false };
-    if (${scrollIntoView}) el.scrollIntoView({ block: "center", inline: "center" });
     ${semanticHelpersScript()}
     const rect = el.getBoundingClientRect();
     const x = rect.left + rect.width / 2;
@@ -3674,10 +3701,13 @@ function liveTextScript(key: string, expected: string, frameId: string): string 
   })()`;
 }
 
-function focusElementScript(key: string, ref: string): string {
+function focusElementScript(key: string, ref: string, nodeId?: string): string {
   return `(() => {
     const state = window[${JSON.stringify(key)}];
-    const el = state && state.refs && state.refs.get(${JSON.stringify(ref)});
+    if (!state) return { ok: false };
+    const held = ${nodeId === undefined ? "null" : `state && state.nodeElements && state.nodeElements.get(${JSON.stringify(nodeId)})`};
+    const heldElement = held && typeof held.deref === "function" ? held.deref() : null;
+    const el = (state.refs && state.refs.get(${JSON.stringify(ref)})) || heldElement;
     if (!el || !el.isConnected) return { ok: false };
     ${semanticHelpersScript()}
     const role = roleFor(el);
@@ -3685,7 +3715,6 @@ function focusElementScript(key: string, ref: string): string {
     const enabled = enabledFor(el);
     const visible = visibleFor(el);
     if (!enabled || !visible) return { ok: true, enabled, visible, focused: false, editable: editableFor(el), role, name };
-    el.focus({ preventScroll: true });
     return {
       ok: true,
       enabled,
