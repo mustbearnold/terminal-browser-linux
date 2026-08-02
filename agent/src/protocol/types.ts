@@ -5,6 +5,7 @@ export const MAX_LOCATOR_DEPTH = 8 as const;
 export const MAX_PAGE_QUERY_BATCH = 32 as const;
 export const MAX_UPLOAD_FILES = 64 as const;
 export const MAX_UPLOAD_PATH_LENGTH = 4096 as const;
+export const MAX_CLICK_COUNT = 10 as const;
 
 type Brand<T, Name extends string> = T & { readonly __brand: Name };
 

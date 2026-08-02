@@ -3,6 +3,7 @@ import {
   AGENT_PROTOCOL,
   AGENT_PROTOCOL_VERSION,
   MAX_LOCATOR_DEPTH,
+  MAX_CLICK_COUNT,
   MAX_PAGE_QUERY_BATCH,
   MAX_UPLOAD_FILES,
   MAX_UPLOAD_PATH_LENGTH,
@@ -259,7 +260,12 @@ function validateAction(value: unknown): void {
     case "click":
       validateTarget(action.target, "action.target");
       if (action.button !== undefined) requireOneOf(action.button, "action.button", ["left", "middle", "right"]);
-      if (action.clickCount !== undefined) requirePositiveInteger(action.clickCount, "action.clickCount");
+      if (action.clickCount !== undefined) {
+        requirePositiveInteger(action.clickCount, "action.clickCount");
+        if (Number(action.clickCount) > MAX_CLICK_COUNT) {
+          throw new AgentError("INVALID_MESSAGE", `action.clickCount must be at most ${MAX_CLICK_COUNT}`);
+        }
+      }
       return;
     case "fill":
       validateTarget(action.target, "action.target");

@@ -5,6 +5,7 @@ import { AgentError } from "../protocol/errors";
 import {
   AGENT_PROTOCOL,
   AGENT_PROTOCOL_VERSION,
+  MAX_CLICK_COUNT,
   type AgentRequest,
 } from "../protocol/types";
 import { parseAgentMessage } from "../protocol/validate";
@@ -367,6 +368,7 @@ test("validates nested agent request shapes at the wire boundary", () => {
   invalid({ op: "page.act", pageId: "page-1", action: { type: "reload", bypassCache: "yes" } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "history", direction: "sideways" } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, expect: { timeoutMs: -1 } });
+  invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" }, clickCount: MAX_CLICK_COUNT + 1 } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, expect: { element: { target: { ref: "r1" }, state: { visible: "yes" } } } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, expect: { element: { target: { ref: "r1", locator: { kind: "css", value: "button" } } } } });
   invalid({ op: "page.act", pageId: "page-1", action: { type: "click", target: { ref: "r1" } }, output: { snapshot: "compressed" } });

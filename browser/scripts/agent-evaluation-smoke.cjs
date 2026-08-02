@@ -37,6 +37,7 @@ const html = `<!doctype html>
 <input id="volume" type="range" min="0" max="10" value="4">
 <select id="choices" multiple aria-label="Choices"><option value="a" selected>Alpha</option><option value="b">Beta</option></select>
 <div id="notifications" role="switch" aria-checked="false" aria-label="Notifications">Notifications</div>
+<button id="double" aria-label="Double action">Double action</button>
 <button id="pressed" aria-pressed="true">Pressed action</button>
 <button id="spaced">  Save <span> now </span> </button>
 <button id="continue" aria-label="Continue">Continue</button>
@@ -52,7 +53,10 @@ const html = `<!doctype html>
 <script>
   document.getElementById('launch').addEventListener('click', () => document.getElementById('status').textContent = 'Launched');
   document.getElementById('continue').addEventListener('click', () => document.getElementById('status').textContent = 'Ready');
-  document.getElementById('notifications').addEventListener('click', event => event.currentTarget.setAttribute('aria-checked', String(event.currentTarget.getAttribute('aria-checked') !== 'true')));
+  document.getElementById('notifications').addEventListener('click', event => { event.currentTarget.setAttribute('aria-checked', String(event.currentTarget.getAttribute('aria-checked') !== 'true')); document.getElementById('status').textContent = 'Notifications ' + event.currentTarget.getAttribute('aria-checked') + ' ' + event.isTrusted; });
+  let doubleClickCount = 0;
+  document.getElementById('double').addEventListener('click', event => { doubleClickCount += 1; document.getElementById('status').textContent = 'Double clicks ' + doubleClickCount + ' detail ' + event.detail + ' trusted ' + event.isTrusted; });
+  document.getElementById('double').addEventListener('dblclick', event => { document.getElementById('status').textContent = 'Double dblclick ' + event.detail + ' trusted ' + event.isTrusted; });
   document.getElementById('expand').addEventListener('click', event => event.currentTarget.setAttribute('aria-expanded', String(event.currentTarget.getAttribute('aria-expanded') !== 'true')));
   document.getElementById('remove').addEventListener('click', event => event.currentTarget.remove());
   document.getElementById('drag-source').addEventListener('dragstart', event => event.dataTransfer.setData('text/plain', 'drag payload'));
@@ -599,6 +603,12 @@ function semanticScenarios(pageId) {
           action: { type: "check", target: { locator: { kind: "role", role: "switch", name: "Notifications", exact: true } }, checked: true },
           output: { snapshot: "delta", base: snapshotToken(compactBase) },
         });
+        const trustedCheckStatus = await client.call("page.wait", {
+          pageId,
+          condition: { type: "text", value: "Notifications true true" },
+          timeoutMs: 1_000,
+          output: { snapshot: "none" },
+        });
         const valueWait = await client.call("page.wait", {
           pageId,
           condition: {
@@ -702,6 +712,12 @@ function semanticScenarios(pageId) {
             timeoutMs: 1_000,
           },
         });
+        const doubleClicked = await client.call("page.act", {
+          pageId,
+          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Double action", exact: true } }, clickCount: 2 },
+          expect: { text: "Double dblclick 2 trusted true", timeoutMs: 1_000 },
+          output: { snapshot: "none" },
+        });
         const detachedWait = await client.call("page.wait", {
           pageId,
           condition: {
@@ -747,6 +763,8 @@ function semanticScenarios(pageId) {
           && silentPropertyDelta.updated.some((entry) => entry.node.attributes?.id === "silent-check")
           && silentPropertyDelta.updated.some((entry) => entry.node.name === "Silent beta")
           && checked.verified && checked.proof?.value === "true"
+          && trustedCheckStatus.satisfied
+          && doubleClicked.verified
           && initialFormStateWait.satisfied && valueWait.satisfied && validWait.satisfied
           && checkedWait.satisfied && disabledWait.satisfied && pressedWait.satisfied
           && selectedWait.satisfied && readOnlyWait.satisfied && collapsedWait.satisfied
@@ -790,6 +808,8 @@ function semanticScenarios(pageId) {
             silentPropertyDelta: Number(silentPropertyDelta.revision > silentPropertyBase.revision
               && silentPropertyDelta.mode === "full"),
             compactActionOutputs: Number(filled.snapshot === undefined && checked.snapshotDelta !== undefined && compactProof),
+            trustedCheckEvents: Number(trustedCheckStatus.satisfied),
+            nativeDoubleClick: Number(doubleClicked.verified),
             targetedElementExpectations: Number(expandedAction.verified && removedAction.verified),
           },
         };

@@ -3,6 +3,7 @@ import {
   AGENT_PROTOCOL_VERSION,
   AgentError,
   AgentEventBus,
+  MAX_CLICK_COUNT,
   MAX_TARGET_INDEX,
   SnapshotLocatorResolver,
   abortableDelay,
@@ -108,7 +109,6 @@ type ElementInspection = {
   selected?: boolean;
 };
 type SelectResult = { ok: boolean; values?: string[] };
-type CheckResult = { ok: boolean; checked?: boolean };
 type ScrollResult = { ok: boolean; x?: number; y?: number; changed?: boolean };
 type ActiveElementInfo = {
   ok: boolean;
@@ -1029,7 +1029,15 @@ export class ElectronPageBackend implements PageBackend {
     const target = await this.resolveActionTarget(action.target, token, before, signal);
     const frameId = String(target.node.frameId);
     const inspection = await this.inspect(target.ref, frameId, signal);
-    if (!inspection.ok || !inspection.visible || !inspection.enabled || inspection.occluded) {
+    if (
+      !inspection.ok ||
+      !inspection.visible ||
+      !inspection.enabled ||
+      inspection.occluded ||
+      inspection.inViewport === false ||
+      inspection.x === undefined ||
+      inspection.y === undefined
+    ) {
       throw new AgentError("NOT_INTERACTABLE", "target is not safely clickable", {
         retryable: true,
       });
@@ -1038,28 +1046,7 @@ export class ElectronPageBackend implements PageBackend {
     this.controller.focusContent();
     const button = action.button ?? "left";
     const clickCount = action.clickCount ?? 1;
-    throwIfAborted(signal);
-    await this.controller.cdp("Input.dispatchMouseEvent", {
-      type: "mouseMoved",
-      x: inspection.x,
-      y: inspection.y,
-    });
-    throwIfAborted(signal);
-    await this.controller.cdp("Input.dispatchMouseEvent", {
-      type: "mousePressed",
-      x: inspection.x,
-      y: inspection.y,
-      button,
-      clickCount,
-    });
-    throwIfAborted(signal);
-    await this.controller.cdp("Input.dispatchMouseEvent", {
-      type: "mouseReleased",
-      x: inspection.x,
-      y: inspection.y,
-      button,
-      clickCount,
-    });
+    await this.dispatchNativeClick(inspection.x, inspection.y, button, clickCount, signal);
     this.invalidateFrameSnapshots(frameId);
     const outcome = await this.waitForOutcome(before, expect, signal);
 
@@ -1428,13 +1415,28 @@ export class ElectronPageBackend implements PageBackend {
     }
 
     this.controller.focusContent();
-    throwIfAborted(signal);
-    const source = checkScript(this.agentKey, target.ref, action.checked);
-    const raw = frameId === "main"
-      ? await this.controller.runJs(source)
-      : await this.controller.runJsInFrame(frameId, source);
-    throwIfAborted(signal);
-    if (!isCheckResult(raw) || !raw.ok || raw.checked !== action.checked) {
+    let checked = inspection.checked;
+    let resultInspection = inspection;
+    if (checked !== action.checked) {
+      if (
+        inspection.occluded ||
+        inspection.inViewport === false ||
+        inspection.x === undefined ||
+        inspection.y === undefined
+      ) {
+        throw new AgentError("NOT_INTERACTABLE", "target is not safely checkable", { retryable: true });
+      }
+      await this.dispatchNativeClick(inspection.x, inspection.y, "left", 1, signal);
+      this.invalidateFrameSnapshots(frameId);
+      resultInspection = await this.inspect(target.ref, frameId, signal, false, target.node.nodeId);
+      if (!resultInspection.ok || typeof resultInspection.checked !== "boolean") {
+        throw new AgentError("ACTION_UNVERIFIED", "checked state could not be read after the native click", {
+          retryable: true,
+        });
+      }
+      checked = resultInspection.checked;
+    }
+    if (!resultInspection.ok || typeof checked !== "boolean" || checked !== action.checked) {
       throw new AgentError("ACTION_UNVERIFIED", "checked state did not match the requested state", {
         retryable: true,
       });
@@ -1443,20 +1445,59 @@ export class ElectronPageBackend implements PageBackend {
     const outcome = await this.waitForOutcome(before, expect, signal);
     const after = outcome.identity;
     const effects = this.transitionEffects(before, after);
-    effects.push({ type: "value.changed", data: { checked: raw.checked } });
+    effects.push({ type: "value.changed", data: { checked } });
     const proof: ActionProof = {
       pageId: after.pageId,
       documentId: after.documentId,
       revision: after.revision,
       target: target.ref,
       frameId: target.node.frameId,
-      role: inspection.role,
-      name: inspection.name,
-      value: String(raw.checked),
+      role: resultInspection.role ?? inspection.role,
+      name: resultInspection.name ?? inspection.name,
+      value: String(checked),
       url: after.url,
       title: after.title,
     };
     return { verified: hasExpectation(expect) ? outcome.satisfied : true, effects, proof };
+  }
+
+  private async dispatchNativeClick(
+    x: number,
+    y: number,
+    button: "left" | "middle" | "right",
+    clickCount: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (!Number.isSafeInteger(clickCount) || clickCount < 1 || clickCount > MAX_CLICK_COUNT) {
+      throw new AgentError("INVALID_REQUEST", `clickCount must be between 1 and ${MAX_CLICK_COUNT}`);
+    }
+    const buttons = mouseButtonMask(button);
+    throwIfAborted(signal);
+    await this.controller.cdp("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x,
+      y,
+    });
+    for (let currentClick = 1; currentClick <= clickCount; currentClick += 1) {
+      throwIfAborted(signal);
+      await this.controller.cdp("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x,
+        y,
+        button,
+        clickCount: currentClick,
+        buttons,
+      });
+      throwIfAborted(signal);
+      await this.controller.cdp("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x,
+        y,
+        button,
+        clickCount: currentClick,
+        buttons: 0,
+      });
+    }
   }
 
   private async navigate(
@@ -1978,9 +2019,10 @@ export class ElectronPageBackend implements PageBackend {
     frameId: string,
     signal?: AbortSignal,
     scrollIntoView = true,
+    nodeId?: string,
   ): Promise<ElementInspection> {
     throwIfAborted(signal);
-    const source = inspectScript(this.agentKey, ref, frameId, scrollIntoView);
+    const source = inspectScript(this.agentKey, ref, frameId, scrollIntoView, nodeId);
     const value = frameId === "main"
       ? await this.controller.runJs(source)
       : await this.controller.runJsInFrame(frameId, source);
@@ -3031,11 +3073,13 @@ function agentStateSetupScript(key: string, frameId: string): string {
   `;
 }
 
-function inspectScript(key: string, ref: string, frameId: string, scrollIntoView: boolean): string {
+function inspectScript(key: string, ref: string, frameId: string, scrollIntoView: boolean, nodeId?: string): string {
   return `(() => {
     const state = window[${JSON.stringify(key)}];
     if (!state || state.frameId !== ${JSON.stringify(frameId)}) return { ok: false };
-    const el = state && state.refs && state.refs.get(${JSON.stringify(ref)});
+    const held = ${nodeId === undefined ? "null" : `state && state.nodeElements && state.nodeElements.get(${JSON.stringify(nodeId)})`};
+    const heldElement = held && typeof held.deref === "function" ? held.deref() : null;
+    const el = (state && state.refs && state.refs.get(${JSON.stringify(ref)})) || heldElement;
     if (!el || !el.isConnected) return { ok: false };
     if (${scrollIntoView}) el.scrollIntoView({ block: "center", inline: "center" });
     ${semanticHelpersScript()}
@@ -3515,27 +3559,6 @@ function selectScript(key: string, ref: string, values: readonly string[]): stri
   })()`;
 }
 
-function checkScript(key: string, ref: string, checked: boolean): string {
-  return `(() => {
-    const state = window[${JSON.stringify(key)}];
-    const el = state && state.refs && state.refs.get(${JSON.stringify(ref)});
-    if (!el || !el.isConnected) return { ok: false };
-    ${semanticHelpersScript()}
-    const type = typeFor(el);
-    const role = roleFor(el);
-    const ariaCheckable = ["checkbox", "radio", "switch"].includes(role) && el.hasAttribute("aria-checked");
-    const nativeCheckable = el.tagName === "INPUT" && (type === "checkbox" || type === "radio");
-    if ((!nativeCheckable && !ariaCheckable) || !enabledFor(el) || !visibleFor(el)) {
-      return { ok: false };
-    }
-    const before = checkedFor(el);
-    if (type === "radio" && !${checked} && before) return { ok: false, checked: true };
-    if (before !== ${checked}) el.click();
-    const after = checkedFor(el);
-    return { ok: typeof after === "boolean", checked: after };
-  })()`;
-}
-
 function scrollScript(key: string, ref: string | null, deltaX: number, deltaY: number): string {
   return `(() => {
     const state = window[${JSON.stringify(key)}];
@@ -3757,6 +3780,17 @@ function dragPath(sourceX: number, sourceY: number, targetX: number, targetY: nu
   });
 }
 
+function mouseButtonMask(button: "left" | "middle" | "right"): number {
+  switch (button) {
+    case "left":
+      return 1;
+    case "right":
+      return 2;
+    case "middle":
+      return 4;
+  }
+}
+
 function isInspection(value: unknown): value is ElementInspection {
   return !!value && typeof value === "object" && typeof (value as Record<string, unknown>).ok === "boolean";
 }
@@ -3844,12 +3878,6 @@ function isSelectResult(value: unknown): value is SelectResult & { values: strin
   if (!value || typeof value !== "object") return false;
   const result = value as Record<string, unknown>;
   return result.ok === true && Array.isArray(result.values) && result.values.every((item) => typeof item === "string");
-}
-
-function isCheckResult(value: unknown): value is CheckResult & { checked: boolean } {
-  if (!value || typeof value !== "object") return false;
-  const result = value as Record<string, unknown>;
-  return typeof result.ok === "boolean" && typeof result.checked === "boolean";
 }
 
 function isScrollResult(value: unknown): value is ScrollResult {
