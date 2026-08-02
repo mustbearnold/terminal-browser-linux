@@ -2578,10 +2578,13 @@ function incrementalSnapshotScript(
     const changedNodeIds = new Set();
     for (const entry of entries) {
       for (const change of entry.changes || []) {
-        if (!change || !["input", "change", "focusin", "focusout"].includes(change.kind)) return { ok: false, reason: "broad-change" };
+        if (!change || !["input", "change", "focusin", "focusout", "property.value"].includes(change.kind)) return { ok: false, reason: "broad-change" };
         if (includeGeometry) return { ok: false, reason: "geometry-sensitive" };
         const element = change.element;
         if (!element || !element.isConnected) return { ok: false, reason: "detached-target" };
+        if (change.kind === "property.value" && !["INPUT", "TEXTAREA"].includes(element.tagName)) {
+          return { ok: false, reason: "value-property-change" };
+        }
         if (change.kind === "change" && (element.tagName === "SELECT" || element.tagName === "OPTION")) {
           return { ok: false, reason: "select-change" };
         }
@@ -2791,6 +2794,31 @@ function agentStateSetupScript(key: string, frameId: string): string {
       };
       state.observeRoot = observeRoot;
       observeRoot(document);
+      const installPropertyObserver = (prototype, property, affectsRoleName) => {
+        if (!prototype) return;
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, property);
+        if (!descriptor || typeof descriptor.get !== "function" || typeof descriptor.set !== "function") return;
+        if (descriptor.set.__terminalBrowserAgentObserver) return;
+        const wrappedSetter = function(value) {
+          const before = descriptor.get.call(this);
+          const result = descriptor.set.call(this, value);
+          const after = descriptor.get.call(this);
+          if (before !== after) {
+            if (affectsRoleName) state.elementIndexRoleNameDirty = true;
+            invalidate("property." + property, this && this.nodeType === 1 ? this : null);
+          }
+          return result;
+        };
+        try {
+          Object.defineProperty(wrappedSetter, "__terminalBrowserAgentObserver", { value: true });
+          Object.defineProperty(prototype, property, { ...descriptor, set: wrappedSetter });
+        } catch {}
+      };
+      installPropertyObserver(globalThis.HTMLInputElement?.prototype, "value", true);
+      installPropertyObserver(globalThis.HTMLInputElement?.prototype, "checked", false);
+      installPropertyObserver(globalThis.HTMLTextAreaElement?.prototype, "value", false);
+      installPropertyObserver(globalThis.HTMLSelectElement?.prototype, "value", false);
+      installPropertyObserver(globalThis.HTMLOptionElement?.prototype, "selected", false);
       const attachShadow = Element.prototype.attachShadow;
       if (typeof attachShadow === "function" && !attachShadow.__terminalBrowserAgentObserver) {
         const wrappedAttachShadow = function(...args) {

@@ -23,7 +23,10 @@ const html = `<!doctype html>
 <button id="launch" aria-label="Wrong name" aria-labelledby="launch-name">Visible button</button>
 <label for="agent-name">Name</label><input id="agent-name">
 <label for="full-name">Full name</label><input id="full-name" placeholder="Ignored by label" value="" required>
-<button id="schedule-silent-value" aria-label="Schedule silent value" onclick="setTimeout(() => document.getElementById('full-name').value = 'Silent value', 250)">Schedule silent value</button>
+<button id="schedule-silent-value" aria-label="Schedule silent value" onclick="setTimeout(() => { document.getElementById('full-name').value = 'Silent value'; document.getElementById('silent-button').value = 'New silent action'; document.getElementById('silent-check').checked = true; document.getElementById('silent-choices').options[1].selected = true }, 500)">Schedule silent value</button>
+<input id="silent-button" type="button" value="Old silent action">
+<input id="silent-check" type="checkbox" aria-label="Silent check">
+<select id="silent-choices" multiple aria-label="Silent choices"><option value="silent-a" selected>Silent alpha</option><option value="silent-b">Silent beta</option></select>
 <input id="search" type="search" placeholder="Search records">
 <input id="amount" type="number" value="3">
 <input id="volume" type="range" min="0" max="10" value="4">
@@ -523,21 +526,59 @@ function semanticScenarios(pageId) {
           },
           timeoutMs: 1_000,
         });
-        const scheduleSilentValue = await client.call("page.act", {
-          pageId,
-          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Schedule silent value", exact: true } } },
-          output: { snapshot: "none" },
-        });
         const silentValueSeed = await client.call("page.query", {
           pageId,
           locator: { kind: "role", role: "textbox", name: "Full name", exact: true },
           options: { limit: 1, diagnostics: "summary" },
         });
-        await new Promise((resolve) => setTimeout(resolve, 350));
+        const silentNameSeed = await client.call("page.query", {
+          pageId,
+          locator: { kind: "role", role: "button", name: "Old silent action", exact: true },
+          options: { limit: 1, diagnostics: "summary" },
+        });
+        const silentCheckSeed = await client.call("page.query", {
+          pageId,
+          locator: { kind: "role", role: "checkbox", name: "Silent check", exact: true },
+          options: { limit: 1, diagnostics: "summary" },
+        });
+        const silentOptionSeed = await client.call("page.query", {
+          pageId,
+          locator: { kind: "role", role: "option", name: "Silent beta", exact: true },
+          options: { limit: 1, diagnostics: "summary" },
+        });
+        const silentPropertyBase = await client.call("page.snapshot", {
+          pageId,
+          options: { interactiveOnly: false, includeGeometry: false },
+        });
+        const scheduleSilentValue = await client.call("page.act", {
+          pageId,
+          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Schedule silent value", exact: true } } },
+          output: { snapshot: "none" },
+        });
+        await new Promise((resolve) => setTimeout(resolve, 700));
         const silentValueAfter = await client.call("page.query", {
           pageId,
           locator: { kind: "role", role: "textbox", name: "Full name", exact: true },
           options: { limit: 1, diagnostics: "summary" },
+        });
+        const silentNameAfter = await client.call("page.query", {
+          pageId,
+          locator: { kind: "role", role: "button", name: "New silent action", exact: true },
+          options: { limit: 1, diagnostics: "summary" },
+        });
+        const silentCheckAfter = await client.call("page.query", {
+          pageId,
+          locator: { kind: "role", role: "checkbox", name: "Silent check", exact: true, state: { checked: true } },
+          options: { limit: 1, diagnostics: "summary" },
+        });
+        const silentOptionAfter = await client.call("page.query", {
+          pageId,
+          locator: { kind: "role", role: "option", name: "Silent beta", exact: true, state: { selected: true } },
+          options: { limit: 1, diagnostics: "summary" },
+        });
+        const silentPropertyDelta = await client.call("page.snapshot.delta", {
+          pageId,
+          base: snapshotToken(silentPropertyBase),
         });
         const filled = await client.call("page.act", {
           pageId,
@@ -683,6 +724,19 @@ function semanticScenarios(pageId) {
           && silentValueSeed.nodes[0]?.state?.value === ""
           && silentValueAfter.nodes[0]?.state?.value === "Silent value"
           && silentValueAfter.diagnostics?.queries[0]?.cacheHit === false
+          && silentNameSeed.nodes[0]?.attributes?.id === "silent-button"
+          && silentNameAfter.nodes[0]?.attributes?.id === "silent-button"
+          && silentNameAfter.diagnostics?.queries[0]?.elementsEvaluated === 1
+          && silentCheckSeed.nodes[0]?.state?.checked === false
+          && silentCheckAfter.nodes[0]?.attributes?.id === "silent-check"
+          && silentCheckAfter.nodes[0]?.state?.checked === true
+          && silentOptionSeed.nodes[0]?.state?.selected === false
+          && silentOptionAfter.nodes[0]?.name === "Silent beta"
+          && silentOptionAfter.nodes[0]?.state?.selected === true
+          && silentPropertyDelta.revision > silentPropertyBase.revision
+          && silentPropertyDelta.mode === "full"
+          && silentPropertyDelta.updated.some((entry) => entry.node.attributes?.id === "silent-check")
+          && silentPropertyDelta.updated.some((entry) => entry.node.name === "Silent beta")
           && checked.verified && checked.proof?.value === "true"
           && initialFormStateWait.satisfied && valueWait.satisfied && validWait.satisfied
           && checkedWait.satisfied && disabledWait.satisfied && pressedWait.satisfied
@@ -719,6 +773,13 @@ function semanticScenarios(pageId) {
               && silentValueSeed.nodes[0]?.state?.value === ""
               && silentValueAfter.nodes[0]?.state?.value === "Silent value"
               && silentValueAfter.diagnostics?.queries[0]?.cacheHit === false),
+            silentRoleNameRefresh: Number(silentNameSeed.nodes[0]?.attributes?.id === "silent-button"
+              && silentNameAfter.nodes[0]?.attributes?.id === "silent-button"
+              && silentNameAfter.diagnostics?.queries[0]?.elementsEvaluated === 1),
+            silentCheckedRefresh: Number(silentCheckAfter.nodes[0]?.state?.checked === true),
+            silentSelectedRefresh: Number(silentOptionAfter.nodes[0]?.state?.selected === true),
+            silentPropertyDelta: Number(silentPropertyDelta.revision > silentPropertyBase.revision
+              && silentPropertyDelta.mode === "full"),
             compactActionOutputs: Number(filled.snapshot === undefined && checked.snapshotDelta !== undefined && compactProof),
             targetedElementExpectations: Number(expandedAction.verified && removedAction.verified),
           },
