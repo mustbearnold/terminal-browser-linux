@@ -7,6 +7,8 @@ import type {
   AgentMessage,
   AgentRequest,
   AgentResponse,
+  PageAnnotation,
+  PageAnnotationView,
 } from "../protocol/types";
 import type { EventSubscription } from "./events";
 import {
@@ -19,6 +21,8 @@ import {
   type PageId,
 } from "../protocol/types";
 import type { AgentRuntime } from "./runtime";
+import type { AnnotationStore } from "./annotations";
+import type { PageSession } from "./page";
 import { actionCapability, operationCapability } from "./capabilities";
 import { IdempotencyCache, stableSerialize, type ActionJournal } from "./idempotency";
 import { DefaultPolicy, type PolicyContext, type PolicyEngine } from "./policy";
@@ -191,6 +195,42 @@ export class AgentRequestRouter {
       case "page.read": {
         return await this.page(request.pageId).read(request.target, request.token, signal);
       }
+      case "page.annotation.create": {
+        const page = this.page(request.pageId);
+        const read = await page.read(request.target, request.token, signal);
+        return this.annotationView(this.annotationStore().create({
+          pageId: read.pageId,
+          documentId: read.documentId,
+          revision: read.revision,
+          url: read.url,
+          title: read.title,
+          target: read.target,
+          node: read.node,
+          note: request.note,
+        }), page);
+      }
+      case "page.annotation.list": {
+        const page = this.page(request.pageId);
+        await page.frames(signal);
+        return {
+          pageId: request.pageId,
+          annotations: this.annotationStore().list(request.pageId).map((annotation) => this.annotationView(annotation, page)),
+        };
+      }
+      case "page.annotation.get": {
+        const page = this.page(request.pageId);
+        await page.frames(signal);
+        const annotation = this.annotationStore().get(request.pageId, request.annotationId);
+        if (!annotation) {
+          throw new AgentError("ANNOTATION_NOT_FOUND", `unknown annotation: ${request.annotationId}`);
+        }
+        return this.annotationView(annotation, page);
+      }
+      case "page.annotation.delete": {
+        this.page(request.pageId);
+        const deleted = this.annotationStore().delete(request.pageId, request.annotationId);
+        return { pageId: request.pageId, annotationId: request.annotationId, deleted };
+      }
       case "page.active":
         return await this.page(request.pageId).active(signal);
       case "page.act": {
@@ -299,6 +339,24 @@ export class AgentRequestRouter {
     const page = this.runtime.getPage(pageId);
     if (!page) throw new AgentError("PAGE_NOT_FOUND", `unknown page: ${pageId}`);
     return page;
+  }
+
+  private annotationStore(): AnnotationStore {
+    const store = this.runtime.annotations;
+    if (store) return store;
+    throw new AgentError("CAPABILITY_UNAVAILABLE", "page annotations are unavailable", {
+      details: { capability: "page.annotation.read" },
+    });
+  }
+
+  private annotationView(annotation: PageAnnotation, page: PageSession): PageAnnotationView {
+    const current = page.currentRevision();
+    return {
+      ...annotation,
+      stale: annotation.documentId !== current.documentId || annotation.revision !== current.revision,
+      currentDocumentId: current.documentId,
+      currentRevision: current.revision,
+    };
   }
 
   private async executeAction(

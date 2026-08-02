@@ -68,6 +68,8 @@ export type AgentCapability =
   | "page.wait"
   | "page.observe"
   | "page.dialog"
+  | "page.annotation.read"
+  | "page.annotation.write"
   | "snapshot.delta"
   | "page.capture"
   | "unsafe.eval";
@@ -228,6 +230,31 @@ export interface PageReadResult extends SnapshotToken {
   url: string;
   title: string;
   node: SnapshotNode;
+}
+
+export interface PageAnnotation {
+  annotationId: string;
+  tag: string;
+  pageId: PageId;
+  documentId: DocumentId;
+  revision: number;
+  url: string;
+  title: string;
+  target: Target;
+  node: SnapshotNode;
+  note: string;
+  createdAt: string;
+}
+
+export interface PageAnnotationView extends PageAnnotation {
+  stale: boolean;
+  currentDocumentId: DocumentId;
+  currentRevision: number;
+}
+
+export interface PageAnnotationListResult {
+  pageId: PageId;
+  annotations: readonly PageAnnotationView[];
 }
 
 export interface PageActiveResult extends SnapshotToken {
@@ -524,6 +551,16 @@ export type AgentRequest =
     })
   | (AgentRequestEnvelope & { op: "page.capture"; pageId: PageId; options?: CaptureOptions })
   | (AgentRequestEnvelope & { op: "page.read"; pageId: PageId; target: Target; token?: SnapshotToken })
+  | (AgentRequestEnvelope & {
+      op: "page.annotation.create";
+      pageId: PageId;
+      target: Target;
+      note: string;
+      token?: SnapshotToken;
+    })
+  | (AgentRequestEnvelope & { op: "page.annotation.list"; pageId: PageId })
+  | (AgentRequestEnvelope & { op: "page.annotation.get"; pageId: PageId; annotationId: string })
+  | (AgentRequestEnvelope & { op: "page.annotation.delete"; pageId: PageId; annotationId: string })
   | (AgentRequestEnvelope & { op: "page.active"; pageId: PageId })
   | (AgentRequestEnvelope & {
       op: "page.act";

@@ -8,6 +8,7 @@ import { detectBackend, reportedPixelUnit } from "pixel-terminals";
 import type { Backend } from "pixel-terminals";
 import {
   AgentRequestRouter,
+  DurableAnnotationStore,
   DurableAgentJournal,
   UnixSocketAgentServer,
   attachAgentConnection,
@@ -21,7 +22,7 @@ import { initialBrowserState } from "../page/types";
 import type { BrowserState, BrowserSurfaceLayout } from "../page/types";
 import { zoomDirection } from "../page/zoom";
 import type { ZoomDirection } from "../page/zoom";
-import { INSTANCES_DIR, lastUrl, setLastUrl, settings, store } from "pixel-store";
+import { DATA_DIR, INSTANCES_DIR, lastUrl, setLastUrl, settings, store } from "pixel-store";
 import type { DevtoolsDock, InstanceRow } from "pixel-store";
 
 import { Registry } from "../registry";
@@ -307,9 +308,13 @@ class Session {
     this.registry.setCdpPort(this.ctx.cdpPort);
     const journalPath = this.ctx.env.TERMINAL_BROWSER_AGENT_JOURNAL;
     const agentJournal = journalPath ? new DurableAgentJournal(path.resolve(journalPath)) : undefined;
+    const annotationPath = this.ctx.env.TERMINAL_BROWSER_AGENT_ANNOTATIONS
+      ?? path.join(DATA_DIR, "agent-annotations.json");
+    const annotationStore = new DurableAnnotationStore(path.resolve(annotationPath));
     this.agentRuntime = new BrowserAgentRuntime(this.ctx.key, this.tabs, (url) =>
       this.tabs.create(normalizeUrl(url, this.ctx.cwd), true),
       agentJournal,
+      annotationStore,
     );
     const agentServer = new UnixSocketAgentServer(
       path.join(INSTANCES_DIR, `${this.ctx.key}.agent.sock`),

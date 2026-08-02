@@ -26,6 +26,7 @@ import { linuxSandboxAvailable } from "./sandbox";
 import { lsCommand } from "./ls";
 import { instances } from "./registry";
 import type { InstanceRecord } from "./registry";
+import { workspaceCommand } from "./workspace";
 
 const DIST_ROOT = process.env.TERMINAL_BROWSER_DIST_ROOT ?? null;
 delete process.env.ELECTRON_RUN_AS_NODE;
@@ -383,7 +384,7 @@ function rejectUnknownFlags(args: string[]) {
   }
 }
 
-async function openCommand(args: string[]) {
+export async function openCommand(args: string[]) {
   const { direction, explicit } = takeDirection(args);
   const size = takeSizeFlag(args);
   rejectUnknownFlags(args);
@@ -470,6 +471,10 @@ async function main(): Promise<number> {
     const all = takeBoolFlag(args, "--all");
     const json = takeBoolFlag(args, "--json");
     await lsCommand(detectBackend(), all, json);
+    return 0;
+  }
+  if (command === "workspace") {
+    await workspaceCommand(detectBackend(), args, { openBrowser: openCommand });
     return 0;
   }
   if (command === "setup") return setupCommand();

@@ -104,6 +104,17 @@ test("validates and dispatches structured calls through the typed client", async
   assert.equal(read.node.name, "Name");
   assert.equal(read.revision, 0);
 
+  const annotation = await tools.callTool("terminal_browser_page_annotation_create", {
+    pageId: String(FIXTURE_PAGE_ID),
+    target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } },
+    note: "Attach this control to the coding-agent prompt.",
+  });
+  assert.equal(annotation.tag, "@tb-1");
+  assert.equal(annotation.stale, false);
+  assert.equal((await tools.callTool("terminal_browser_page_annotation_list", {
+    pageId: String(FIXTURE_PAGE_ID),
+  })).annotations.length, 1);
+
   const focused = await tools.callTool("terminal_browser_page_act", {
     pageId: String(FIXTURE_PAGE_ID),
     action: {

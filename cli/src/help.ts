@@ -35,6 +35,31 @@ Options:
   --json              Machine readable, including cdp ports and pane ids
 `,
   },
+  workspace: {
+    summary: "Pair a browser pane with a coding-agent pane and attach DOM notes",
+    usage: "terminal-browser workspace <open|attach|list|panes|close|note>",
+    body: `
+Manages an explicit browser-to-agent pane binding. Notes are stored against a
+semantic DOM target and can be pasted into the attached agent prompt as a
+compact @tb-* tag. Pasting never submits the prompt unless --commit is used.
+
+Commands:
+  open [url] [direction] --agent-pane <pane-id> [--agent <kind>]
+  open [url] [direction] --left [--agent <kind>]
+  attach --browser <key> --pane <pane-id> [--agent <kind>]
+  attach --browser <key> --left [--agent <kind>]
+  list
+  panes [--json]
+  close --browser <key>
+  note --browser <key> --target '<json>' --note <text> [--commit]
+
+Examples:
+  terminal-browser workspace panes
+  terminal-browser workspace open https://example.com right --agent-pane 3
+  terminal-browser workspace attach --browser 90107-1 --pane 3 --agent claude
+  terminal-browser workspace note --browser 90107-1 --target '{"locator":{"kind":"role","role":"button","name":"Save"}}' --note 'save control is unreliable'
+`,
+  },
   setup: {
     summary: "Configure installed terminals so terminal-browser works best",
     usage: "terminal-browser setup",

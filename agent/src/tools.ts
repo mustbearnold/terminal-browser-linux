@@ -57,6 +57,10 @@ export interface AgentToolOperationMap {
   terminal_browser_page_snapshot_delta: "page.snapshot.delta";
   terminal_browser_page_capture: "page.capture";
   terminal_browser_page_read: "page.read";
+  terminal_browser_page_annotation_create: "page.annotation.create";
+  terminal_browser_page_annotation_list: "page.annotation.list";
+  terminal_browser_page_annotation_get: "page.annotation.get";
+  terminal_browser_page_annotation_delete: "page.annotation.delete";
   terminal_browser_page_active: "page.active";
   terminal_browser_page_act: "page.act";
   terminal_browser_page_act_batch: "page.act.batch";
@@ -138,6 +142,21 @@ export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
     target: targetSchema(),
     token: snapshotToken(),
   }, ["pageId", "target"]))),
+  tool("terminal_browser_page_annotation_create", "Store a revision-bound semantic DOM note and return its compact prompt tag.", "page.annotation.create", "page.annotation.write", withLocatorDefinitions(object({
+    pageId: string("Page identifier."),
+    target: targetSchema(),
+    note: string("Human or agent note to attach to the semantic element."),
+    token: snapshotToken(),
+  }, ["pageId", "target", "note"]))),
+  tool("terminal_browser_page_annotation_list", "List semantic DOM notes for a page and mark notes that no longer match its revision.", "page.annotation.list", "page.annotation.read", pageInput()),
+  tool("terminal_browser_page_annotation_get", "Read one semantic DOM note and its current revision status.", "page.annotation.get", "page.annotation.read", object({
+    pageId: string("Page identifier."),
+    annotationId: string("Annotation identifier."),
+  }, ["pageId", "annotationId"])),
+  tool("terminal_browser_page_annotation_delete", "Delete a semantic DOM note from a page.", "page.annotation.delete", "page.annotation.write", object({
+    pageId: string("Page identifier."),
+    annotationId: string("Annotation identifier."),
+  }, ["pageId", "annotationId"])),
   tool("terminal_browser_page_active", "Read the currently focused semantic element and its revision token.", "page.active", "page.active", pageInput()),
   tool("terminal_browser_page_act", "Perform a verified browser action against a semantic target.", "page.act", "page.act", withLocatorDefinitions(object({
     pageId: string("Page identifier."),

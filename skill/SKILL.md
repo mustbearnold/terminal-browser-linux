@@ -23,13 +23,14 @@ $ terminal-browser help
 Usage: terminal-browser [url] [direction]
        terminal-browser <command> [args]
 
-  open    Open the browser in a terminal pane
-  ls      List running browsers and their tabs
-  setup   Configure installed terminals so terminal-browser works best
-  action  Use the open browser through the agent-browser CLI
-  agent   Connect a persistent JSON agent session to the open browser
-  tools   Expose discoverable structured agent tools
-  mcp     Expose browser tools through an MCP stdio server
+  open       Open the browser in a terminal pane
+  ls         List running browsers and their tabs
+  workspace  Pair a browser pane with a coding-agent pane and attach DOM notes
+  setup      Configure installed terminals so terminal-browser works best
+  action     Use the open browser through the agent-browser CLI
+  agent      Connect a persistent JSON agent session to the open browser
+  tools      Expose discoverable structured agent tools
+  mcp        Expose browser tools through an MCP stdio server
 
 terminal-browser <command> --help for one command's options
 ```
@@ -62,6 +63,31 @@ ids it prints are what --tab takes in terminal-browser action.
 Options:
   --all               Every browser, not just this terminal tab
   --json              Machine readable, including cdp ports and pane ids
+```
+
+```
+$ terminal-browser workspace --help
+Usage: terminal-browser workspace <open|attach|list|panes|close|note>
+
+Manages an explicit browser-to-agent pane binding. Notes are stored against a
+semantic DOM target and can be pasted into the attached agent prompt as a
+compact @tb-* tag. Pasting never submits the prompt unless --commit is used.
+
+Commands:
+  open [url] [direction] --agent-pane <pane-id> [--agent <kind>]
+  open [url] [direction] --left [--agent <kind>]
+  attach --browser <key> --pane <pane-id> [--agent <kind>]
+  attach --browser <key> --left [--agent <kind>]
+  list
+  panes [--json]
+  close --browser <key>
+  note --browser <key> --target '<json>' --note <text> [--commit]
+
+Examples:
+  terminal-browser workspace panes
+  terminal-browser workspace open https://example.com right --agent-pane 3
+  terminal-browser workspace attach --browser 90107-1 --pane 3 --agent claude
+  terminal-browser workspace note --browser 90107-1 --target '{"locator":{"kind":"role","role":"button","name":"Save"}}' --note 'save control is unreliable'
 ```
 
 ```
@@ -117,6 +143,8 @@ Connects to the selected browser and exposes the negotiated agent operations
 as named tools. Pass --list to print the tool manifest. Without --list, read
 one JSON tool request per line from stdin. Calls are concurrent: each first
 returns an accepted line, then a correlated result or event line.
+Streaming mode also reports connection lifecycle lines and performs one
+reconnect attempt after transport loss; in-flight calls are not replayed.
 
 Options:
   --browser <key>     A browser key from terminal-browser ls
@@ -125,6 +153,7 @@ Options:
 Request shape:
   {"id":"1","name":"terminal_browser_page_snapshot","arguments":{},"deadlineMs":5000}
   {"id":"2","cancelRequestId":"page.wait-3"}
+  {"kind":"control","id":"r1","op":"connection.reconnect"}
 ```
 
 ```
@@ -133,7 +162,10 @@ Usage: terminal-browser mcp [options]
 
 Connects to the selected browser and exposes the negotiated agent operations
 through the Model Context Protocol over stdin/stdout. It supports the MCP
-initialize lifecycle, tools/list, tools/call, cancellation, and agent events.
+initialize lifecycle, tools/list, tools/call, cancellation, agent events, and
+connection lifecycle notifications.
+Hosts can request another recovery attempt with the namespaced method
+terminal-browser/connection/reconnect.
 
 Options:
   --browser <key>     A browser key from terminal-browser ls

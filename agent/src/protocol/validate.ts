@@ -444,6 +444,10 @@ function validateRequest(message: Record<string, unknown>): void {
     case "page.snapshot.delta":
     case "page.capture":
     case "page.read":
+    case "page.annotation.create":
+    case "page.annotation.list":
+    case "page.annotation.get":
+    case "page.annotation.delete":
     case "page.active":
     case "page.act":
     case "page.act.batch":
@@ -476,6 +480,16 @@ function validateRequest(message: Record<string, unknown>): void {
   if (op === "page.read") {
     validateTarget(message.target, "target");
     if (message.token !== undefined) validateSnapshotToken(message.token, "token");
+  }
+  if (op === "page.annotation.create") {
+    validateTarget(message.target, "target");
+    const note = requireString(message.note, "note");
+    if (note.length > 4096) throw new AgentError("INVALID_MESSAGE", "note must be at most 4096 characters");
+    if (note.includes("\u0000")) throw new AgentError("INVALID_MESSAGE", "note must not contain a null byte");
+    if (message.token !== undefined) validateSnapshotToken(message.token, "token");
+  }
+  if (op === "page.annotation.get" || op === "page.annotation.delete") {
+    requireString(message.annotationId, "annotationId");
   }
   if (op === "page.act") {
     validateAction(message.action);

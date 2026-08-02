@@ -61,6 +61,12 @@ export function operationCapability(request: AgentRequest): AgentCapability | un
       return "page.capture";
     case "page.read":
       return "page.read";
+    case "page.annotation.create":
+    case "page.annotation.delete":
+      return "page.annotation.write";
+    case "page.annotation.list":
+    case "page.annotation.get":
+      return "page.annotation.read";
     case "page.active":
       return "page.active";
     case "page.act":

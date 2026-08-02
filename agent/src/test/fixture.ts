@@ -4,6 +4,7 @@ import { abortableDelay, throwIfAborted } from "../core/cancellation";
 import { matchesSnapshotNodeText, matchesWaitElementState } from "../core/element-state";
 import { SnapshotLocatorResolver } from "../core/locator";
 import { RevisionedPageSession, type PageBackend, type PageSession } from "../core/page";
+import { MemoryAnnotationStore } from "../core/annotations";
 import type { AgentRuntime } from "../core/runtime";
 import { RevisionLedger } from "../core/revisions";
 import { AgentError } from "../protocol/errors";
@@ -43,6 +44,7 @@ const HISTORY_URLS = [FIXTURE_PREVIOUS_URL, FIXTURE_URL] as const;
 export class FixtureRuntime implements AgentRuntime {
   private readonly backend = new FixturePageBackend(FIXTURE_PAGE_ID);
   private readonly session: PageSession = new RevisionedPageSession(this.backend, new RevisionLedger());
+  readonly annotations = new MemoryAnnotationStore(() => "2026-08-03T00:00:00.000Z");
   private closed = false;
 
   capabilities(): readonly AgentCapability[] {
@@ -58,6 +60,8 @@ export class FixtureRuntime implements AgentRuntime {
       "page.query",
       "page.query.batch",
       "page.read",
+      "page.annotation.read",
+      "page.annotation.write",
       "page.active",
       "page.act",
       "page.act.batch",

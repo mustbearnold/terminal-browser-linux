@@ -1,4 +1,5 @@
 export * from "./cancellation";
+export * from "./annotations";
 export * from "./capabilities";
 export * from "./element-state";
 export * from "./events";

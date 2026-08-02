@@ -58,6 +58,15 @@ async function run() {
     pageId = opened.pageId;
     const snapshot = await jsonlCall(jsonl, jsonlMessages, "snapshot", "terminal_browser_page_snapshot", { pageId });
     assert.equal(typeof snapshot.revision, "number");
+    const annotation = await jsonlCall(jsonl, jsonlMessages, "annotation", "terminal_browser_page_annotation_create", {
+      pageId,
+      target: { locator: { kind: "role", role: "main", name: "Protocol host", exact: true } },
+      note: "Host protocol smoke annotation",
+    });
+    assert.equal(annotation.tag, "@tb-1");
+    assert.equal(annotation.stale, false);
+    const annotationList = await jsonlCall(jsonl, jsonlMessages, "annotations", "terminal_browser_page_annotation_list", { pageId });
+    assert.equal(annotationList.annotations.length, 1);
     await jsonlCall(jsonl, jsonlMessages, "close", "terminal_browser_pages_close", { pageId });
     pageId = undefined;
     jsonSupervisor.dispose();
@@ -124,6 +133,7 @@ async function run() {
         explicitReconnect: controlResult.ok,
         pages: pages.pages.length,
         snapshotRevision: snapshot.revision,
+        annotationTag: annotation.tag,
       },
       mcp: {
         protocolVersion: initializeResponse.result.protocolVersion,

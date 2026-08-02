@@ -22,6 +22,8 @@ import {
   type PageCapture,
   type PageEventCursor,
   type PageActiveResult,
+  type PageAnnotationListResult,
+  type PageAnnotationView,
   type PageDialogResult,
   type PageIdentity,
   type PageFrameSnapshot,
@@ -104,6 +106,10 @@ export interface AgentOperationResults {
   "page.snapshot.delta": PageSnapshotDelta;
   "page.capture": PageCapture;
   "page.read": PageReadResult;
+  "page.annotation.create": PageAnnotationView;
+  "page.annotation.list": PageAnnotationListResult;
+  "page.annotation.get": PageAnnotationView;
+  "page.annotation.delete": { pageId: PageId; annotationId: string; deleted: boolean };
   "page.active": PageActiveResult;
   "page.act": ActionResult;
   "page.act.batch": ActionBatchResult;
@@ -288,6 +294,41 @@ export class AgentClient {
       target,
       ...(token === undefined ? {} : { token }),
     }, options);
+  }
+
+  annotationCreate(
+    pageId: PageId,
+    target: Target,
+    note: string,
+    token?: SnapshotToken,
+    options?: AgentCallOptions,
+  ): Promise<PageAnnotationView> {
+    return this.call("page.annotation.create", {
+      pageId,
+      target,
+      note,
+      ...(token === undefined ? {} : { token }),
+    }, options);
+  }
+
+  annotationList(pageId: PageId, options?: AgentCallOptions): Promise<PageAnnotationListResult> {
+    return this.call("page.annotation.list", { pageId }, options);
+  }
+
+  annotationGet(
+    pageId: PageId,
+    annotationId: string,
+    options?: AgentCallOptions,
+  ): Promise<PageAnnotationView> {
+    return this.call("page.annotation.get", { pageId, annotationId }, options);
+  }
+
+  annotationDelete(
+    pageId: PageId,
+    annotationId: string,
+    options?: AgentCallOptions,
+  ): Promise<{ pageId: PageId; annotationId: string; deleted: boolean }> {
+    return this.call("page.annotation.delete", { pageId, annotationId }, options);
   }
 
   actBatch(

@@ -2,12 +2,14 @@ import {
   AgentError,
   RevisionedPageSession,
   RevisionLedger,
+  MemoryAnnotationStore,
   asPageId,
 } from "terminal-browser-agent";
 import type {
   AgentCapability,
   AgentRuntime,
   AgentJournal,
+  AnnotationStore,
   PageBackend,
   PageIdentity,
   PageSession,
@@ -25,13 +27,17 @@ interface Entry {
 export class BrowserAgentRuntime implements AgentRuntime {
   private readonly entries = new Map<PageId, Entry>();
   private readonly pageClosedListeners = new Set<(pageId: PageId) => void>();
+  readonly annotations: AnnotationStore;
 
   constructor(
     private readonly key: string,
     private readonly tabs: TabManager,
     private readonly openTab: (url: string) => Tab,
     private readonly journal?: AgentJournal,
-  ) {}
+    annotationStore?: AnnotationStore,
+  ) {
+    this.annotations = annotationStore ?? new MemoryAnnotationStore();
+  }
 
   capabilities(): readonly AgentCapability[] {
     return [
@@ -68,6 +74,8 @@ export class BrowserAgentRuntime implements AgentRuntime {
       "page.wait",
       "page.observe",
       "page.dialog",
+      "page.annotation.read",
+      "page.annotation.write",
     ];
   }
 
