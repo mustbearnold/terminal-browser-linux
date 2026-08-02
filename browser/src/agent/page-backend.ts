@@ -173,6 +173,7 @@ const AGENT_EVENT_CHANNEL = "terminal-browser.agent";
 const MAIN_FRAME_ID = asFrameId("main");
 const LIVE_LOCATOR_MAX_CANDIDATES = 32;
 const LIVE_LOCATOR_CACHE_LIMIT = 128;
+const LIVE_VOLATILE_VALUE_ROLES = new Set(["textbox", "searchbox", "spinbutton", "slider", "combobox", "listbox", "option"]);
 const WAIT_FALLBACK_MS = 250;
 const WAIT_WAKE_EVENTS = new Set<AgentEvent["event"]>([
   "navigation",
@@ -387,6 +388,7 @@ export class ElectronPageBackend implements PageBackend {
     const frameEpochs = this.liveFrameEpochSnapshot(frames);
     const aggregate = queries.map(() => emptyLiveLocatorResult());
     const cacheHits = queries.map((query) => {
+      if (!liveLocatorQueryCanUseCache(query)) return false;
       const entry = this.liveLocatorCache.get(liveLocatorCacheKey(query));
       return entry !== undefined
         && entry.epoch === cacheEpoch
@@ -505,7 +507,8 @@ export class ElectronPageBackend implements PageBackend {
           expectedFrames[index] === 0 ||
           evaluatedFrames[index] !== expectedFrames[index] ||
           result.invalid === true ||
-          !this.liveLocatorFrameEpochsMatch(queries[index], frames, frameEpochs)
+          !this.liveLocatorFrameEpochsMatch(queries[index], frames, frameEpochs) ||
+          !liveLocatorResultCanUseCache(queries[index], result)
         ) continue;
         const key = liveLocatorCacheKey(queries[index]);
         this.liveLocatorCache.delete(key);
@@ -3395,6 +3398,31 @@ function liveLocatorCacheKey(query: LiveLocatorRequest): string {
     includeHidden: query.includeHidden,
     maxCandidates: query.maxCandidates,
     frameId: query.frameId,
+  });
+}
+
+function liveLocatorQueryCanUseCache(query: LiveLocatorRequest): boolean {
+  const state = query.locator.state;
+  if (state?.value !== undefined || state?.checked !== undefined || state?.selected !== undefined) return false;
+  return query.locator.within === undefined || liveLocatorWithinCanUseCache(query.locator.within);
+}
+
+function liveLocatorWithinCanUseCache(locator: Locator): boolean {
+  const state = locator.state;
+  if (state?.value !== undefined || state?.checked !== undefined || state?.selected !== undefined) return false;
+  return locator.within === undefined || liveLocatorWithinCanUseCache(locator.within);
+}
+
+function liveLocatorResultCanUseCache(query: LiveLocatorRequest, result: LiveLocatorResult): boolean {
+  if (!liveLocatorQueryCanUseCache(query)) return false;
+  if ((result.candidateCount ?? 0) + (result.hiddenCandidateCount ?? 0) === 0) return false;
+  return [...result.candidates ?? [], ...result.hiddenCandidates ?? []].every((node) => {
+    const state = node.state;
+    if (state?.checked !== undefined || state?.selected !== undefined) return false;
+    if (state?.value === undefined) return true;
+    const type = node.attributes?.type?.toLowerCase();
+    return !LIVE_VOLATILE_VALUE_ROLES.has(node.role)
+      && !(node.role === "button" && ["button", "image", "reset", "submit"].includes(type ?? ""));
   });
 }
 

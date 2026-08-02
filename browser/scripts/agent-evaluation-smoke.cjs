@@ -23,6 +23,7 @@ const html = `<!doctype html>
 <button id="launch" aria-label="Wrong name" aria-labelledby="launch-name">Visible button</button>
 <label for="agent-name">Name</label><input id="agent-name">
 <label for="full-name">Full name</label><input id="full-name" placeholder="Ignored by label" value="" required>
+<button id="schedule-silent-value" aria-label="Schedule silent value" onclick="setTimeout(() => document.getElementById('full-name').value = 'Silent value', 250)">Schedule silent value</button>
 <input id="search" type="search" placeholder="Search records">
 <input id="amount" type="number" value="3">
 <input id="volume" type="range" min="0" max="10" value="4">
@@ -522,6 +523,22 @@ function semanticScenarios(pageId) {
           },
           timeoutMs: 1_000,
         });
+        const scheduleSilentValue = await client.call("page.act", {
+          pageId,
+          action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Schedule silent value", exact: true } } },
+          output: { snapshot: "none" },
+        });
+        const silentValueSeed = await client.call("page.query", {
+          pageId,
+          locator: { kind: "role", role: "textbox", name: "Full name", exact: true },
+          options: { limit: 1, diagnostics: "summary" },
+        });
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        const silentValueAfter = await client.call("page.query", {
+          pageId,
+          locator: { kind: "role", role: "textbox", name: "Full name", exact: true },
+          options: { limit: 1, diagnostics: "summary" },
+        });
         const filled = await client.call("page.act", {
           pageId,
           action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Full name", exact: true } }, value: "Ada" },
@@ -662,6 +679,10 @@ function semanticScenarios(pageId) {
           && typeof filled.proof?.frameId === "string";
         const passed = filled.verified && filled.proof?.name === "Full name" && filled.proof.value === "Ada"
           && compactProof
+          && scheduleSilentValue.verified
+          && silentValueSeed.nodes[0]?.state?.value === ""
+          && silentValueAfter.nodes[0]?.state?.value === "Silent value"
+          && silentValueAfter.diagnostics?.queries[0]?.cacheHit === false
           && checked.verified && checked.proof?.value === "true"
           && initialFormStateWait.satisfied && valueWait.satisfied && validWait.satisfied
           && checkedWait.satisfied && disabledWait.satisfied && pressedWait.satisfied
@@ -694,6 +715,10 @@ function semanticScenarios(pageId) {
             ].filter((wait) => wait.satisfied).length,
             attachedWaits: Number(initialFormStateWait.satisfied) + Number(detachedWait.satisfied),
             targetedTextWaits: Number(wrongTargetedTextWait.satisfied === false),
+            silentFormStateRefresh: Number(scheduleSilentValue.verified
+              && silentValueSeed.nodes[0]?.state?.value === ""
+              && silentValueAfter.nodes[0]?.state?.value === "Silent value"
+              && silentValueAfter.diagnostics?.queries[0]?.cacheHit === false),
             compactActionOutputs: Number(filled.snapshot === undefined && checked.snapshotDelta !== undefined && compactProof),
             targetedElementExpectations: Number(expandedAction.verified && removedAction.verified),
           },

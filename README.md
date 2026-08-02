@@ -130,6 +130,9 @@ full-index fallback.
 Role locators also narrow through mutation-aware role buckets before applying
 accessible-name and state matching. Exact role names use a second mutation-aware
 bucket, so large same-role populations do not require repeated name evaluation.
+Results carrying volatile form state are deliberately re-evaluated instead of
+being reused from the host cache, covering silent `value`, `checked`, and
+`selected` property changes that do not produce DOM mutations.
 
 Set `expect.quietMs` when a verified post-action state must remain unchanged for
 that revision interval before the action is reported complete.
