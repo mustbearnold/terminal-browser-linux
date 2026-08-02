@@ -21,6 +21,12 @@ function listRequest(): AgentRequest {
   };
 }
 
+function isFrameTooLarge(error: unknown): boolean {
+  if (!(error instanceof AgentError) || error.code !== "INVALID_MESSAGE") return false;
+  const details = error.details;
+  return typeof details === "object" && details !== null && !Array.isArray(details) && details.maxFrameBytes === 4;
+}
+
 test("validates and round-trips a line-delimited request", () => {
   const message = listRequest();
   const encoded = encodeAgentMessage(message);
@@ -29,6 +35,29 @@ test("validates and round-trips a line-delimited request", () => {
   assert.deepEqual(decoder.push(encoded.slice(0, 12)), []);
   assert.deepEqual(decoder.push(encoded.slice(12)), [message]);
   decoder.flush();
+});
+
+test("preserves UTF-8 when a transport chunk splits a character", () => {
+  const message = { ...listRequest(), op: "hello" as const, clientId: "agent-名" };
+  const encoded = Buffer.from(encodeAgentMessage(message));
+  const marker = Buffer.from("名");
+  const split = encoded.indexOf(marker) + 1;
+  const decoder = new LineJsonDecoder();
+
+  assert.deepEqual(decoder.push(encoded.subarray(0, split)), []);
+  assert.deepEqual(decoder.push(encoded.subarray(split)), [message]);
+  decoder.flush();
+});
+
+test("bounds incomplete and complete transport frames", () => {
+  assert.throws(
+    () => new LineJsonDecoder(4).push("12345"),
+    isFrameTooLarge,
+  );
+  assert.throws(
+    () => new LineJsonDecoder(4).push("12345\n"),
+    isFrameTooLarge,
+  );
 });
 
 test("rejects an unsupported protocol version", () => {

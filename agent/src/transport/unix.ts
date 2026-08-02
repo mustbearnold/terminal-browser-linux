@@ -25,6 +25,7 @@ export class UnixSocketTransport implements AgentTransport {
   private readonly errorListeners = new Set<(error: unknown) => void>();
   private readonly closeListeners = new Set<() => void>();
   private closed = false;
+  private decoderFailed = false;
 
   constructor(private readonly socket: net.Socket) {
     socket.on("data", (chunk) => {
@@ -33,12 +34,21 @@ export class UnixSocketTransport implements AgentTransport {
           for (const listener of this.messageListeners) listener(message);
         }
       } catch (error) {
+        this.decoderFailed = true;
         this.reportError(error);
         socket.destroy();
       }
     });
     socket.on("error", (error) => this.reportError(error));
     socket.on("close", () => {
+      if (!this.decoderFailed) {
+        try {
+          this.decoder.flush();
+        } catch (error) {
+          this.decoderFailed = true;
+          this.reportError(error);
+        }
+      }
       this.closed = true;
       for (const listener of this.closeListeners) listener();
     });
