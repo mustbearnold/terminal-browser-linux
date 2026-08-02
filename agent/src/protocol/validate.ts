@@ -570,7 +570,19 @@ export function parseAgentMessage(value: unknown): AgentMessage {
     if (typeof message.ok !== "boolean") {
       throw new AgentError("INVALID_MESSAGE", "response.ok must be a boolean");
     }
-    if (!message.ok) {
+    const hasResult = Object.prototype.hasOwnProperty.call(message, "result");
+    const hasError = Object.prototype.hasOwnProperty.call(message, "error");
+    if (message.ok) {
+      if (!hasResult || message.result === undefined) {
+        throw new AgentError("INVALID_MESSAGE", "successful response must include a result");
+      }
+      if (hasError) {
+        throw new AgentError("INVALID_MESSAGE", "successful response must not include an error");
+      }
+    } else {
+      if (hasResult) {
+        throw new AgentError("INVALID_MESSAGE", "failed response must not include a result");
+      }
       const error = requireObject(message.error, "response.error");
       requireString(error.code, "response.error.code");
       requireString(error.message, "response.error.message");

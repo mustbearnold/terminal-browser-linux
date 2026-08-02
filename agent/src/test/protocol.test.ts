@@ -478,6 +478,38 @@ test("validates nested agent request shapes at the wire boundary", () => {
 });
 
 test("validates response errors and event sequences", () => {
+  const success = parseAgentMessage({
+    kind: "response",
+    protocol: AGENT_PROTOCOL,
+    version: AGENT_PROTOCOL_VERSION,
+    requestId: "request-1",
+    ok: true,
+    result: { pages: [] },
+  });
+  assert.equal(success.kind, "response");
+
+  assert.throws(
+    () => parseAgentMessage({
+      kind: "response",
+      protocol: AGENT_PROTOCOL,
+      version: AGENT_PROTOCOL_VERSION,
+      requestId: "request-1",
+      ok: true,
+    }),
+    (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
+  );
+  assert.throws(
+    () => parseAgentMessage({
+      kind: "response",
+      protocol: AGENT_PROTOCOL,
+      version: AGENT_PROTOCOL_VERSION,
+      requestId: "request-1",
+      ok: true,
+      result: { pages: [] },
+      error: { code: "INTERNAL_ERROR", message: "ignored" },
+    }),
+    (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
+  );
   assert.throws(
     () => parseAgentMessage({
       kind: "response",
@@ -485,6 +517,18 @@ test("validates response errors and event sequences", () => {
       version: AGENT_PROTOCOL_VERSION,
       requestId: "request-1",
       ok: false,
+    }),
+    (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
+  );
+  assert.throws(
+    () => parseAgentMessage({
+      kind: "response",
+      protocol: AGENT_PROTOCOL,
+      version: AGENT_PROTOCOL_VERSION,
+      requestId: "request-1",
+      ok: false,
+      result: { pages: [] },
+      error: { code: "INTERNAL_ERROR", message: "failed" },
     }),
     (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
   );
