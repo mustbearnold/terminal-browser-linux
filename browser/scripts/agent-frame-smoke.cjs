@@ -56,6 +56,13 @@ async function run() {
       assert.equal(focused.verified, true);
       assert.equal(focused.proof?.focused, true);
 
+      const active = await client.active(pageId);
+      assert.equal(active.active, true);
+      assert.equal(active.node?.name, "Frame name");
+      assert.equal(active.node?.frameId, frameButton.frameId);
+      assert.equal(active.node?.state?.focused, true);
+      assert.equal(active.target?.ref, active.node?.ref);
+
       const filled = await client.call("page.act", {
         pageId,
         action: {
@@ -113,6 +120,7 @@ async function run() {
         box: frameButton.box,
         typedValue: typed.proof?.value,
         focusVerified: focused.verified && focused.proof?.focused === true,
+        activeElementVerified: active.active && active.node?.name === "Frame name" && active.node?.frameId === frameButton.frameId,
         dynamicNode: dynamicButton.name,
         incrementalDeltaMode: typedDelta.mode,
         fallbackDeltaMode: delta.mode,

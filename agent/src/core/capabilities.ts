@@ -61,6 +61,8 @@ export function operationCapability(request: AgentRequest): AgentCapability | un
       return "page.capture";
     case "page.read":
       return "page.read";
+    case "page.active":
+      return "page.active";
     case "page.act":
       return "page.act";
     case "page.act.batch":

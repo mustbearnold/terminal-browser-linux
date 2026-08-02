@@ -20,13 +20,14 @@ async function run() {
     const socket = await waitForSocket(existing, 15_000, output);
     client = await AgentClient.connect(socket, {
       clientId: "cross-origin-smoke",
-      capabilities: ["page.act.hover", "page.act.focus", "unsafe.eval"],
+      capabilities: ["page.act.hover", "page.act.focus", "page.active", "unsafe.eval"],
     });
     const hello = await client.hello();
     assert.equal(hello.capabilities.includes("page.act.hover"), true);
     assert.equal(hello.capabilities.includes("page.act.focus"), true);
+    assert.equal(hello.capabilities.includes("page.active"), true);
     assert.equal(hello.capabilities.includes("page.act.scroll"), true);
-    assert.deepEqual(hello.accepted, ["page.act.hover", "page.act.focus"]);
+    assert.deepEqual(hello.accepted, ["page.act.hover", "page.act.focus", "page.active"]);
     assert.deepEqual(hello.unsupported, ["unsafe.eval"]);
     const opened = await client.call("pages.open", { url: `http://127.0.0.1:${parentServer.port}/index.html` });
     pageId = opened.pageId;
@@ -252,6 +253,13 @@ async function run() {
       assert.equal(focused.verified, true);
       assert.equal(focused.proof?.focused, true);
 
+      const active = await client.active(pageId);
+      assert.equal(active.active, true);
+      assert.equal(active.node?.name, "Frame name");
+      assert.equal(active.node?.frameId, activeFrameId);
+      assert.equal(active.node?.state?.focused, true);
+      assert.equal(active.target?.ref, active.node?.ref);
+
       const hovered = await client.call("page.act", {
         pageId,
         action: { type: "hover", target: { locator: { kind: "css", value: 'button[aria-label="Frame action"]' } } },
@@ -416,6 +424,7 @@ async function run() {
         scrollVerified: scrolled.verified,
         targetedPressVerified: pressed.verified && pressed.proof?.target !== undefined,
         focusVerified: focused.verified && focused.proof?.focused === true,
+        activeElementVerified: active.active && active.node?.name === "Frame name" && active.node?.frameId === activeFrameId,
         frameScopedQueryVerified: queryBatch.queries[0].matchCount === 3
           && queryBatch.queries[0].nodes.every((node) => node.frameId === frameButton.frameId),
         liveAncestryVerified: Boolean(queryBatch.queries[0].nodes[0]?.parent)

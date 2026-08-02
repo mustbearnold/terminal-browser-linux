@@ -35,6 +35,7 @@ export type AgentCapability =
   | "page.query"
   | "page.query.batch"
   | "page.read"
+  | "page.active"
   | "page.act"
   | "page.act.batch"
   | "page.act.status"
@@ -215,6 +216,15 @@ export interface PageReadResult extends SnapshotToken {
   url: string;
   title: string;
   node: SnapshotNode;
+}
+
+export interface PageActiveResult extends SnapshotToken {
+  active: boolean;
+  frameId: FrameId | null;
+  target: { ref: SnapshotRef } | null;
+  node: SnapshotNode | null;
+  url: string;
+  title: string;
 }
 
 export interface SnapshotWindowCursor extends SnapshotToken {
@@ -494,6 +504,7 @@ export type AgentRequest =
     })
   | (AgentRequestEnvelope & { op: "page.capture"; pageId: PageId; options?: CaptureOptions })
   | (AgentRequestEnvelope & { op: "page.read"; pageId: PageId; target: Target; token?: SnapshotToken })
+  | (AgentRequestEnvelope & { op: "page.active"; pageId: PageId })
   | (AgentRequestEnvelope & {
       op: "page.act";
       pageId: PageId;

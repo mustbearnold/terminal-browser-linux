@@ -6,4 +6,6 @@ Keep the wire protocol independent from CDP, Electron, terminal rendering, and a
 
 Use `page.act` with `action.type` `focus` when an agent needs to establish focus as an explicit, verified state transition; the same action must work through fixture and live adapters across frames and shadow roots.
 
+Use `page.active` when an agent needs to recover the currently focused semantic control; its result is revision-scoped and may be used as the next action target.
+
 Run `pnpm --filter terminal-browser-agent check` before handing off changes. Build the workspace packages before running a repository-wide typecheck when a package consumes generated declarations.

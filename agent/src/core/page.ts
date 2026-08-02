@@ -20,6 +20,7 @@ import type {
   DocumentId,
   PageIdentity,
   PageCapture,
+  PageActiveResult,
   PageDialogResult,
   PageFrameSnapshot,
   PageReadResult,
@@ -81,6 +82,7 @@ export interface PageBackend {
     queries: readonly PageQuerySpec[],
     signal?: AbortSignal,
   ): Promise<Omit<PageQueryBatchResult, "snapshotId">>;
+  active?(signal?: AbortSignal): Promise<Omit<PageActiveResult, "snapshotId">>;
   capture?(options?: CaptureOptions, signal?: AbortSignal): Promise<PageCapture>;
   act(
     action: AgentAction,
@@ -124,6 +126,7 @@ export interface PageSession {
     signal?: AbortSignal,
   ): Promise<PageQueryBatchResult>;
   read(target: Target, token?: SnapshotToken, signal?: AbortSignal): Promise<PageReadResult>;
+  active(signal?: AbortSignal): Promise<PageActiveResult>;
   snapshot(options?: SnapshotOptions, signal?: AbortSignal): Promise<PageSnapshot>;
   snapshotWindow?(
     options?: SnapshotWindowOptions,
@@ -317,6 +320,28 @@ export class RevisionedPageSession implements PageSession {
       url: after.url,
       title: after.title,
       node: resolved.node,
+    };
+  }
+
+  async active(signal?: AbortSignal): Promise<PageActiveResult> {
+    throwIfAborted(signal);
+    if (!this.backend.active) {
+      throw new AgentError("CAPABILITY_UNAVAILABLE", "active element reads are unavailable", {
+        details: { capability: "page.active" },
+      });
+    }
+    const captured = await this.backend.active(signal);
+    throwIfAborted(signal);
+    const state = this.ledger.synchronize(captured.pageId, captured.documentId, captured.revision);
+    if (captured.pageId !== this.pageId) {
+      throw new AgentError("INTERNAL_ERROR", "active element backend returned a different page");
+    }
+    return {
+      ...captured,
+      pageId: this.pageId,
+      documentId: state.documentId,
+      revision: state.revision,
+      snapshotId: asSnapshotId(`${this.pageId}:active:${++this.snapshotSequence}`),
     };
   }
 

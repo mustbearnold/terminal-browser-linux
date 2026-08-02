@@ -57,6 +57,7 @@ export class FixtureRuntime implements AgentRuntime {
       "page.query",
       "page.query.batch",
       "page.read",
+      "page.active",
       "page.act",
       "page.act.batch",
       "page.act.status",
@@ -247,6 +248,24 @@ class FixturePageBackend implements PageBackend {
       totalNodes: snapshot.nodes.length,
       nodes,
       done: snapshot.truncated || offset + nodes.length >= snapshot.nodes.length,
+    };
+  }
+
+  async active(signal?: AbortSignal) {
+    const snapshot = await this.snapshot({ interactiveOnly: false }, signal);
+    const node = this.focusedRef === null
+      ? null
+      : snapshot.nodes.find((candidate) => String(candidate.ref) === this.focusedRef) ?? null;
+    return {
+      pageId: snapshot.pageId,
+      documentId: snapshot.documentId,
+      revision: snapshot.revision,
+      active: node !== null,
+      frameId: node?.frameId ?? null,
+      target: node === null ? null : { ref: node.ref },
+      node,
+      url: snapshot.url,
+      title: snapshot.title,
     };
   }
 

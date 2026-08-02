@@ -434,6 +434,7 @@ function validateRequest(message: Record<string, unknown>): void {
     case "page.snapshot.delta":
     case "page.capture":
     case "page.read":
+    case "page.active":
     case "page.act":
     case "page.act.batch":
     case "page.act.status":

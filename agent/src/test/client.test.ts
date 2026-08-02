@@ -40,6 +40,9 @@ test("correlates typed calls and delivers observed events", async () => {
       action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } } },
     });
     assert.equal(action.verified, true);
+    const active = await client.active(FIXTURE_PAGE_ID);
+    assert.equal(active.active, false);
+    assert.equal(active.node, null);
     assert.deepEqual(events, ["dom.changed"]);
   } finally {
     unsubscribe();

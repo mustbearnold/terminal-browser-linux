@@ -100,6 +100,13 @@ test("validates and dispatches structured calls through the typed client", async
   assert.equal(focused.verified, true);
   assert.equal(focused.proof?.focused, true);
 
+  const active = await tools.callTool("terminal_browser_page_active", {
+    pageId: String(FIXTURE_PAGE_ID),
+  });
+  assert.equal(active.active, true);
+  assert.equal(active.node?.name, "Name");
+  assert.deepEqual(active.target, { ref: active.node?.ref });
+
   const batch = await tools.callTool("terminal_browser_page_act_batch", {
     pageId: String(FIXTURE_PAGE_ID),
     steps: [{

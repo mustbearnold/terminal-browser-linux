@@ -30,6 +30,7 @@ import type {
   EventSubscriptionOptions,
   EventHistoryStore,
   PageBackend,
+  PageActiveResult,
   PageFrame,
   PageFrameSnapshot,
   PageCapture,
@@ -114,6 +115,8 @@ type ScrollResult = { ok: boolean; x?: number; y?: number; changed?: boolean };
 type ActiveElementInfo = {
   ok: boolean;
   frameId?: string;
+  ref?: string;
+  nodeId?: string;
   enabled?: boolean;
   visible?: boolean;
   editable?: boolean;
@@ -209,7 +212,7 @@ export class ElectronPageBackend implements PageBackend {
     readonly pageId: PageId,
     private readonly controller: BrowserController,
     private readonly state: () => BrowserState,
-    private readonly active: () => boolean,
+    private readonly isPageActive: () => boolean,
     eventHistory?: EventHistoryStore,
   ) {
     this.events = new AgentEventBus(256, eventHistory);
@@ -233,7 +236,7 @@ export class ElectronPageBackend implements PageBackend {
       revision,
       url: page.url,
       title: page.title,
-      active: this.active(),
+      active: this.isPageActive(),
       loading: page.loading,
     };
   }
@@ -978,6 +981,38 @@ export class ElectronPageBackend implements PageBackend {
       revision: after.revision,
       format,
       data,
+    };
+  }
+
+  async active(signal?: AbortSignal): Promise<Omit<PageActiveResult, "snapshotId">> {
+    throwIfAborted(signal);
+    const before = await this.identity(signal);
+    const active = await this.activeElement(signal);
+    let node: SnapshotNode | null = null;
+    if (active.ok && active.ref !== undefined) {
+      const resolved = await this.liveRefNode(active.ref, signal);
+      if (resolved && (active.frameId === undefined || String(resolved.node.frameId) === active.frameId)) {
+        node = resolved.node;
+      }
+    }
+    throwIfAborted(signal);
+    const after = await this.identity(signal);
+    if (before.documentId !== after.documentId || before.revision !== after.revision) {
+      throw new AgentError("STALE_SNAPSHOT", "page changed while the active element was being read", { retryable: true });
+    }
+    if (active.ok && node === null) {
+      throw new AgentError("STALE_SNAPSHOT", "active element detached while it was being read", { retryable: true });
+    }
+    return {
+      pageId: this.pageId,
+      documentId: after.documentId,
+      revision: after.revision,
+      active: node !== null,
+      frameId: node?.frameId ?? null,
+      target: node === null ? null : { ref: node.ref },
+      node,
+      url: after.url,
+      title: after.title,
     };
   }
 
@@ -2246,7 +2281,7 @@ export class ElectronPageBackend implements PageBackend {
     for (const frame of frames) {
       throwIfAborted(signal);
       const frameId = frame.parentId === null ? "main" : frame.id;
-      const source = activeElementScript();
+      const source = activeElementScript(this.agentKey, frameId);
       const value = frameId === "main"
         ? await this.controller.runJs(source)
         : await this.controller.runJsInFrame(frame.id, source);
@@ -3832,14 +3867,29 @@ function scrollStateScript(
   })()`;
 }
 
-function activeElementScript(): string {
+function activeElementScript(key: string, frameId: string): string {
   return `(() => {
+    ${agentStateSetupScript(key, frameId)}
     let el = document.activeElement;
     while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
     if (!el || el === document.body || el === document.documentElement) return { ok: false };
     ${semanticHelpersScript()}
+    let ref = state.elementRefs.get(el);
+    if (!ref) {
+      ref = state.frameId + ":r" + (++state.nextRef);
+      state.elementRefs.set(el, ref);
+    }
+    let nodeId = state.elementNodeIds.get(el);
+    if (!nodeId) {
+      nodeId = state.frameId + ":" + state.documentId + ":n" + (++state.nextNodeId);
+      state.elementNodeIds.set(el, nodeId);
+    }
+    state.nodeElements.set(nodeId, typeof WeakRef === "function" ? new WeakRef(el) : { deref: () => el });
+    state.refs.set(ref, el);
     return {
       ok: true,
+      ref,
+      nodeId,
       focused: true,
       enabled: enabledFor(el),
       visible: visibleFor(el),

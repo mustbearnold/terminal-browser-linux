@@ -18,6 +18,7 @@ import {
   type CaptureOptions,
   type DialogAction,
   type PageCapture,
+  type PageActiveResult,
   type PageDialogResult,
   type PageIdentity,
   type PageFrameSnapshot,
@@ -85,6 +86,7 @@ export interface AgentOperationResults {
   "page.snapshot.delta": PageSnapshotDelta;
   "page.capture": PageCapture;
   "page.read": PageReadResult;
+  "page.active": PageActiveResult;
   "page.act": ActionResult;
   "page.act.batch": ActionBatchResult;
   "page.act.status": ActionStatusResult;
@@ -234,6 +236,10 @@ export class AgentClient {
 
   frames(pageId: PageId, options?: AgentCallOptions): Promise<PageFrameSnapshot> {
     return this.call("page.frames", { pageId }, options);
+  }
+
+  active(pageId: PageId, options?: AgentCallOptions): Promise<PageActiveResult> {
+    return this.call("page.active", { pageId }, options);
   }
 
   capture(pageId: PageId, captureOptions?: CaptureOptions, options?: AgentCallOptions): Promise<PageCapture> {

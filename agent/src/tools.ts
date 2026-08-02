@@ -55,6 +55,7 @@ export interface AgentToolOperationMap {
   terminal_browser_page_snapshot_delta: "page.snapshot.delta";
   terminal_browser_page_capture: "page.capture";
   terminal_browser_page_read: "page.read";
+  terminal_browser_page_active: "page.active";
   terminal_browser_page_act: "page.act";
   terminal_browser_page_act_batch: "page.act.batch";
   terminal_browser_page_act_status: "page.act.status";
@@ -133,6 +134,7 @@ export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
     target: targetSchema(),
     token: snapshotToken(),
   }, ["pageId", "target"]))),
+  tool("terminal_browser_page_active", "Read the currently focused semantic element and its revision token.", "page.active", "page.active", pageInput()),
   tool("terminal_browser_page_act", "Perform a verified browser action against a semantic target.", "page.act", "page.act", withLocatorDefinitions(object({
     pageId: string("Page identifier."),
     action: actionSchema(),

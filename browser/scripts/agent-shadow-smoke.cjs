@@ -24,6 +24,7 @@ async function run() {
     });
     assert.ok(hello.capabilities.includes("page.capture"), "page capture capability was not advertised");
     assert.ok(hello.capabilities.includes("snapshot.delta"), "snapshot delta capability was not advertised");
+    assert.ok(hello.capabilities.includes("page.active"), "active element capability was not advertised");
     const captured = process.env.TERMINAL_BROWSER_SMOKE_SKIP_CAPTURE === "1"
       ? null
       : await client.capture(pageId, { format: "png" });
@@ -60,6 +61,13 @@ async function run() {
       });
       assert.equal(focused.verified, true);
       assert.equal(focused.proof?.focused, true);
+
+      const active = await client.active(pageId);
+      assert.equal(active.active, true);
+      assert.equal(active.node?.name, "Shadow name");
+      assert.equal(active.node?.frameId, "main");
+      assert.equal(active.node?.state?.focused, true);
+      assert.equal(active.target?.ref, active.node?.ref);
 
       const filled = await client.call("page.act", {
         pageId,
@@ -181,6 +189,7 @@ async function run() {
         shadowNodes: initial.nodes.length,
         typedValue: typed.proof?.value,
         focusVerified: focused.verified && focused.proof?.focused === true,
+        activeElementVerified: active.active && active.node?.name === "Shadow name" && active.node?.state?.focused === true,
         targetedPress: Number(pressed.verified && pressed.proof?.target !== undefined),
         dynamicNode: dynamicButton.name,
         captureBytes: captured?.data.length ?? 0,

@@ -106,6 +106,11 @@ Locators can also include a recursive `within` locator to scope a match to an
 ancestor, such as a button within a named row or dialog. Scope depth is bounded
 so malformed agent requests cannot turn DOM matching into unbounded work.
 
+Use `page.active` to read the currently focused semantic control without guessing
+its locator. The result carries a revision-bound ref and node, including the frame
+or shadow-root context; when focus is only on the document body, it returns
+`active: false` with no target.
+
 Locators can also include state predicates such as `visible`, `enabled`,
 `focused`, `checked`, `expanded`, `selected`, `value`, and related semantic
 state, allowing an agent to select the current control without a second

@@ -148,6 +148,8 @@ export class AgentRequestRouter {
       case "page.read": {
         return await this.page(request.pageId).read(request.target, request.token, signal);
       }
+      case "page.active":
+        return await this.page(request.pageId).active(signal);
       case "page.act": {
         if (request.idempotencyKey !== undefined) requireIdempotencyKey(request.idempotencyKey);
         await this.authorize(context, actionCapability(request.action), {

@@ -105,6 +105,18 @@ function page(): PageSession {
       title: identity.title,
       node: pageSnapshot.nodes[0],
     }),
+    active: async () => ({
+      pageId,
+      documentId: identity.documentId,
+      revision: identity.revision,
+      snapshotId: asSnapshotId("active-1"),
+      active: true,
+      frameId: asFrameId("main"),
+      target: { ref: pageSnapshot.nodes[0].ref },
+      node: pageSnapshot.nodes[0],
+      url: identity.url,
+      title: identity.title,
+    }),
     snapshot: async () => pageSnapshot,
     snapshotDelta: async (base) => ({
       pageId,
@@ -160,6 +172,7 @@ function runtime(): AgentRuntime {
       "page.query.batch",
       "page.capture",
       "page.read",
+      "page.active",
       "page.act",
       "page.act.status",
       "page.act.click",
@@ -198,6 +211,7 @@ test("routes the first agent vertical slice", async () => {
     base: pageSnapshot,
   }));
   const capture = await router.handle(envelope({ op: "page.capture", pageId, options: { format: "png" } }));
+  const active = await router.handle(envelope({ op: "page.active", pageId }));
   const activated = await router.handle(envelope({ op: "pages.activate", pageId }));
   const action = await router.handle(
     envelope({ op: "page.act", pageId, action: { type: "click", target: { ref: asSnapshotRef("r1") } } }),
@@ -207,6 +221,8 @@ test("routes the first agent vertical slice", async () => {
   );
 
   assert.equal(hello.ok, true);
+  assert.equal(active.ok, true);
+  assert.equal((active.result as { node: { name: string } }).node.name, "Continue");
   assert.deepEqual((pages.result as { pages: PageIdentity[] }).pages, [identity]);
   assert.deepEqual(frames.result, {
     pageId,

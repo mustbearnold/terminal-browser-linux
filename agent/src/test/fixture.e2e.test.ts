@@ -13,6 +13,7 @@ import type {
   PageQueryResult,
   PageQueryBatchResult,
   PageReadResult,
+  PageActiveResult,
   SnapshotNode,
   SnapshotToken,
 } from "../protocol/types";
@@ -45,6 +46,7 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(hello.capabilities.includes("page.act"), true);
   assert.equal(hello.capabilities.includes("page.act.click"), true);
   assert.equal(hello.capabilities.includes("page.act.focus"), true);
+  assert.equal(hello.capabilities.includes("page.active"), true);
   assert.equal(hello.capabilities.includes("page.act.fill"), true);
   assert.equal(hello.capabilities.includes("page.act.history"), true);
   assert.equal(hello.capabilities.includes("page.query.batch"), true);
@@ -284,6 +286,14 @@ test("runs the deterministic agent control contract", async () => {
   );
   assert.equal(read.node.name, "Name");
 
+  const noActive = result<PageActiveResult>(await router.handle(
+    request("page.active", { pageId: FIXTURE_PAGE_ID }),
+    context,
+  ));
+  assert.equal(noActive.active, false);
+  assert.equal(noActive.node, null);
+  assert.equal(noActive.target, null);
+
   const focused = result<{ verified: boolean; proof?: ActionProof; snapshot?: PageSnapshot }>(
     await router.handle(
       request("page.act", {
@@ -297,6 +307,18 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(focused.verified, true);
   assert.equal(focused.proof?.focused, true);
   assert.equal(focused.proof?.target, read.node.ref);
+
+  const active = result<PageActiveResult>(await router.handle(
+    request("page.active", { pageId: FIXTURE_PAGE_ID }),
+    context,
+  ));
+  assert.equal(active.active, true);
+  assert.equal(active.frameId, read.node.frameId);
+  assert.deepEqual(active.target, { ref: read.node.ref });
+  assert.equal(active.node?.ref, read.node.ref);
+  assert.equal(active.node?.state?.focused, true);
+  assert.equal(active.documentId, focused.snapshot?.documentId);
+  assert.equal(active.revision, focused.snapshot?.revision);
 
   result(await router.handle(request("page.observe", { pageId: FIXTURE_PAGE_ID, events: ["dom.changed"] }), context));
 
