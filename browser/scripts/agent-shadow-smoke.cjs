@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const { AgentClient } = require("../../agent/dist");
 const { launchHost, listSockets, stopHost, waitForSocket, dataUrl } = require("./agent-smoke-support.cjs");
 
-const html = `<!doctype html><meta charset="utf-8"><title>Shadow control fixture</title><style>body{font:16px sans-serif;margin:24px}x-control{display:block;width:320px}button,input{font:16px sans-serif;margin:8px;padding:8px}</style><x-control></x-control><script>customElements.define('x-control',class extends HTMLElement{constructor(){super();const root=this.attachShadow({mode:'open'});root.innerHTML='<label>Shadow name <input aria-label="Shadow name"></label><button aria-label="Shadow action">Shadow action</button><span id="status">Idle</span>';const shadowAction=root.querySelector('[aria-label="Shadow action"]');shadowAction.addEventListener('click',()=>{root.querySelector('#status').textContent='Clicked';const dynamic=document.createElement('button');dynamic.setAttribute('aria-label','Dynamic action');dynamic.textContent='Dynamic action';root.append(dynamic);for(const [name,text] of [['Primary card','Primary open'],['Secondary card','Secondary open']]){const region=document.createElement('div');region.setAttribute('role','region');region.setAttribute('aria-label',name);const open=document.createElement('button');open.setAttribute('aria-label','Open');open.textContent=text;open.addEventListener('click',()=>{root.querySelector('#status').textContent='Scoped clicked'});region.append(open);root.append(region)}})}});</script>`;
+const html = `<!doctype html><meta charset="utf-8"><title>Shadow control fixture</title><style>body{font:16px sans-serif;margin:24px}x-control{display:block;width:320px}button,input{font:16px sans-serif;margin:8px;padding:8px}</style><x-control></x-control><script>customElements.define('x-control',class extends HTMLElement{constructor(){super();const root=this.attachShadow({mode:'open'});root.innerHTML='<label>Shadow name <input aria-label="Shadow name"></label><button aria-label="Shadow action">Shadow action</button><span id="status">Idle</span><input id="input-status" aria-label="Input status" value="Idle">';root.querySelector('input[aria-label="Shadow name"]').addEventListener('input',event=>root.querySelector('#input-status').value=String(event.isTrusted));const shadowAction=root.querySelector('[aria-label="Shadow action"]');shadowAction.addEventListener('click',()=>{root.querySelector('#status').textContent='Clicked';const dynamic=document.createElement('button');dynamic.setAttribute('aria-label','Dynamic action');dynamic.textContent='Dynamic action';root.append(dynamic);for(const [name,text] of [['Primary card','Primary open'],['Secondary card','Secondary open']]){const region=document.createElement('div');region.setAttribute('role','region');region.setAttribute('aria-label',name);const open=document.createElement('button');open.setAttribute('aria-label','Open');open.textContent=text;open.addEventListener('click',()=>{root.querySelector('#status').textContent='Scoped clicked'});region.append(open);root.append(region)}})}});</script>`;
 
 async function run() {
   const existing = new Set(listSockets());
@@ -56,9 +56,20 @@ async function run() {
           value: "Ada",
         },
       });
+      assert.equal(filled.proof?.value, "Ada", JSON.stringify(filled));
+      await client.call("page.wait", {
+        pageId,
+        condition: {
+          type: "element",
+          target: { locator: { kind: "role", role: "textbox", name: "Input status", exact: true } },
+          state: { value: "true" },
+        },
+        timeoutMs: 1_000,
+      });
       const valueDelta = await client.snapshotDelta(pageId, initial);
       assert.equal(valueDelta.mode, "incremental", "input-only mutation did not use the incremental delta path");
       assert.ok(valueDelta.updated.some((entry) => entry.node.name === "Shadow name"), "incremental delta omitted the input state");
+      assert.ok(valueDelta.updated.some((entry) => entry.node.name === "Input status" && entry.node.state?.value === "true"), "trusted input probe was not observed");
       const typed = await client.call("page.act", {
         pageId,
         action: {

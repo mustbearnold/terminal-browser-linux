@@ -1083,14 +1083,17 @@ export class ElectronPageBackend implements PageBackend {
       throw new AgentError("NOT_INTERACTABLE", "target is not an editable control", { retryable: true });
     }
 
+    const focused = await this.focusTarget(target, signal, "filling");
+    if (!focused.ok || !focused.visible || !focused.enabled || !focused.editable || !focused.focused) {
+      throw new AgentError("NOT_INTERACTABLE", "target is not an editable control", { retryable: true });
+    }
+
     this.controller.focusContent();
     throwIfAborted(signal);
-    const source = fillScript(this.agentKey, target.ref, action.value);
-    const value = frameId === "main"
-      ? await this.controller.runJs(source)
-      : await this.controller.runJsInFrame(frameId, source);
+    await this.replaceFocusedText(action.value, signal);
     throwIfAborted(signal);
-    if (!isActiveElementInfo(value) || !value.ok || !value.editable || value.value !== action.value) {
+    const value = await this.inspect(target.ref, frameId, signal, false, target.node.nodeId);
+    if (!value.ok || !value.editable || value.value !== action.value) {
       throw new AgentError("ACTION_UNVERIFIED", "control value did not match the requested fill", {
         retryable: true,
       });
@@ -1106,8 +1109,8 @@ export class ElectronPageBackend implements PageBackend {
       revision: after.revision,
       target: target.ref,
       frameId: target.node.frameId,
-      role: value.role ?? inspection.role,
-      name: value.name ?? inspection.name,
+      role: value.role ?? focused.role ?? inspection.role,
+      name: value.name ?? focused.name ?? inspection.name,
       value: value.value,
       url: after.url,
       title: after.title,
@@ -1498,6 +1501,38 @@ export class ElectronPageBackend implements PageBackend {
         buttons: 0,
       });
     }
+  }
+
+  private async replaceFocusedText(value: string, signal?: AbortSignal): Promise<void> {
+    const modifiers = process.platform === "darwin" ? MODIFIER_META : MODIFIER_CTRL;
+    const selectAll = {
+      key: "a",
+      code: "KeyA",
+      windowsVirtualKeyCode: 65,
+      nativeVirtualKeyCode: 65,
+      modifiers,
+      commands: ["selectAll"],
+    };
+    throwIfAborted(signal);
+    await this.controller.cdp("Input.dispatchKeyEvent", { type: "rawKeyDown", ...selectAll });
+    throwIfAborted(signal);
+    await this.controller.cdp("Input.dispatchKeyEvent", { type: "keyUp", ...selectAll });
+
+    const backspace = {
+      key: "Backspace",
+      code: "Backspace",
+      windowsVirtualKeyCode: 8,
+      nativeVirtualKeyCode: 8,
+      modifiers: 0,
+    };
+    throwIfAborted(signal);
+    await this.controller.cdp("Input.dispatchKeyEvent", { type: "rawKeyDown", ...backspace });
+    throwIfAborted(signal);
+    await this.controller.cdp("Input.dispatchKeyEvent", { type: "keyUp", ...backspace });
+    if (value.length === 0) return;
+
+    throwIfAborted(signal);
+    await this.controller.cdp("Input.insertText", { text: value });
   }
 
   private async navigate(
@@ -2751,6 +2786,7 @@ function semanticHelpersScript(): string {
       const invalid = ariaBooleanFor(el, "aria-invalid") === true || (el.validity && el.validity.valid === false);
       if (invalid) value.invalid = true;
       if ("value" in el && typeof el.value === "string") value.value = el.value.slice(0, 240);
+      else if (el.isContentEditable && typeof el.innerText === "string") value.value = el.innerText.slice(0, 240);
       if (el.tagName === "INPUT" && typeFor(el) === "file" && el.files) value.fileCount = el.files.length;
       return Object.keys(value).length ? value : undefined;
     };
@@ -2987,7 +3023,9 @@ function agentStateSetupScript(key: string, frameId: string): string {
       const invalidateEvent = (event) => {
         if (handledEvents.has(event)) return;
         handledEvents.add(event);
-        const target = event.target && event.target.nodeType === 1 ? event.target : null;
+        const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+        const originalTarget = path[0] || event.target;
+        const target = originalTarget && originalTarget.nodeType === 1 ? originalTarget : null;
         if (event.type === "input" || event.type === "change") state.elementIndexRoleNameDirty = true;
         invalidate(event.type, target);
       };
@@ -3158,7 +3196,11 @@ function inspectScript(key: string, ref: string, frameId: string, scrollIntoView
       focused: activeFor(el) === el,
       role: roleFor(el),
       name: nameFor(el),
-      value: "value" in el && typeof el.value === "string" ? el.value : undefined,
+      value: "value" in el && typeof el.value === "string"
+        ? el.value
+        : el.isContentEditable
+          ? String(el.innerText ?? "")
+          : undefined,
       fileInput: el.tagName === "INPUT" && typeFor(el) === "file",
       ...(el.tagName === "INPUT" && typeFor(el) === "file" ? {
         fileCount: el.files ? el.files.length : 0,
@@ -3512,43 +3554,6 @@ function liveTextScript(key: string, expected: string, frameId: string): string 
       if (matches(element)) return { ok: true, matches: true };
     }
     return { ok: true, matches: false };
-  })()`;
-}
-
-function fillScript(key: string, ref: string, value: string): string {
-  return `(() => {
-    const state = window[${JSON.stringify(key)}];
-    const el = state && state.refs && state.refs.get(${JSON.stringify(ref)});
-    if (!el || !el.isConnected) return { ok: false };
-    ${semanticHelpersScript()}
-    const editable = editableFor(el);
-    const role = roleFor(el);
-    const name = nameFor(el);
-    if (!editable || !enabledFor(el) || !visibleFor(el)) {
-      return { ok: true, editable: false, role, name, value: "value" in el ? String(el.value ?? "") : String(el.innerText ?? "") };
-    }
-    el.focus();
-    if (el.isContentEditable) {
-      el.textContent = ${JSON.stringify(value)};
-    } else {
-      const prototype = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
-      if (!setter) return { ok: false, editable: true, role, name };
-      setter.call(el, ${JSON.stringify(value)});
-    }
-    const view = el.ownerDocument.defaultView || window;
-    const InputEventCtor = view.InputEvent || InputEvent;
-    const EventCtor = view.Event || Event;
-    el.dispatchEvent(new InputEventCtor("input", { bubbles: true, inputType: "insertText", data: ${JSON.stringify(value)} }));
-    el.dispatchEvent(new EventCtor("change", { bubbles: true }));
-    return {
-      ok: true,
-      editable: true,
-      focused: activeFor(el) === el,
-      role,
-      name,
-      value: "value" in el ? String(el.value ?? "") : String(el.innerText ?? ""),
-    };
   })()`;
 }
 

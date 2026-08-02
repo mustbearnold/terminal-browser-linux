@@ -4,8 +4,19 @@ const assert = require("node:assert/strict");
 const { AgentClient } = require("../../agent/dist");
 const { launchHost, listSockets, stopHost, waitForSocket, dataUrl } = require("./agent-smoke-support.cjs");
 
-const child = `<!doctype html><style>body{font:16px sans-serif;margin:18px}button,input{font:16px sans-serif;margin:8px;padding:8px}</style><label>Frame name <input aria-label="Frame name"></label><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
+const child = `<!doctype html><style>body{font:16px sans-serif;margin:18px}button,input{font:16px sans-serif;margin:8px;padding:8px}</style><label>Frame name <input aria-label="Frame name" oninput="document.getElementById('input-status').value=String(event.isTrusted)"></label><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span><input id="input-status" aria-label="Input status" value="Idle">`;
 const html = `<!doctype html><meta charset="utf-8"><title>Frame control fixture</title><style>body{font:16px sans-serif;margin:24px}iframe{display:block;width:460px;height:220px;border:4px solid #888}</style><iframe title="Control frame"></iframe><script>document.querySelector('iframe').srcdoc=${JSON.stringify(child)}</script>`;
+
+async function waitForSnapshotNode(client, pageId, name, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  let latest;
+  while (Date.now() < deadline) {
+    latest = await client.call("page.snapshot", { pageId, options: { includeGeometry: true } });
+    if (latest.nodes.some((node) => node.name === name)) return latest;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`snapshot did not expose ${name}`);
+}
 
 async function run() {
   const existing = new Set(listSockets());
@@ -17,20 +28,11 @@ async function run() {
     client = await AgentClient.connect(socket, { clientId: "frame-smoke" });
     const opened = await client.call("pages.open", { url: dataUrl(html) });
     pageId = opened.pageId;
-    await client.call("page.wait", {
-      pageId,
-      condition: { type: "text", value: "Frame action" },
-      timeoutMs: 5_000,
-    });
-
     const events = [];
     const unsubscribe = client.onEvent((event) => events.push(event));
     try {
       await client.observe(pageId, ["dom.changed"]);
-      const initial = await client.call("page.snapshot", {
-        pageId,
-        options: { includeGeometry: true },
-      });
+      const initial = await waitForSnapshotNode(client, pageId, "Frame action");
       const frameButton = initial.nodes.find((node) => node.name === "Frame action");
       const frameTextbox = initial.nodes.find((node) => node.name === "Frame name");
       assert.ok(frameButton, "same-origin frame button was not exposed in the snapshot");
@@ -50,6 +52,15 @@ async function run() {
           target: { locator: { kind: "role", role: "textbox", name: "Frame name", exact: true } },
           value: "Ada",
         },
+      });
+      await client.call("page.wait", {
+        pageId,
+        condition: {
+          type: "element",
+          target: { locator: { kind: "role", role: "textbox", name: "Input status", exact: true } },
+          state: { value: "true" },
+        },
+        timeoutMs: 1_000,
       });
       const valueDelta = await client.snapshotDelta(pageId, deltaBase);
       assert.equal(valueDelta.mode, "incremental", "same-origin frame input did not use the incremental delta path");

@@ -16,6 +16,8 @@ const html = `<!doctype html>
 <button id="launch" aria-label="Wrong name" aria-labelledby="launch-name">Visible button</button>
 <label for="full-name">Full name</label>
 <input id="full-name" placeholder="Ignored by label" value="" required>
+<label for="notes">Notes</label><textarea id="notes" aria-label="Notes">Seed</textarea>
+<div id="editor" role="textbox" aria-label="Editor" contenteditable="true">Seed</div>
 <input id="search" type="search" placeholder="Search records">
 <input id="amount" type="number" value="3">
 <input id="volume" type="range" min="0" max="10" value="4">
@@ -27,9 +29,10 @@ const html = `<!doctype html>
 <div aria-hidden="true"><button id="aria-hidden">ARIA hidden action</button></div>
 <div inert><button id="inert">Inert action</button></div>
 <fieldset disabled><button id="disabled">Disabled action</button></fieldset>
-<output id="status">Idle</output>
+<output id="status">Idle</output><input id="input-status" aria-label="Input status" value="Idle">
 <script>
   document.getElementById('launch').addEventListener('click', () => document.getElementById('status').textContent = 'Launched');
+  for (const id of ['full-name', 'notes', 'editor']) document.getElementById(id).addEventListener('input', event => document.getElementById('input-status').value = event.isTrusted ? id : 'false');
   document.getElementById('notifications').addEventListener('click', (event) => event.currentTarget.setAttribute('aria-checked', String(event.currentTarget.getAttribute('aria-checked') !== 'true')));
   document.getElementById('disabled').addEventListener('click', () => document.getElementById('status').textContent = 'Disabled clicked');
 </script>`;
@@ -58,6 +61,8 @@ async function run() {
     const byId = (id) => snapshot.nodes.find((node) => node.attributes?.id === id);
     const launchNode = byId("launch");
     const nameNode = byId("full-name");
+    const notesNode = byId("notes");
+    const editorNode = byId("editor");
     const searchNode = byId("search");
     const amountNode = byId("amount");
     const volumeNode = byId("volume");
@@ -77,6 +82,8 @@ async function run() {
     assert.equal(nameNode?.state?.value, "");
     assert.equal(nameNode?.state?.required, true);
     assert.equal(nameNode?.state?.invalid, true);
+    assert.equal(notesNode?.role, "textbox");
+    assert.equal(editorNode?.role, "textbox");
     assert.equal(searchNode?.role, "searchbox");
     assert.equal(amountNode?.role, "spinbutton");
     assert.equal(volumeNode?.role, "slider");
@@ -101,6 +108,55 @@ async function run() {
     });
     assert.equal(filled.proof?.name, "Full name");
     assert.equal(filled.proof?.value, "Ada");
+    await client.call("page.wait", {
+      pageId,
+      condition: {
+        type: "element",
+        target: { locator: { kind: "role", role: "textbox", name: "Input status", exact: true } },
+        state: { value: "full-name" },
+      },
+      timeoutMs: 1_000,
+    });
+
+    const cleared = await client.call("page.act", {
+      pageId,
+      action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Full name", exact: true } }, value: "" },
+    });
+    assert.equal(cleared.proof?.value, "");
+    const refilled = await client.call("page.act", {
+      pageId,
+      action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Full name", exact: true } }, value: "Ada" },
+    });
+    assert.equal(refilled.proof?.value, "Ada");
+
+    const notesFilled = await client.call("page.act", {
+      pageId,
+      action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Notes", exact: true } }, value: "Native notes" },
+    });
+    assert.equal(notesFilled.proof?.value, "Native notes");
+    await client.call("page.wait", {
+      pageId,
+      condition: {
+        type: "element",
+        target: { locator: { kind: "role", role: "textbox", name: "Input status", exact: true } },
+        state: { value: "notes" },
+      },
+      timeoutMs: 1_000,
+    });
+    const editorFilled = await client.call("page.act", {
+      pageId,
+      action: { type: "fill", target: { locator: { kind: "role", role: "textbox", name: "Editor", exact: true } }, value: "Native editor" },
+    });
+    assert.equal(editorFilled.proof?.value, "Native editor");
+    await client.call("page.wait", {
+      pageId,
+      condition: {
+        type: "element",
+        target: { locator: { kind: "role", role: "textbox", name: "Input status", exact: true } },
+        state: { value: "editor" },
+      },
+      timeoutMs: 1_000,
+    });
 
     const checked = await client.call("page.act", {
       pageId,
@@ -110,10 +166,14 @@ async function run() {
 
     const after = await client.call("page.snapshot", { pageId, options: { interactiveOnly: false, includeGeometry: false } });
     const afterName = after.nodes.find((node) => node.attributes?.id === "full-name");
+    const afterNotes = after.nodes.find((node) => node.attributes?.id === "notes");
+    const afterEditor = after.nodes.find((node) => node.attributes?.id === "editor");
     const afterNotifications = after.nodes.find((node) => node.attributes?.id === "notifications");
     assert.equal(afterName?.name, "Full name");
     assert.equal(afterName?.state?.value, "Ada");
     assert.equal(afterName?.state?.invalid, undefined);
+    assert.equal(afterNotes?.state?.value, "Native notes");
+    assert.equal(afterEditor?.state?.value, "Native editor");
     assert.equal(afterNotifications?.state?.checked, true);
 
     await expectCode(

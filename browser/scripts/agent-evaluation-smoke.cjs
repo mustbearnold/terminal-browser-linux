@@ -1047,7 +1047,15 @@ function frameScenarios(pageId) {
     id: "same-origin-frame-resolution-and-mutation",
     name: "same-origin-frame-resolution-and-mutation",
     async run(client) {
-      await client.call("page.wait", { pageId, condition: { type: "text", value: "Frame action" }, timeoutMs: 3_000 });
+      await client.call("page.wait", {
+        pageId,
+        condition: {
+          type: "element",
+          target: { locator: { kind: "role", role: "button", name: "Frame action", exact: true } },
+          state: { attached: true },
+        },
+        timeoutMs: 3_000,
+      });
       const initial = await client.call("page.snapshot", { pageId, options: { includeGeometry: true } });
       const frameButton = initial.nodes.find((node) => node.name === "Frame action");
       const frameTextbox = initial.nodes.find((node) => node.name === "Frame name");
@@ -1075,7 +1083,15 @@ function crossOriginScenarios(pageId, uploadPaths) {
     id: "cross-origin-frame-actions-and-replay",
     name: "cross-origin-frame-actions-and-replay",
     async run(client) {
-      await client.call("page.wait", { pageId, condition: { type: "text", value: "Frame action" }, timeoutMs: 5_000 });
+      await client.call("page.wait", {
+        pageId,
+        condition: {
+          type: "element",
+          target: { locator: { kind: "role", role: "button", name: "Frame action", exact: true } },
+          state: { attached: true },
+        },
+        timeoutMs: 5_000,
+      });
       const frames = await client.frames(pageId);
       const childFrame = frames.frames.find((frame) => frame.parentFrameId !== null);
       const initial = await client.call("page.snapshot", { pageId, options: { includeGeometry: true } });
