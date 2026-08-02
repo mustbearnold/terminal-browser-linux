@@ -17,6 +17,10 @@ terminal-browser agent --browser <browser-key>
 The default connection budget is 128 in-flight requests. When that budget is
 reached, the agent returns retryable `RESOURCE_EXHAUSTED` errors; cancellation
 requests remain available so an agent can release capacity deliberately.
+Each page serializes and bounds its action queue at 64 actions by default.
+Queue exhaustion is retryable and marked safe to retry because the rejected
+action has not started; the negotiated limit is included in `hello` and the
+structured-tool manifest.
 
 For MCP-compatible agent hosts, expose the same negotiated tools over stdio:
 ```

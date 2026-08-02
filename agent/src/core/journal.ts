@@ -93,7 +93,16 @@ export class DurableActionJournal implements ActionJournal<ActionResult> {
     this.inFlight.set(key, execution);
     void execution.then(
       () => this.inFlight.delete(key),
-      () => this.inFlight.delete(key),
+      (error) => {
+        this.inFlight.delete(key);
+        if (!safeToRetryBeforeExecution(error) || this.entries.get(key) !== entry) return;
+        this.entries.delete(key);
+        try {
+          this.persist();
+        } catch {
+          this.entries.set(key, entry);
+        }
+      },
     );
     return execution.then((result) => ({ result, replayed: false }));
   }
@@ -255,4 +264,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function safeToRetryBeforeExecution(error: unknown): boolean {
+  if (!(error instanceof AgentError) || error.code !== "RESOURCE_EXHAUSTED") return false;
+  if (!isRecord(error.details)) return false;
+  return error.details.scope === "page-actions" && error.details.safeToRetry === true;
 }

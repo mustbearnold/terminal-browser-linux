@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { AgentError } from "../protocol/errors";
+import { throwIfAborted } from "../core/cancellation";
 import { RevisionedPageSession, type PageBackend } from "../core/page";
 import { RevisionLedger } from "../core/revisions";
 import {
@@ -9,10 +10,12 @@ import {
   asFrameId,
   asPageId,
   asSnapshotRef,
+  type ActionExpectation,
   type AgentAction,
   type AgentEvent,
   type PageIdentity,
   type PageSnapshot,
+  type SnapshotToken,
 } from "../protocol/types";
 
 const pageId = asPageId("page-1");
@@ -98,6 +101,24 @@ class LiveOutputBackend extends OutputBackend {
       focusable: true,
     };
     return { ref: node.ref, node };
+  }
+}
+
+class QueuedOutputBackend extends OutputBackend {
+  started!: () => void;
+  readonly startedPromise = new Promise<void>((resolve) => {
+    this.started = resolve;
+  });
+  release!: () => void;
+  readonly gate = new Promise<void>((resolve) => {
+    this.release = resolve;
+  });
+
+  override async act(action: AgentAction, token?: SnapshotToken, expect?: ActionExpectation, signal?: AbortSignal) {
+    this.started();
+    await this.gate;
+    throwIfAborted(signal);
+    return super.act(action);
   }
 }
 
@@ -206,4 +227,32 @@ test("can return a delta from a satisfied wait", async () => {
   assert.equal(result.snapshot, undefined);
   assert.ok(result.snapshotDelta);
   assert.equal(result.snapshotDelta?.base.snapshotId, base.snapshotId);
+});
+
+test("bounds the serialized action queue and recovers after it drains", async () => {
+  const backend = new QueuedOutputBackend();
+  const page = new RevisionedPageSession(backend, new RevisionLedger(), 1);
+  const action = { type: "press" as const, key: "Enter" };
+  const first = page.act(action, undefined, undefined, undefined, { snapshot: "none" });
+  await backend.startedPromise;
+
+  await assert.rejects(
+    page.act(action, undefined, undefined, undefined, { snapshot: "none" }),
+    (error: unknown) => {
+      assert.ok(error instanceof AgentError);
+      assert.equal(error.code, "RESOURCE_EXHAUSTED");
+      assert.equal(error.retryable, true);
+      assert.deepEqual(error.details, {
+        scope: "page-actions",
+        maxQueuedActionsPerPage: 1,
+        safeToRetry: true,
+      });
+      return true;
+    },
+  );
+
+  backend.release();
+  await first;
+  const recovered = await page.act(action, undefined, undefined, undefined, { snapshot: "none" });
+  assert.equal(recovered.verified, true);
 });

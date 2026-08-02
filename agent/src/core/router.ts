@@ -21,6 +21,7 @@ import { IdempotencyCache, stableSerialize, type ActionJournal } from "./idempot
 import { DefaultPolicy, type PolicyContext, type PolicyEngine } from "./policy";
 import {
   MAX_AGENT_IN_FLIGHT_REQUESTS,
+  MAX_AGENT_QUEUED_ACTIONS_PER_PAGE,
   RequestCancellationRegistry,
   throwIfAborted,
   type RequestExecution,
@@ -137,7 +138,10 @@ export class AgentRequestRouter {
           requested,
           accepted: requested.filter((capability) => supported.has(capability)),
           unsupported: requested.filter((capability) => !supported.has(capability)),
-          limits: { maxInFlightRequests: this.maxInFlightRequests },
+          limits: {
+            maxInFlightRequests: this.maxInFlightRequests,
+            maxQueuedActionsPerPage: MAX_AGENT_QUEUED_ACTIONS_PER_PAGE,
+          },
         };
       }
       case "pages.list":

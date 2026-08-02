@@ -16,7 +16,7 @@ test("publishes only the structured tools accepted during negotiation", async ()
   const manifest = await tools.manifest();
 
   assert.deepEqual(manifest.capabilities, ["snapshot.read", "page.read"]);
-  assert.deepEqual(manifest.limits, { maxInFlightRequests: 128 });
+  assert.deepEqual(manifest.limits, { maxInFlightRequests: 128, maxQueuedActionsPerPage: 64 });
   assert.equal(manifest.protocol, "terminal-browser.agent/tools");
   assert.equal(manifest.version, 1);
   assert.deepEqual(

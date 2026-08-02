@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { AgentEventBus } from "../core/events";
 import { DurableAgentJournal, DurableActionJournal, DurableEventHistory } from "../core/journal";
+import { AgentError } from "../protocol/errors";
 import { AGENT_PROTOCOL, AGENT_PROTOCOL_VERSION, asPageId, type ActionResult, type AgentEvent } from "../protocol/types";
 
 test("replays completed actions from a new durable journal instance", async () => {
@@ -61,6 +62,31 @@ test("does not repeat an action whose durable outcome is uncertain", async () =>
     );
     release();
     await pending;
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("does not poison a durable key when page queue capacity rejects before execution", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-browser-agent-journal-"));
+  try {
+    const filePath = path.join(directory, "actions.json");
+    const journal = new DurableActionJournal(filePath);
+    await assert.rejects(
+      journal.execute("key", "fingerprint", async () => {
+        throw new AgentError("RESOURCE_EXHAUSTED", "page action queue is full", {
+          retryable: true,
+          details: { scope: "page-actions", safeToRetry: true },
+        });
+      }),
+      (error: unknown) => error instanceof AgentError && error.code === "RESOURCE_EXHAUSTED",
+    );
+    assert.deepEqual(journal.status("key"), { status: "missing" });
+    const result: ActionResult = { verified: true, effects: [] };
+    assert.deepEqual(await journal.execute("key", "fingerprint", async () => result), {
+      result,
+      replayed: false,
+    });
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

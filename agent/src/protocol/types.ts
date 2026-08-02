@@ -9,6 +9,7 @@ export const MAX_CLICK_COUNT = 10 as const;
 
 export interface AgentLimits {
   maxInFlightRequests: number;
+  maxQueuedActionsPerPage: number;
 }
 
 type Brand<T, Name extends string> = T & { readonly __brand: Name };

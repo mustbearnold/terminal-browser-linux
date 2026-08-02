@@ -1,5 +1,5 @@
 import { RevisionLedger } from "./revisions";
-import { throwIfAborted } from "./cancellation";
+import { MAX_AGENT_QUEUED_ACTIONS_PER_PAGE, throwIfAborted } from "./cancellation";
 import { querySnapshot, SnapshotLocatorResolver } from "./locator";
 import { AgentError } from "../protocol/errors";
 import { applySnapshotDelta, diffSnapshots } from "./snapshots";
@@ -170,12 +170,18 @@ export class RevisionedPageSession implements PageSession {
   private readonly snapshotHistory = new Map<string, SnapshotHistoryEntry>();
   private readonly snapshotWindowHistory = new Map<string, SnapshotWindowHistoryEntry>();
   private actionTail: Promise<void> = Promise.resolve();
+  private actionQueueDepth = 0;
   private readonly snapshotLocator = new SnapshotLocatorResolver();
 
   constructor(
     private readonly backend: PageBackend,
     private readonly ledger: RevisionLedger,
-  ) {}
+    private readonly maxQueuedActions = MAX_AGENT_QUEUED_ACTIONS_PER_PAGE,
+  ) {
+    if (!Number.isSafeInteger(maxQueuedActions) || maxQueuedActions < 1) {
+      throw new AgentError("INVALID_REQUEST", "max queued actions per page must be a positive safe integer");
+    }
+  }
 
   get pageId(): PageId {
     return this.backend.pageId;
@@ -729,6 +735,17 @@ export class RevisionedPageSession implements PageSession {
   }
 
   private enqueueAction<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (this.actionQueueDepth >= this.maxQueuedActions) {
+      return Promise.reject(new AgentError("RESOURCE_EXHAUSTED", "too many actions are queued for this page", {
+        retryable: true,
+        details: {
+          scope: "page-actions",
+          maxQueuedActionsPerPage: this.maxQueuedActions,
+          safeToRetry: true,
+        },
+      }));
+    }
+    this.actionQueueDepth += 1;
     const run = () => {
       throwIfAborted(signal);
       return operation();
@@ -738,7 +755,16 @@ export class RevisionedPageSession implements PageSession {
       () => undefined,
       () => undefined,
     );
-    return result;
+    return result.then(
+      (value) => {
+        this.actionQueueDepth -= 1;
+        return value;
+      },
+      (error) => {
+        this.actionQueueDepth -= 1;
+        throw error;
+      },
+    );
   }
 
   private rememberSnapshot(snapshot: PageSnapshot, options?: SnapshotOptions): void {

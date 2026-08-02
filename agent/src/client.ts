@@ -46,6 +46,7 @@ import {
 } from "./protocol/types";
 import {
   MAX_AGENT_IN_FLIGHT_REQUESTS,
+  MAX_AGENT_QUEUED_ACTIONS_PER_PAGE,
   MAX_REQUEST_DEADLINE_MS,
   throwIfAborted,
 } from "./core/cancellation";
@@ -57,6 +58,7 @@ export interface AgentClientOptions {
   capabilities?: readonly AgentCapability[];
   defaultDeadlineMs?: number;
   maxPendingRequests?: number;
+  maxPendingActionsPerPage?: number;
   trace?: TraceRecorder;
 }
 
@@ -129,7 +131,9 @@ export class AgentClient {
   private readonly capabilities: readonly AgentCapability[] | undefined;
   private readonly defaultDeadlineMs: number | undefined;
   private maxPendingRequests: number;
+  private maxPendingActionsPerPage: number;
   private readonly pending = new Map<string, PendingRequest>();
+  private readonly pendingActions = new Map<PageId, number>();
   private readonly eventListeners = new Set<AgentClientEventListener>();
   private readonly unsubscribeMessage: () => void;
   private readonly unsubscribeError: () => void;
@@ -141,10 +145,12 @@ export class AgentClient {
   constructor(private readonly transport: AgentTransport, options: AgentClientOptions = {}) {
     validateDeadline(options.defaultDeadlineMs);
     validateRequestBudget(options.maxPendingRequests);
+    validateRequestBudget(options.maxPendingActionsPerPage);
     this.clientId = options.clientId ?? "terminal-browser-agent-client";
     this.capabilities = options.capabilities;
     this.defaultDeadlineMs = options.defaultDeadlineMs;
     this.maxPendingRequests = options.maxPendingRequests ?? MAX_AGENT_IN_FLIGHT_REQUESTS;
+    this.maxPendingActionsPerPage = options.maxPendingActionsPerPage ?? MAX_AGENT_QUEUED_ACTIONS_PER_PAGE;
     this.trace = options.trace;
     this.unsubscribeMessage = transport.onMessage((message) => this.handleMessage(message));
     this.unsubscribeError = transport.onError((error) => this.failPending(transportError(error)));
@@ -170,7 +176,13 @@ export class AgentClient {
         throw new AgentError("INTERNAL_ERROR", "agent hello omitted its request budget");
       }
       validateRequestBudget(negotiated);
+      const negotiatedActions = result.limits?.maxQueuedActionsPerPage;
+      if (negotiatedActions === undefined) {
+        throw new AgentError("INTERNAL_ERROR", "agent hello omitted its page action queue budget");
+      }
+      validateRequestBudget(negotiatedActions);
       this.maxPendingRequests = Math.min(this.maxPendingRequests, negotiated);
+      this.maxPendingActionsPerPage = Math.min(this.maxPendingActionsPerPage, negotiatedActions);
       return result;
     });
   }
@@ -362,12 +374,26 @@ export class AgentClient {
         details: { maxPendingRequests: this.maxPendingRequests },
       }));
     }
+    const actionPageId = requestActionPageId(request);
+    if (actionPageId !== undefined) {
+      const pendingActions = this.pendingActions.get(actionPageId) ?? 0;
+      if (pendingActions >= this.maxPendingActionsPerPage) {
+        return Promise.reject(new AgentError("RESOURCE_EXHAUSTED", "too many actions are pending for this page", {
+          retryable: true,
+          details: {
+            pageId: actionPageId,
+            maxPendingActionsPerPage: this.maxPendingActionsPerPage,
+          },
+        }));
+      }
+    }
     return new Promise<AgentResponse>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const signal = options.signal;
       const settle = (error?: unknown, response?: AgentResponse) => {
         if (!this.pending.has(request.requestId)) return;
         this.pending.delete(request.requestId);
+        if (actionPageId !== undefined) this.releasePendingAction(actionPageId);
         if (timer) clearTimeout(timer);
         if (signal) signal.removeEventListener("abort", onAbort);
         if (error === undefined) resolve(response!);
@@ -383,6 +409,7 @@ export class AgentClient {
         reject: (error) => settle(error),
       };
       this.pending.set(request.requestId, pending);
+      if (actionPageId !== undefined) this.reservePendingAction(actionPageId);
       if (signal) {
         signal.addEventListener("abort", onAbort, { once: true });
         if (signal.aborted) {
@@ -456,6 +483,20 @@ export class AgentClient {
   private nextRequestId(operation: AgentOperation): string {
     return `${this.clientId}:${operation}:${++this.requestSequence}`;
   }
+
+  private reservePendingAction(pageId: PageId): void {
+    this.pendingActions.set(pageId, (this.pendingActions.get(pageId) ?? 0) + 1);
+  }
+
+  private releasePendingAction(pageId: PageId): void {
+    const current = this.pendingActions.get(pageId) ?? 0;
+    if (current <= 1) this.pendingActions.delete(pageId);
+    else this.pendingActions.set(pageId, current - 1);
+  }
+}
+
+function requestActionPageId(request: AgentRequest): PageId | undefined {
+  return request.op === "page.act" || request.op === "page.act.batch" ? request.pageId : undefined;
 }
 
 function validateDeadline(deadlineMs: number | undefined): void {

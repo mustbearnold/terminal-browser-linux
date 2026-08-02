@@ -19,7 +19,7 @@ test("correlates typed calls and delivers observed events", async () => {
     assert.equal(hello.clientId, "client-test");
     assert.equal(hello.accepted.includes("page.act"), true);
     assert.deepEqual(hello.unsupported, []);
-    assert.deepEqual(hello.limits, { maxInFlightRequests: 128 });
+    assert.deepEqual(hello.limits, { maxInFlightRequests: 128, maxQueuedActionsPerPage: 64 });
     assert.equal(pages.pages[0].pageId, FIXTURE_PAGE_ID);
     assert.deepEqual(frames, {
       pageId: FIXTURE_PAGE_ID,
@@ -220,6 +220,31 @@ test("bounds pending client calls while keeping cancellation available", async (
       pending.promise,
       (error: unknown) => error instanceof AgentError && error.code === "REQUEST_CANCELLED",
     );
+  } finally {
+    await client.close();
+  }
+});
+
+test("bounds pending actions per page while keeping cancellation available", async () => {
+  const client = createFixtureAgentClient({ clientId: "pending-action-budget-test", maxPendingActionsPerPage: 1 });
+  const action = {
+    pageId: FIXTURE_PAGE_ID,
+    action: { type: "click" as const, target: { locator: { kind: "role" as const, role: "button", name: "Continue", exact: true } } },
+    output: { snapshot: "none" as const },
+  };
+  try {
+    const pending = client.start("page.act", action);
+    await assert.rejects(
+      client.call("page.act", action),
+      (error: unknown) => error instanceof AgentError && error.code === "RESOURCE_EXHAUSTED",
+    );
+    assert.equal(await pending.cancel(), true);
+    await assert.rejects(
+      pending.promise,
+      (error: unknown) => error instanceof AgentError && error.code === "REQUEST_CANCELLED",
+    );
+    const recovered = await client.call("page.act", action);
+    assert.equal(recovered.verified, true);
   } finally {
     await client.close();
   }

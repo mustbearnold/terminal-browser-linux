@@ -34,7 +34,7 @@ class FakeMcpTools implements McpToolProvider {
       protocol: AGENT_TOOL_PROTOCOL,
       version: AGENT_TOOL_VERSION,
       capabilities: ["pages.list"],
-      limits: { maxInFlightRequests: 128 },
+      limits: { maxInFlightRequests: 128, maxQueuedActionsPerPage: 64 },
       tools: [AGENT_TOOL_DEFINITIONS[0]],
     });
   }
