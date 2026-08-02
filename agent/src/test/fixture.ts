@@ -19,6 +19,7 @@ import {
   type AgentAction,
   type AgentCapability,
   type AgentEvent,
+  type FocusChangedEventData,
   type PageFrame,
   type PageFrameSnapshot,
   type PageIdentity,
@@ -340,10 +341,11 @@ class FixturePageBackend implements PageBackend {
       throw new AgentError("NOT_INTERACTABLE", "fixture target is not a visible focusable control", { retryable: true });
     }
     throwIfAborted(signal);
-    this.focusedRef = String(target.ref);
+    const focusPhases = this.focusTransition(String(target.ref));
     this.revision += 1;
     const identity = await this.identity(signal);
     this.emitChanged();
+    this.emitFocusChanged(focusPhases);
     return {
       verified: await this.matches(expect, identity, signal),
       effects: [{ type: "focus.changed", data: { focused: true } }],
@@ -376,10 +378,11 @@ class FixturePageBackend implements PageBackend {
     }
     throwIfAborted(signal);
     this.value = action.value;
-    this.focusedRef = String(target.ref);
+    const focusPhases = this.focusTransition(String(target.ref));
     this.revision += 1;
     const identity = await this.identity(signal);
     this.emitChanged();
+    this.emitFocusChanged(focusPhases);
     return {
       verified: await this.matches(expect, identity, signal),
       effects: [
@@ -414,11 +417,12 @@ class FixturePageBackend implements PageBackend {
     }
     throwIfAborted(signal);
     if (!target && this.focusedRef !== "r2") throw new AgentError("NOT_INTERACTABLE", "fixture has no focused editable control", { retryable: true });
-    this.focusedRef = target ? String(target.ref) : this.focusedRef;
+    const focusPhases = target ? this.focusTransition(String(target.ref)) : [];
     this.value += action.text;
     this.revision += 1;
     const identity = await this.identity(signal);
     this.emitChanged();
+    this.emitFocusChanged(focusPhases);
     return {
       verified: await this.matches(expect, identity, signal),
       effects: [
@@ -453,11 +457,12 @@ class FixturePageBackend implements PageBackend {
     }
     throwIfAborted(signal);
     if (!target && this.focusedRef === null) throw new AgentError("NOT_INTERACTABLE", "fixture has no focused control", { retryable: true });
-    this.focusedRef = target ? String(target.ref) : this.focusedRef;
+    const focusPhases = target ? this.focusTransition(String(target.ref)) : [];
     if (action.key.toLocaleLowerCase() === "enter") this.ready = true;
     this.revision += 1;
     const identity = await this.identity(signal);
     this.emitChanged();
+    this.emitFocusChanged(focusPhases);
     return {
       verified: await this.matches(expect, identity, signal),
       effects: [{ type: "dom.changed", data: { revision: this.revision } }],
@@ -550,6 +555,25 @@ class FixturePageBackend implements PageBackend {
 
   private emitChanged(): void {
     this.events.publish(this.event("dom.changed", { revision: this.revision }));
+  }
+
+  private focusTransition(nextRef: string): FocusChangedEventData["phase"][] {
+    if (this.focusedRef === nextRef) return [];
+    const phases: FocusChangedEventData["phase"][] = [];
+    if (this.focusedRef !== null) phases.push("focusout");
+    this.focusedRef = nextRef;
+    phases.push("focusin");
+    return phases;
+  }
+
+  private emitFocusChanged(phases: readonly FocusChangedEventData["phase"][]): void {
+    for (const phase of phases) {
+      this.events.publish(this.event("focus.changed", {
+        frameId: FRAME_ID,
+        revision: this.revision,
+        phase,
+      }));
+    }
   }
 
   async wait(condition: WaitCondition, timeoutMs = 1000, signal?: AbortSignal): Promise<Omit<WaitResult, "snapshot">> {

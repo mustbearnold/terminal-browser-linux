@@ -393,6 +393,14 @@ export interface ActionEffect {
   data?: JsonValue;
 }
 
+export type FocusChangedPhase = "focusin" | "focusout";
+
+export interface FocusChangedEventData {
+  frameId: FrameId;
+  revision: number;
+  phase: FocusChangedPhase;
+}
+
 export interface ActionProof extends PageRevision {
   source?: SnapshotRef;
   target?: SnapshotRef;
@@ -569,6 +577,7 @@ export type AgentEventType =
   | "frame.lifecycle"
   | "load"
   | "dom.changed"
+  | "focus.changed"
   | "console"
   | "page.error"
   | "download"

@@ -294,6 +294,11 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(noActive.node, null);
   assert.equal(noActive.target, null);
 
+  const focusObservation = result<{ sequence: number }>(await router.handle(
+    request("page.observe", { pageId: FIXTURE_PAGE_ID, events: ["focus.changed"] }),
+    context,
+  ));
+
   const focused = result<{ verified: boolean; proof?: ActionProof; snapshot?: PageSnapshot }>(
     await router.handle(
       request("page.act", {
@@ -319,6 +324,24 @@ test("runs the deterministic agent control contract", async () => {
   assert.equal(active.node?.state?.focused, true);
   assert.equal(active.documentId, focused.snapshot?.documentId);
   assert.equal(active.revision, focused.snapshot?.revision);
+
+  const focusEvents = events.filter((event) => event.event === "focus.changed");
+  assert.equal(focusEvents.length, 1);
+  assert.deepEqual(focusEvents[0].data, {
+    frameId: "main",
+    revision: focused.snapshot!.revision,
+    phase: "focusin",
+  });
+  const replayedFocus = result<{ replayed: number; sequence: number }>(await router.handle(
+    request("page.observe", {
+      pageId: FIXTURE_PAGE_ID,
+      events: ["focus.changed"],
+      afterSequence: focusObservation.sequence,
+    }),
+    context,
+  ));
+  assert.ok(replayedFocus.replayed > 0);
+  assert.equal(replayedFocus.sequence >= focusEvents[0].sequence, true);
 
   result(await router.handle(request("page.observe", { pageId: FIXTURE_PAGE_ID, events: ["dom.changed"] }), context));
 
@@ -410,7 +433,7 @@ test("runs the deterministic agent control contract", async () => {
     context,
   ));
   assert.equal(revealedWait.satisfied, true);
-  assert.deepEqual(events.map((event) => event.event), ["dom.changed", "dom.changed", "dom.changed"]);
+  assert.deepEqual(events.filter((event) => event.event === "dom.changed").map((event) => event.event), ["dom.changed", "dom.changed", "dom.changed"]);
 
   const delta = result<PageSnapshotDelta>(
     await router.handle(

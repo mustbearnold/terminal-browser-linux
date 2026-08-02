@@ -33,6 +33,11 @@ Native JavaScript dialogs arrive as `dialog` events with a pending `dialogId`.
 Respond with `page.dialog` using `accept` or `dismiss`; prompt responses may
 include `promptText` when the underlying browser supports prompts.
 
+Subscribe to `focus.changed` when an agent needs to react to focus transitions.
+Each event includes the affected frame, that frame's new DOM revision, and
+whether the transition entered or left focus; call `page.active` to recover the
+current page revision-bound control.
+
 Use `page.wait` with an `element` condition to wait on semantic state such as
 `attached`, `visible`, `enabled`, `disabled`, `focused`, `value`, `checked`,
 `expanded`, `invalid`, `pressed`, `readOnly`, `required`, `selected`, or `text`.

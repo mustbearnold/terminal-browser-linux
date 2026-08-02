@@ -52,7 +52,7 @@ async function run() {
     const events = [];
     const unsubscribe = client.onEvent((event) => events.push(event));
     try {
-      await client.observe(pageId, ["dom.changed", "frame.lifecycle"]);
+      await client.observe(pageId, ["dom.changed", "frame.lifecycle", "focus.changed"]);
       const initial = await client.call("page.snapshot", {
         pageId,
         options: { includeGeometry: true },
@@ -259,6 +259,13 @@ async function run() {
       assert.equal(active.node?.frameId, activeFrameId);
       assert.equal(active.node?.state?.focused, true);
       assert.equal(active.target?.ref, active.node?.ref);
+      const focusEvent = events.find((event) => event.event === "focus.changed"
+        && event.data?.frameId === activeFrameId
+        && event.data?.phase === "focusin");
+      assert.ok(focusEvent, "cross-origin frame focus event was not emitted");
+      assert.ok(events.some((event) => event.event === "dom.changed"
+        && event.data?.frameId === activeFrameId
+        && event.data?.revision === focusEvent.data?.revision), "cross-origin frame focus event had no matching DOM revision");
 
       const hovered = await client.call("page.act", {
         pageId,

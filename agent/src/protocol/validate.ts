@@ -396,6 +396,7 @@ const agentEventTypes = new Set([
   "frame.lifecycle",
   "load",
   "dom.changed",
+  "focus.changed",
   "console",
   "page.error",
   "download",

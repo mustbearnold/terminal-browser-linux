@@ -31,6 +31,7 @@ import type {
   EventHistoryStore,
   PageBackend,
   PageActiveResult,
+  FocusChangedEventData,
   PageFrame,
   PageFrameSnapshot,
   PageCapture,
@@ -188,6 +189,7 @@ const WAIT_WAKE_EVENTS = new Set<AgentEvent["event"]>([
   "frame.lifecycle",
   "load",
   "dom.changed",
+  "focus.changed",
 ]);
 
 export class ElectronPageBackend implements PageBackend {
@@ -2432,6 +2434,10 @@ export class ElectronPageBackend implements PageBackend {
       this.emit("dialog", event.data);
       return;
     }
+    if (event.event === "focus.changed") {
+      if (isFocusChangedEventData(event.data)) this.emit("focus.changed", event.data);
+      return;
+    }
     if (event.event !== "dom.changed") return;
     const data = event.data && typeof event.data === "object"
       ? event.data as Record<string, unknown>
@@ -3188,13 +3194,13 @@ function agentStateSetupScript(key: string, frameId: string): string {
         elementIndexByRoleName: new Map(),
         elementIndexRoleNameDirty: true,
       };
-      const emit = () => {
+      const emit = (event, data) => {
         const binding = window.__pixelEmit;
         if (typeof binding !== "function") return;
         try {
           binding(JSON.stringify({
             channel: ${JSON.stringify(AGENT_EVENT_CHANNEL)},
-            data: { event: "dom.changed", data: { frameId: state.frameId, revision: state.revision } },
+            data: { event, data },
           }));
         } catch {}
       };
@@ -3211,7 +3217,13 @@ function agentStateSetupScript(key: string, frameId: string): string {
           state.elementRefs = new WeakMap();
           state.changeLog.push({ revision: state.revision, changes });
           while (state.changeLog.length > 64) state.changeLog.shift();
-          emit();
+          emit("dom.changed", { frameId: state.frameId, revision: state.revision });
+          for (const phase of [...new Set(changes
+            .map((change) => change.kind)
+            .filter((kind) => kind === "focusin" || kind === "focusout")
+          )]) {
+            emit("focus.changed", { frameId: state.frameId, revision: state.revision, phase });
+          }
         });
       };
       const observer = new MutationObserver((records) => {
@@ -4201,6 +4213,14 @@ function isPointResult(value: unknown): value is { ok: true; x: number; y: numbe
 
 function isActiveElementInfo(value: unknown): value is ActiveElementInfo {
   return !!value && typeof value === "object" && typeof (value as Record<string, unknown>).ok === "boolean";
+}
+
+function isFocusChangedEventData(value: unknown): value is FocusChangedEventData {
+  if (!value || typeof value !== "object") return false;
+  const data = value as Record<string, unknown>;
+  return typeof data.frameId === "string"
+    && Number.isSafeInteger(data.revision)
+    && (data.phase === "focusin" || data.phase === "focusout");
 }
 
 function hasExpectation(expect: ActionExpectation | undefined): boolean {

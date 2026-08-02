@@ -8,4 +8,6 @@ Use `page.act` with `action.type` `focus` when an agent needs to establish focus
 
 Use `page.active` when an agent needs to recover the currently focused semantic control; its result is revision-scoped and may be used as the next action target.
 
+Emit and consume `focus.changed` as a resumable event instead of making agents poll generic DOM changes for focus state.
+
 Run `pnpm --filter terminal-browser-agent check` before handing off changes. Build the workspace packages before running a repository-wide typecheck when a package consumes generated declarations.

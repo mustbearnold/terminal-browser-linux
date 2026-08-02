@@ -102,6 +102,13 @@ test("validates request deadlines and cancellation operations", () => {
     }),
     (error: unknown) => error instanceof AgentError && error.code === "INVALID_MESSAGE",
   );
+  const focusObservation = parseAgentMessage({
+    ...listRequest(),
+    op: "page.observe",
+    pageId: "page-1",
+    events: ["focus.changed"],
+  });
+  assert.equal(focusObservation.kind, "request");
   assert.throws(
     () => parseAgentMessage({
       ...listRequest(),

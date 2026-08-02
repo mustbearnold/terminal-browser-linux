@@ -159,7 +159,7 @@ export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
     timeoutMs: number("Maximum wait duration in milliseconds."),
     output: snapshotOutputSchema(),
   }, ["pageId", "condition"]))),
-  tool("terminal_browser_page_observe", "Subscribe to resumable page lifecycle and DOM events.", "page.observe", "page.observe", object({
+  tool("terminal_browser_page_observe", "Subscribe to resumable page lifecycle, DOM, and focus events.", "page.observe", "page.observe", object({
     pageId: string("Page identifier."),
     events: { type: "array", items: string("Event type.") },
     afterSequence: number("Replay events after this cursor."),
