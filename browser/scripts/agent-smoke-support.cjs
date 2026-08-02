@@ -10,8 +10,10 @@ const electron = path.join(root, "browser/node_modules/.bin/electron");
 const browserMain = path.join(root, "browser/dist/main.js");
 const runtimeHome = process.env.XDG_RUNTIME_DIR || path.join(os.homedir(), ".local/state");
 const instancesDir = path.join(runtimeHome, "terminal-browser", "instances");
+const hostCleanups = new WeakMap();
 
-function launchHost() {
+function launchHost(envOverrides = {}) {
+  const smokeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-browser-smoke-"));
   const electronSwitch = ` --ozone-platform=x11${process.env.TERMINAL_BROWSER_SMOKE_NO_SANDBOX === "1" ? " --no-sandbox" : ""}`;
   const host = spawn(
     "script",
@@ -20,9 +22,15 @@ function launchHost() {
       cwd: root,
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ELECTRON_OZONE_PLATFORM_HINT: "x11" },
+      env: {
+        ...process.env,
+        ELECTRON_OZONE_PLATFORM_HINT: "x11",
+        TERMINAL_BROWSER_AGENT_ANNOTATIONS: path.join(smokeDirectory, "agent-annotations.json"),
+        ...envOverrides,
+      },
     },
   );
+  hostCleanups.set(host, () => fs.rmSync(smokeDirectory, { recursive: true, force: true }));
   const output = [];
   const capture = (chunk) => {
     output.push(chunk.toString());
@@ -57,13 +65,16 @@ async function waitForSocket(existing, timeoutMs, output) {
 }
 
 function stopHost(host) {
-  if (!host.pid) return;
-  try {
-    process.kill(-host.pid, "SIGTERM");
-  } catch {}
-  try {
-    host.kill("SIGTERM");
-  } catch {}
+  if (host?.pid) {
+    try {
+      process.kill(-host.pid, "SIGTERM");
+    } catch {}
+    try {
+      host.kill("SIGTERM");
+    } catch {}
+  }
+  hostCleanups.get(host)?.();
+  hostCleanups.delete(host);
 }
 
 function dataUrl(value) {

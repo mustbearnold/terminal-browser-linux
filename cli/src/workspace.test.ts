@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { promptTag } from "./workspace";
+import { promptTag, selectPeerPane } from "./workspace";
 import type { PageAnnotation } from "terminal-browser-agent";
+import type { Pane } from "pixel-terminals";
 
 test("formats a compact annotation tag without submitting by default", () => {
   const annotation = {
@@ -33,4 +34,41 @@ test("formats a compact annotation tag without submitting by default", () => {
     '@tb-7 page=browser/tab/1 url=https://example.com/settings target={"locator":{"kind":"role","role":"button","name":"Save"}} note=save control loses focus',
   );
   assert.equal(promptTag(annotation, true).endsWith("\n"), true);
+});
+
+function pane(paneId: string, self = false, title = "agent"): Pane {
+  return { window: "window-1", tab: "tab-1", pane: paneId, title, self };
+}
+
+test("--left prefers the one non-self peer when the command shell is also present", () => {
+  assert.equal(
+    selectPeerPane([
+      pane("shell", true, "shell"),
+      pane("agent", false, "claude"),
+      pane("browser", false, "terminal-browser:browser-1"),
+    ], "browser"),
+    "agent",
+  );
+});
+
+test("--left can attach the only peer when the command runs in the agent pane", () => {
+  assert.equal(
+    selectPeerPane([
+      pane("agent", true, "claude"),
+      pane("browser", false, "terminal-browser:browser-1"),
+    ], "browser"),
+    "agent",
+  );
+});
+
+test("--left keeps rejecting genuinely ambiguous peers", () => {
+  assert.throws(
+    () => selectPeerPane([
+      pane("shell", true, "shell"),
+      pane("agent-1", false, "claude"),
+      pane("agent-2", false, "codex"),
+      pane("browser", false, "terminal-browser:browser-1"),
+    ], "browser"),
+    /--left found 2 possible agent panes/,
+  );
 });

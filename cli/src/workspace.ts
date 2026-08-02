@@ -215,6 +215,10 @@ async function requirePane(backend: Backend, paneId: string, browserPaneId: stri
 async function peerPane(backend: Backend, browserPaneId: string | null): Promise<string> {
   if (!browserPaneId) throw new Error("browser pane is not discoverable");
   const panes = await backend.panes();
+  return selectPeerPane(panes, browserPaneId);
+}
+
+export function selectPeerPane(panes: readonly Pane[], browserPaneId: string): string {
   const browser = panes.find((pane) => pane.pane === browserPaneId);
   if (!browser) throw new Error(`browser pane ${browserPaneId} is no longer discoverable`);
   const peers = panes.filter((pane) =>
@@ -223,10 +227,12 @@ async function peerPane(backend: Backend, browserPaneId: string | null): Promise
     pane.tab === browser.tab &&
     !pane.title.includes("terminal-browser:"),
   );
-  if (peers.length !== 1) {
-    throw new Error(`--left found ${peers.length} possible agent panes; pass --pane <pane-id>`);
+  const nonSelfPeers = peers.filter((pane) => !pane.self);
+  const candidates = nonSelfPeers.length > 0 ? nonSelfPeers : peers;
+  if (candidates.length !== 1) {
+    throw new Error(`--left found ${candidates.length} possible agent panes; pass --pane <pane-id>`);
   }
-  return peers[0].pane;
+  return candidates[0].pane;
 }
 
 async function sendToPane(backend: Backend, paneId: string, text: string, browserPaneId: string | null): Promise<boolean> {
