@@ -72,6 +72,10 @@ Usage: terminal-browser workspace <open|attach|list|panes|close|note>
 Manages an explicit browser-to-agent pane binding. Notes are stored against a
 semantic DOM target and can be pasted into the attached agent prompt as a
 compact @tb-* tag. Pasting never submits the prompt unless --commit is used.
+Bindings remember the pane's title, working directory, and foreground command;
+workspace list reconciles replacements and reports whether the agent pane is
+attached, missing, or ambiguous. A stable binding fails closed rather than
+silently sending a note to an unrelated shell.
 
 Commands:
   open [url] [direction] --agent-pane <pane-id> [--agent <kind>]

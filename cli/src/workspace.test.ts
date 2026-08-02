@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { promptTag, resolveAgentPane, selectPeerPane } from "./workspace";
+import { agentKindForPane, promptTag, resolveAgentPane, selectPeerPane } from "./workspace";
 import type { PageAnnotation } from "terminal-browser-agent";
 import type { Pane } from "pixel-terminals";
 
@@ -148,6 +148,32 @@ test("workspace binding keeps rejecting ambiguous replacements", () => {
     }),
     /--left found 2 possible agent panes/,
   );
+});
+
+test("workspace binding fails closed instead of targeting the remaining shell", () => {
+  assert.throws(
+    () => resolveAgentPane([
+      pane("shell", true, "shell", { cwd: "/work/project", command: "fish" }),
+      pane("browser", false, "terminal-browser:browser-1"),
+    ], "browser", {
+      browserKey: "browser-1",
+      agentPaneId: "closed-agent",
+      agentKind: "claude",
+      agentPaneWindow: "window-1",
+      agentPaneTab: "tab-1",
+      agentPaneTitle: "claude",
+      agentPaneCwd: "/work/project",
+      agentPaneCommand: "claude",
+      updatedAt: "2026-08-03T00:00:00.000Z",
+    }),
+    /agent pane is no longer discoverable/,
+  );
+});
+
+test("workspace binding infers a coding-agent kind from the pane command", () => {
+  assert.equal(agentKindForPane(pane("agent", false, "claude", { command: "claude" })), "claude");
+  assert.equal(agentKindForPane(pane("agent", false, "agent", { command: "claude" }), "custom"), "custom");
+  assert.equal(agentKindForPane(pane("agent")), "generic");
 });
 
 test("workspace binding recovers a replacement in another tab by stable identity", () => {

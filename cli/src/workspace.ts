@@ -85,7 +85,7 @@ async function openWorkspace(
 ): Promise<void> {
   let agentPaneId = takeFlag(args, "--agent-pane");
   const left = takeBool(args, "--left");
-  const agentKind = takeFlag(args, "--agent") ?? "generic";
+  const requestedAgentKind = takeFlag(args, "--agent");
   const before = new Set((await browsers(backend)).map(recordKey));
   if (!args.some((value) => isDirection(value))) args.push("right");
   await openBrowser(args);
@@ -97,7 +97,7 @@ async function openWorkspace(
   if (left) agentPaneId = await peerPane(backend, browser.pane);
   const binding = agentPaneId === undefined
     ? undefined
-    : await saveBinding(backend, recordKey(browser), agentPaneId, agentKind, browser.pane);
+    : await saveBinding(backend, recordKey(browser), agentPaneId, requestedAgentKind, browser.pane);
   print({ browser: recordKey(browser), pane: browser.pane, binding });
 }
 
@@ -105,13 +105,13 @@ async function attachWorkspace(backend: Backend, args: string[]): Promise<void> 
   const browserKey = takeFlag(args, "--browser");
   let agentPaneId = takeFlag(args, "--pane") ?? takeFlag(args, "--agent-pane");
   const left = takeBool(args, "--left");
-  const agentKind = takeFlag(args, "--agent") ?? "generic";
+  const requestedAgentKind = takeFlag(args, "--agent");
   rejectRemaining(args);
   const browser = await selectBrowser(backend, browserKey);
   if (left) agentPaneId = await peerPane(backend, browser.pane);
   if (!agentPaneId) throw new Error("workspace attach requires --pane <pane-id> or --left");
   await requirePane(backend, agentPaneId, browser.pane);
-  const binding = await saveBinding(backend, recordKey(browser), agentPaneId, agentKind, browser.pane);
+  const binding = await saveBinding(backend, recordKey(browser), agentPaneId, requestedAgentKind, browser.pane);
   print(binding);
 }
 
@@ -119,11 +119,50 @@ async function listWorkspace(backend: Backend, args: string[]): Promise<void> {
   rejectRemaining(args);
   const running = new Map((await browsers(backend)).map((browser) => [recordKey(browser), browser]));
   const bindings = loadBindings();
-  print(bindings.map((binding) => ({
-    ...binding,
-    browserRunning: running.has(binding.browserKey),
-    browserPane: running.get(binding.browserKey)?.pane ?? null,
-  })));
+  const panes = bindings.some((binding) => running.has(binding.browserKey))
+    ? await backend.panes()
+    : [];
+  const result = bindings.map((binding) => {
+    const browser = running.get(binding.browserKey);
+    if (!browser) {
+      return {
+        ...binding,
+        browserRunning: false,
+        browserPane: null,
+        agentRunning: false,
+        agentPane: null,
+        bindingState: "browser-missing" as const,
+      };
+    }
+    try {
+      if (!browser.pane) throw new Error("browser pane is no longer discoverable");
+      const agentPaneId = resolveAgentPane(panes, browser.pane, binding);
+      const agentPane = panes.find((pane) => pane.pane === agentPaneId);
+      if (!agentPane) throw new Error(`no terminal pane ${agentPaneId}`);
+      const effective = paneIdentityChanged(binding, agentPane)
+        ? saveRecoveredBinding(binding, agentPane)
+        : binding;
+      return {
+        ...effective,
+        browserRunning: true,
+        browserPane: browser.pane,
+        agentRunning: true,
+        agentPane: agentPaneId,
+        bindingState: "attached" as const,
+      };
+    } catch (error) {
+      return {
+        ...binding,
+        browserRunning: true,
+        browserPane: browser.pane,
+        agentRunning: false,
+        agentPane: null,
+        bindingState: "agent-unresolved" as const,
+        bindingError: error instanceof Error ? error.message : String(error),
+      };
+    }
+  });
+  print(result);
 }
 
 async function listPanes(backend: Backend, args: string[]): Promise<void> {
@@ -192,14 +231,14 @@ async function saveBinding(
   backend: Backend,
   browserKey: string,
   agentPaneId: string,
-  agentKind: string,
+  requestedAgentKind: string | undefined,
   browserPaneId: string | null,
 ): Promise<WorkspaceBinding> {
   const agentPane = await requirePane(backend, agentPaneId, browserPaneId);
   const binding: WorkspaceBinding = {
     browserKey,
     agentPaneId,
-    agentKind,
+    agentKind: agentKindForPane(agentPane, requestedAgentKind),
     agentPaneWindow: agentPane.window,
     agentPaneTab: agentPane.tab,
     agentPaneTitle: agentPane.title,
@@ -260,6 +299,9 @@ export function resolveAgentPane(
   if (identityMatches.length > 1) {
     throw new Error(`workspace binding matches ${identityMatches.length} terminal panes; pass --pane <pane-id>`);
   }
+  if (hasPaneIdentity(binding)) {
+    throw new Error("workspace binding agent pane is no longer discoverable; pass --pane <pane-id> or reattach");
+  }
   return selectPeerPane(panes, browserPaneId);
 }
 
@@ -272,9 +314,9 @@ async function resolveBindingPane(
   if (!browserPaneId) throw new Error("browser pane is not discoverable");
   const panes = await backend.panes();
   const paneId = resolveAgentPane(panes, browserPaneId, binding);
-  if (paneId !== binding.agentPaneId) {
-    const pane = panes.find((candidate) => candidate.pane === paneId);
-    if (!pane) throw new Error(`no terminal pane ${paneId}; run terminal-browser workspace panes`);
+  const pane = panes.find((candidate) => candidate.pane === paneId);
+  if (!pane) throw new Error(`no terminal pane ${paneId}; run terminal-browser workspace panes`);
+  if (paneIdentityChanged(binding, pane)) {
     saveRecoveredBinding(binding, pane);
   }
   return paneId;
@@ -295,6 +337,18 @@ function agentPanes(panes: readonly Pane[], browserPaneId: string): Pane[] {
   return panes.filter((pane) => pane.pane !== browserPaneId && !pane.title.includes("terminal-browser:"));
 }
 
+export function agentKindForPane(pane: Pane, requested?: string): string {
+  return requested ?? pane.command ?? "generic";
+}
+
+function hasPaneIdentity(binding: WorkspaceBinding): boolean {
+  return binding.agentPaneWindow !== undefined ||
+    binding.agentPaneTab !== undefined ||
+    binding.agentPaneTitle !== undefined ||
+    binding.agentPaneCwd !== undefined ||
+    binding.agentPaneCommand !== undefined;
+}
+
 function matchesPaneIdentity(pane: Pane, binding: WorkspaceBinding): boolean {
   const hasCwd = binding.agentPaneCwd !== undefined;
   const hasCommand = binding.agentPaneCommand !== undefined;
@@ -305,20 +359,34 @@ function matchesPaneIdentity(pane: Pane, binding: WorkspaceBinding): boolean {
   return !hasCwd && !hasTitle && hasCommand && pane.command === binding.agentPaneCommand;
 }
 
-function saveRecoveredBinding(binding: WorkspaceBinding, pane: Pane): void {
-  const recovered: WorkspaceBinding = {
+function saveRecoveredBinding(binding: WorkspaceBinding, pane: Pane): WorkspaceBinding {
+  const recovered = recoveredBinding(binding, pane);
+  saveBindings(loadBindings().map((candidate) =>
+    candidate.browserKey === binding.browserKey ? recovered : candidate,
+  ));
+  return recovered;
+}
+
+function recoveredBinding(binding: WorkspaceBinding, pane: Pane): WorkspaceBinding {
+  return {
     ...binding,
     agentPaneId: pane.pane,
     agentPaneWindow: pane.window,
     agentPaneTab: pane.tab,
     agentPaneTitle: pane.title,
-    agentPaneCwd: pane.cwd,
-    agentPaneCommand: pane.command,
+    agentPaneCwd: pane.cwd ?? binding.agentPaneCwd,
+    agentPaneCommand: pane.command ?? binding.agentPaneCommand,
     updatedAt: new Date().toISOString(),
   };
-  saveBindings(loadBindings().map((candidate) =>
-    candidate.browserKey === binding.browserKey ? recovered : candidate,
-  ));
+}
+
+function paneIdentityChanged(binding: WorkspaceBinding, pane: Pane): boolean {
+  return binding.agentPaneId !== pane.pane ||
+    binding.agentPaneWindow !== pane.window ||
+    binding.agentPaneTab !== pane.tab ||
+    binding.agentPaneTitle !== pane.title ||
+    (pane.cwd !== undefined && binding.agentPaneCwd !== pane.cwd) ||
+    (pane.command !== undefined && binding.agentPaneCommand !== pane.command);
 }
 
 async function sendToPane(backend: Backend, paneId: string, text: string, browserPaneId: string | null): Promise<boolean> {
