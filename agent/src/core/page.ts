@@ -207,11 +207,13 @@ export class RevisionedPageSession implements PageSession {
     throwIfAborted(signal);
     if (this.backend.resolveTarget) {
       const before = await this.backend.identity(signal);
+      this.assertPageId(before.pageId, "identity");
       this.ledger.synchronize(before.pageId, before.documentId, before.revision);
       if (token) this.ledger.assertFresh(token);
       const resolved = await this.backend.resolveTarget(target, signal, options);
       throwIfAborted(signal);
       const after = await this.backend.identity(signal);
+      this.assertPageId(after.pageId, "identity");
       this.ledger.synchronize(after.pageId, after.documentId, after.revision);
       if (token) this.ledger.assertFresh(token);
       return resolved;
@@ -223,9 +225,16 @@ export class RevisionedPageSession implements PageSession {
 
   async frames(signal?: AbortSignal): Promise<PageFrameSnapshot> {
     throwIfAborted(signal);
-    const frames = await this.backend.frames(signal);
+    const captured = await this.backend.frames(signal);
     throwIfAborted(signal);
-    return frames;
+    this.assertPageId(captured.pageId, "frame tree");
+    const state = this.ledger.synchronize(captured.pageId, captured.documentId, captured.revision);
+    return {
+      ...captured,
+      pageId: this.pageId,
+      documentId: state.documentId,
+      revision: state.revision,
+    };
   }
 
   async query(
@@ -239,9 +248,9 @@ export class RevisionedPageSession implements PageSession {
       ? await this.backend.query(locator, normalizedOptions, signal)
       : await this.queryFromSnapshot(locator, normalizedOptions, signal);
     throwIfAborted(signal);
+    this.assertPageId(captured.pageId, "query");
     const state = this.ledger.synchronize(captured.pageId, captured.documentId, captured.revision);
     if (
-      captured.pageId !== this.pageId ||
       captured.nodes.length > normalizedOptions.limit ||
       captured.hiddenNodes.length > normalizedOptions.limit ||
       captured.matchCount < captured.nodes.length ||
@@ -268,9 +277,9 @@ export class RevisionedPageSession implements PageSession {
       ? await this.backend.queryBatch(normalizedQueries, signal)
       : await this.queryBatchFromSnapshot(normalizedQueries, signal);
     throwIfAborted(signal);
+    this.assertPageId(captured.pageId, "query batch");
     const state = this.ledger.synchronize(captured.pageId, captured.documentId, captured.revision);
     if (
-      captured.pageId !== this.pageId ||
       captured.queries.length !== normalizedQueries.length ||
       captured.queries.some((entry, index) => {
         const limit = normalizedQueries[index].options.limit;
@@ -296,6 +305,7 @@ export class RevisionedPageSession implements PageSession {
   async read(target: Target, token?: SnapshotToken, signal?: AbortSignal): Promise<PageReadResult> {
     throwIfAborted(signal);
     const before = await this.backend.identity(signal);
+    this.assertPageId(before.pageId, "identity");
     this.ledger.synchronize(before.pageId, before.documentId, before.revision);
     if (token) this.ledger.assertFresh(token);
 
@@ -312,6 +322,7 @@ export class RevisionedPageSession implements PageSession {
 
     throwIfAborted(signal);
     const after = await this.backend.identity(signal);
+    this.assertPageId(after.pageId, "identity");
     const state = this.ledger.synchronize(after.pageId, after.documentId, after.revision);
     if (before.documentId !== after.documentId || before.revision !== after.revision) {
       throw new AgentError("STALE_SNAPSHOT", "page changed while reading the target", { retryable: true });
@@ -338,10 +349,8 @@ export class RevisionedPageSession implements PageSession {
     }
     const captured = await this.backend.active(signal);
     throwIfAborted(signal);
+    this.assertPageId(captured.pageId, "active element");
     const state = this.ledger.synchronize(captured.pageId, captured.documentId, captured.revision);
-    if (captured.pageId !== this.pageId) {
-      throw new AgentError("INTERNAL_ERROR", "active element backend returned a different page");
-    }
     return {
       ...captured,
       pageId: this.pageId,
@@ -355,9 +364,12 @@ export class RevisionedPageSession implements PageSession {
     throwIfAborted(signal);
     const captured = await this.backend.snapshot(options, signal);
     throwIfAborted(signal);
+    this.assertPageId(captured.pageId, "snapshot");
     const state = this.ledger.synchronize(captured.pageId, captured.documentId, captured.revision);
     const snapshot = {
       ...captured,
+      pageId: this.pageId,
+      documentId: state.documentId,
       revision: state.revision,
       snapshotId: asSnapshotId(`${this.pageId}:${++this.snapshotSequence}`),
     };
@@ -483,6 +495,7 @@ export class RevisionedPageSession implements PageSession {
     const offset = cursor?.offset ?? 0;
     const captured = await this.backend.snapshotWindow(windowOptions, offset, signal);
     throwIfAborted(signal);
+    this.assertPageId(captured.pageId, "snapshot window");
     const state = this.ledger.synchronize(captured.pageId, captured.documentId, captured.revision);
     if (cursor !== undefined && (state.documentId !== cursor.documentId || state.revision !== cursor.revision)) {
       throw new AgentError("STALE_SNAPSHOT", "snapshot window is no longer current", {
@@ -560,6 +573,7 @@ export class RevisionedPageSession implements PageSession {
       const captured = await this.backend.snapshotDelta(entry.snapshot, entry.options, signal);
       if (captured) {
         throwIfAborted(signal);
+        this.assertPageId(captured.pageId, "snapshot delta");
         const state = this.ledger.synchronize(captured.pageId, captured.documentId, captured.revision);
         const snapshotId = asSnapshotId(`${this.pageId}:${++this.snapshotSequence}`);
         const normalized = {
@@ -590,7 +604,14 @@ export class RevisionedPageSession implements PageSession {
     }
     const capture = await this.backend.capture(options, signal);
     throwIfAborted(signal);
-    return capture;
+    this.assertPageId(capture.pageId, "capture");
+    const state = this.ledger.synchronize(capture.pageId, capture.documentId, capture.revision);
+    return {
+      ...capture,
+      pageId: this.pageId,
+      documentId: state.documentId,
+      revision: state.revision,
+    };
   }
 
   assertFresh(token: SnapshotToken): void {
@@ -622,11 +643,13 @@ export class RevisionedPageSession implements PageSession {
     return this.enqueueAction(async () => {
       throwIfAborted(signal);
       const before = await this.backend.identity(signal);
+      this.assertPageId(before.pageId, "identity");
       this.ledger.synchronize(before.pageId, before.documentId, before.revision);
       if (token) this.ledger.assertFresh(token);
       const result = await this.backend.act(action, token, expect, signal);
       throwIfAborted(signal);
       const after = await this.backend.identity(signal);
+      this.assertPageId(after.pageId, "identity");
       this.ledger.synchronize(after.pageId, after.documentId, after.revision);
       return { ...result, ...(await this.actionOutput(output, signal)) };
     }, signal);
@@ -649,11 +672,13 @@ export class RevisionedPageSession implements PageSession {
         const step = steps[index];
         try {
           const before = await this.backend.identity(signal);
+          this.assertPageId(before.pageId, "identity");
           this.ledger.synchronize(before.pageId, before.documentId, before.revision);
           if (step.token) this.ledger.assertFresh(step.token);
           const result = await this.backend.act(step.action, step.token, step.expect, signal);
           throwIfAborted(signal);
           const after = await this.backend.identity(signal);
+          this.assertPageId(after.pageId, "identity");
           this.ledger.synchronize(after.pageId, after.documentId, after.revision);
           const normalized = { ...result } satisfies ActionResult;
           effects.push(...normalized.effects);
@@ -816,6 +841,11 @@ export class RevisionedPageSession implements PageSession {
       return { snapshotDelta: await this.snapshotDelta(output.base, undefined, signal) };
     }
     return { snapshot: await this.snapshot(undefined, signal) };
+  }
+
+  private assertPageId(pageId: PageId, source: string): void {
+    if (pageId === this.pageId) return;
+    throw new AgentError("INTERNAL_ERROR", `${source} backend returned a different page`);
   }
 }
 

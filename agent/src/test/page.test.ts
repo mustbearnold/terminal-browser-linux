@@ -104,6 +104,15 @@ class LiveOutputBackend extends OutputBackend {
   }
 }
 
+class MismatchedPageBackend extends OutputBackend {
+  override async frames() {
+    return {
+      ...(await super.frames()),
+      pageId: asPageId("other-page"),
+    };
+  }
+}
+
 class QueuedOutputBackend extends OutputBackend {
   started!: () => void;
   readonly startedPromise = new Promise<void>((resolve) => {
@@ -135,6 +144,13 @@ test("resolves a live target without building a snapshot", async () => {
   assert.equal(result.ref, "r-live");
   assert.equal(backend.resolveTargetCalls, 1);
   assert.equal(backend.snapshotCalls, 0);
+});
+
+test("rejects frame results that belong to another page", async () => {
+  await assert.rejects(
+    session(new MismatchedPageBackend()).frames(),
+    (error: unknown) => error instanceof AgentError && error.code === "INTERNAL_ERROR",
+  );
 });
 
 test("returns a revision-bound read result and rejects it after a page change", async () => {

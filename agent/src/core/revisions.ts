@@ -19,8 +19,20 @@ export class RevisionLedger {
   }
 
   synchronize(pageId: PageId, documentId: DocumentId, revision: number): RevisionState {
-    if (!Number.isInteger(revision) || revision < 0) {
-      throw new AgentError("INVALID_REQUEST", "revision must be a non-negative integer");
+    if (!Number.isSafeInteger(revision) || revision < 0) {
+      throw new AgentError("INVALID_REQUEST", "revision must be a non-negative safe integer");
+    }
+    const current = this.pages.get(pageId);
+    if (current && current.documentId === documentId && revision < current.revision) {
+      throw new AgentError("STALE_SNAPSHOT", "page revision regressed while synchronizing state", {
+        retryable: true,
+        details: {
+          pageId,
+          documentId,
+          expectedRevision: current.revision,
+          receivedRevision: revision,
+        },
+      });
     }
     const next = { pageId, documentId, revision };
     this.pages.set(pageId, next);

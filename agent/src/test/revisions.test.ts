@@ -50,3 +50,35 @@ test("resets the revision when a document navigates", () => {
     revision: 0,
   });
 });
+
+test("rejects same-document revision regressions", () => {
+  const ledger = new RevisionLedger();
+  const pageId = asPageId("page-1");
+  const documentId = asDocumentId("document-1");
+  ledger.synchronize(pageId, documentId, 4);
+
+  assert.throws(
+    () => ledger.synchronize(pageId, documentId, 3),
+    (error: unknown) => {
+      assert.ok(error instanceof AgentError);
+      assert.equal(error.code, "STALE_SNAPSHOT");
+      assert.equal(error.retryable, true);
+      assert.deepEqual(error.details, {
+        pageId,
+        documentId,
+        expectedRevision: 4,
+        receivedRevision: 3,
+      });
+      return true;
+    },
+  );
+  assert.deepEqual(ledger.current(pageId), { pageId, documentId, revision: 4 });
+});
+
+test("requires safe integer revisions", () => {
+  const ledger = new RevisionLedger();
+  assert.throws(
+    () => ledger.synchronize(asPageId("page-1"), asDocumentId("document-1"), Number.MAX_SAFE_INTEGER + 1),
+    (error: unknown) => error instanceof AgentError && error.code === "INVALID_REQUEST",
+  );
+});
