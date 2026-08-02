@@ -137,7 +137,7 @@ test("reconnects explicitly and resumes observations from the latest requested e
     await client.call("page.act", click);
     assert.deepEqual(events, [1]);
 
-    await firstTransport.close();
+    await client.disconnect();
     assert.equal(client.state, "disconnected");
     await assert.rejects(
       client.call("pages.list", {}),

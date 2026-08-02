@@ -400,6 +400,13 @@ export class AgentClient {
     await transport.close();
   }
 
+  async disconnect(): Promise<void> {
+    if (this.closed || this.connectionState !== "connected") return;
+    const transport = this.transport;
+    this.handleClose();
+    await transport.close();
+  }
+
   private startInternal<Operation extends AgentOperation>(
     operation: Operation,
     fields: AgentRequestFields<Operation>,

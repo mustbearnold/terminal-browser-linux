@@ -51,11 +51,12 @@ current page revision-bound control.
 
 `page.observe` returns a page-bound `cursor` and a `subscriptionId`; pass the
 cursor as `after` when reconnecting so events missed during transport loss are
-replayed. `AgentClient.connect` supplies an explicit `client.reconnect()` path
-that renegotiates `hello` and resumes observations created through the typed or
-tool client; in-flight actions still fail on disconnect and must only be retried
-with their idempotency key. Use `page.observe.cancel` when the event stream is no longer needed
-so a long-lived connection does not accumulate listeners. Replay counts and
+replayed. `AgentClient.connect` supplies explicit `client.disconnect()` and
+`client.reconnect()` paths: disconnect keeps resumable state, reconnect
+renegotiates `hello` and resumes observations created through the typed or tool
+client. In-flight actions still fail on disconnect and must only be retried with
+their idempotency key. Use `page.observe.cancel` when the event stream is no
+longer needed so a long-lived connection does not accumulate listeners. Replay counts and
 delivery are limited to the requested event types, and closing a page releases
 its remaining subscriptions. If the cursor falls outside retained history,
 recover with a fresh page snapshot before observing again.

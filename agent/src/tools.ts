@@ -234,6 +234,10 @@ export class AgentToolClient {
     return this.client.reconnect(options);
   }
 
+  disconnect(): Promise<void> {
+    return this.client.disconnect();
+  }
+
   async startTool<Name extends AgentToolName>(
     name: Name,
     argumentsValue?: AgentToolArguments<Name>,
