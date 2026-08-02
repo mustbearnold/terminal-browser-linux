@@ -2661,6 +2661,8 @@ function agentStateSetupScript(key: string, frameId: string): string {
         elementIndexById: new Map(),
         elementIndexByTestId: new Map(),
         elementIndexAttributeDirty: false,
+        elementIndexByRole: new Map(),
+        elementIndexRoleDirty: true,
       };
       const emit = () => {
         const binding = window.__pixelEmit;
@@ -2689,8 +2691,14 @@ function agentStateSetupScript(key: string, frameId: string): string {
         });
       };
       const observer = new MutationObserver((records) => {
-        if (records.some((record) => record.type === "childList")) state.elementIndexDirty = true;
-        if (records.some((record) => record.type === "attributes")) state.elementIndexAttributeDirty = true;
+        if (records.some((record) => record.type === "childList")) {
+          state.elementIndexDirty = true;
+          state.elementIndexRoleDirty = true;
+        }
+        if (records.some((record) => record.type === "attributes")) {
+          state.elementIndexAttributeDirty = true;
+          state.elementIndexRoleDirty = true;
+        }
         invalidate("mutation", null);
       });
       const observedRoots = new WeakSet();
@@ -2703,7 +2711,10 @@ function agentStateSetupScript(key: string, frameId: string): string {
       };
       const observeRoot = (root) => {
         if (observedRoots.has(root)) return;
-        if (state.elementIndexReady && !state.elementIndexRoots.includes(root)) state.elementIndexDirty = true;
+        if (state.elementIndexReady && !state.elementIndexRoots.includes(root)) {
+          state.elementIndexDirty = true;
+          state.elementIndexRoleDirty = true;
+        }
         observedRoots.add(root);
         observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
         for (const event of ["input", "change", "focusin", "focusout"]) {
@@ -2726,6 +2737,7 @@ function agentStateSetupScript(key: string, frameId: string): string {
         state.elementIndexById = byId;
         state.elementIndexByTestId = byTestId;
         state.elementIndexAttributeDirty = false;
+        state.elementIndexRoleDirty = true;
       };
       const rebuildElementIndex = () => {
         state.elementIndexReady = false;
@@ -2986,11 +2998,27 @@ function liveLocatorBatchScript(
     state.ensureElementAttributeIndex();
     const roots = state.elementIndexRoots;
     const elements = state.elementIndexElements;
+    const ensureRoleIndex = () => {
+      if (!state.elementIndexRoleDirty) return;
+      const byRole = new Map();
+      for (const element of elements) {
+        const role = roleFor(element);
+        const bucket = byRole.get(role);
+        if (bucket) bucket.push(element);
+        else byRole.set(role, [element]);
+      }
+      state.elementIndexByRole = byRole;
+      state.elementIndexRoleDirty = false;
+    };
     const simpleIdFor = (selector) => {
       const match = /^#([A-Za-z_][A-Za-z0-9_-]*)$/.exec(selector);
       return match ? match[1] : null;
     };
     const indexedCandidates = (locator) => {
+      if (locator.kind === "role") {
+        ensureRoleIndex();
+        return state.elementIndexByRole.get(locator.role) || [];
+      }
       if (locator.kind === "testid") return state.elementIndexByTestId.get(locator.value) || [];
       if (locator.kind === "css") {
         const id = simpleIdFor(locator.value);

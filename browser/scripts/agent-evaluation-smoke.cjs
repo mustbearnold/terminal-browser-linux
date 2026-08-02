@@ -420,6 +420,11 @@ function semanticScenarios(pageId) {
           pageId,
           options: { interactiveOnly: false, includeGeometry: false },
         });
+        const roleQuery = await client.call("page.query", {
+          pageId,
+          locator: { kind: "role", role: "textbox", name: "Full name", exact: true },
+          options: { limit: 1, diagnostics: "summary" },
+        });
         const byId = (id) => snapshot.nodes.find((node) => node.attributes?.id === id);
         const launch = byId("launch");
         const fullName = byId("full-name");
@@ -444,13 +449,18 @@ function semanticScenarios(pageId) {
           && hidden?.visible === false && hidden.enabled === false
           && ariaHidden?.visible === false && ariaHidden.enabled === false
           && inert?.visible === false && inert.enabled === false
-          && disabled?.visible === true && disabled.enabled === false;
+          && disabled?.visible === true && disabled.enabled === false
+          && roleQuery.nodes[0]?.attributes?.id === "full-name"
+          && roleQuery.matchCount === 1
+          && roleQuery.diagnostics?.queries[0]?.cacheHit === false
+          && roleQuery.diagnostics.queries[0].elementsEvaluated < roleQuery.diagnostics.elementsScanned;
         return {
           passed,
           metrics: {
             semanticNodes: snapshot.nodes.length,
             nativeRoleChecks: [search, amount, volume, choices].filter(Boolean).length,
             stateChecks: [fullName, notifications, pressed, hidden, ariaHidden, inert, disabled].filter(Boolean).length,
+            roleIndexedCandidates: roleQuery.diagnostics?.queries[0]?.elementsEvaluated ?? 0,
           },
         };
       },
