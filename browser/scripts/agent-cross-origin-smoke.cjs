@@ -5,7 +5,7 @@ const http = require("node:http");
 const { AgentClient } = require("../../agent/dist");
 const { launchHost, listSockets, stopHost, waitForSocket } = require("./agent-smoke-support.cjs");
 
-const child = `<!doctype html><style>body{font:16px sans-serif;margin:18px}button,input,select{font:16px sans-serif;margin:8px;padding:8px}</style><button aria-label="Navigate frame" onclick="location.href='/frame-next.html'">Navigate frame</button><button aria-label="Remove frame" onclick="parent.postMessage({type:'remove-frame'},'*')">Remove frame</button><label>Frame name <input aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input type="checkbox" aria-label="Frame enabled">Frame enabled</label><div role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span>`;
+const child = `<!doctype html><style>body{font:16px sans-serif;margin:18px}button,input,select{font:16px sans-serif;margin:8px;padding:8px}</style><button aria-label="Navigate frame" onclick="location.href='/frame-next.html'">Navigate frame</button><button aria-label="Remove frame" onclick="parent.postMessage({type:'remove-frame'},'*')">Remove frame</button><label>Frame name <input aria-label="Frame name"></label><label>Frame choice <select aria-label="Frame choice"><option value="one">One</option><option value="two">Two</option></select></label><label><input type="checkbox" aria-label="Frame enabled">Frame enabled</label><div id="frame-scroll-region" role="region" aria-label="Frame scroll area" style="height:90px;overflow:auto;border:1px solid #888"><div style="height:400px;padding:8px">Scrollable frame content</div></div><button aria-label="Frame action" onclick="document.querySelector('#status').textContent='Clicked';const b=document.createElement('button');b.setAttribute('aria-label','Frame dynamic');b.textContent='Frame dynamic';document.body.append(b)">Frame action</button><span id="status">Idle</span><script>document.getElementById('frame-scroll-region').addEventListener('wheel',event=>{document.getElementById('status').textContent='Wheel '+event.deltaY+' '+event.isTrusted});</script>`;
 
 async function run() {
   const childServer = await serve(child);
@@ -246,6 +246,7 @@ async function run() {
           direction: "down",
           amount: 60,
         },
+        expect: { text: "Wheel 60 true", timeoutMs: 1_000 },
       });
 
       const selected = await client.call("page.act", {
@@ -365,6 +366,7 @@ async function run() {
           direction: "down",
           amount: 60,
         },
+        expect: { text: "Wheel 60 true", timeoutMs: 1_000 },
       });
       assert.equal(scrolledRetry.replayed, true, "retrying an action did not replay the cached result");
       assert.equal(scrolledRetry.proof?.value, scrolled.proof?.value, "replayed action result changed");

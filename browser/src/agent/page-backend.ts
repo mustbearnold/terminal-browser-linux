@@ -1635,23 +1635,64 @@ export class ElectronPageBackend implements PageBackend {
       ? await this.resolveActionTarget(action.target, token, before, signal)
       : null;
     const frameId = target ? String(target.node.frameId) : "main";
+    let x: number;
+    let y: number;
     if (target) {
       const inspection = await this.inspect(target.ref, frameId, signal);
-      if (!inspection.ok || !inspection.visible || !inspection.enabled) {
+      if (
+        !inspection.ok ||
+        !inspection.visible ||
+        !inspection.enabled ||
+        inspection.occluded ||
+        inspection.inViewport === false ||
+        inspection.x === undefined ||
+        inspection.y === undefined
+      ) {
         throw new AgentError("NOT_INTERACTABLE", "scroll target is not safely usable", { retryable: true });
       }
+      x = inspection.x;
+      y = inspection.y;
+    } else {
+      const point = await this.controller.runJs(viewportPointScript());
+      if (!isPointResult(point)) {
+        throw new AgentError("ACTION_UNVERIFIED", "scroll viewport geometry was unavailable", { retryable: true });
+      }
+      x = point.x;
+      y = point.y;
     }
 
     const amount = Math.max(1, action.amount ?? 500);
     const deltaX = action.direction === "right" ? amount : action.direction === "left" ? -amount : 0;
     const deltaY = action.direction === "down" ? amount : action.direction === "up" ? -amount : 0;
+    const targetRef = target?.ref ? String(target.ref) : null;
+    const targetNodeId = target?.node.nodeId;
+    const beforeRaw = frameId === "main"
+      ? await this.controller.runJs(scrollStateScript(this.agentKey, targetRef, targetNodeId))
+      : await this.controller.runJsInFrame(frameId, scrollStateScript(this.agentKey, targetRef, targetNodeId));
+    if (!isScrollResult(beforeRaw) || beforeRaw.x === undefined || beforeRaw.y === undefined) {
+      throw new AgentError("ACTION_UNVERIFIED", "scroll position could not be read before scrolling", { retryable: true });
+    }
+
+    this.controller.focusContent();
     throwIfAborted(signal);
-    const source = scrollScript(this.agentKey, target?.ref ? String(target.ref) : null, deltaX, deltaY);
-    const raw = frameId === "main"
-      ? await this.controller.runJs(source)
-      : await this.controller.runJsInFrame(frameId, source);
+    await this.controller.cdp("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x,
+      y,
+    });
     throwIfAborted(signal);
-    if (!isScrollResult(raw) || !raw.ok) {
+    await this.controller.cdp("Input.dispatchMouseEvent", {
+      type: "mouseWheel",
+      x,
+      y,
+      deltaX,
+      deltaY,
+    });
+    throwIfAborted(signal);
+    const afterRaw = frameId === "main"
+      ? await this.controller.runJs(scrollStateScript(this.agentKey, targetRef, targetNodeId, beforeRaw.x, beforeRaw.y))
+      : await this.controller.runJsInFrame(frameId, scrollStateScript(this.agentKey, targetRef, targetNodeId, beforeRaw.x, beforeRaw.y));
+    if (!isScrollResult(afterRaw) || !afterRaw.ok || afterRaw.x === undefined || afterRaw.y === undefined) {
       throw new AgentError("ACTION_UNVERIFIED", "scroll position could not be read after scrolling", { retryable: true });
     }
     this.invalidateFrameSnapshots(frameId);
@@ -1662,7 +1703,7 @@ export class ElectronPageBackend implements PageBackend {
     const effects = this.transitionEffects(before, after);
     effects.push({
       type: "scroll.changed",
-      data: { direction: action.direction, amount, x: raw.x ?? 0, y: raw.y ?? 0, changed: raw.changed ?? false },
+      data: { direction: action.direction, amount, x: afterRaw.x, y: afterRaw.y, changed: afterRaw.changed ?? false },
     });
     const proof: ActionProof = {
       pageId: after.pageId,
@@ -1672,7 +1713,7 @@ export class ElectronPageBackend implements PageBackend {
       frameId: target?.node.frameId,
       role: target?.node.role,
       name: target?.node.name,
-      value: `${raw.x ?? 0},${raw.y ?? 0}`,
+      value: `${afterRaw.x},${afterRaw.y}`,
       url: after.url,
       title: after.title,
     };
@@ -3559,11 +3600,28 @@ function selectScript(key: string, ref: string, values: readonly string[]): stri
   })()`;
 }
 
-function scrollScript(key: string, ref: string | null, deltaX: number, deltaY: number): string {
+function viewportPointScript(): string {
+  return `(() => ({
+    ok: Number.isFinite(window.innerWidth) && Number.isFinite(window.innerHeight),
+    x: Math.max(0, window.innerWidth / 2),
+    y: Math.max(0, window.innerHeight / 2),
+  }))()`;
+}
+
+function scrollStateScript(
+  key: string,
+  ref: string | null,
+  nodeId?: string,
+  beforeX?: number,
+  beforeY?: number,
+): string {
   return `(() => {
     const state = window[${JSON.stringify(key)}];
     const ref = ${JSON.stringify(ref)};
-    const target = ref && state && state.refs ? state.refs.get(ref) : null;
+    const held = ${nodeId === undefined ? "null" : `state && state.nodeElements && state.nodeElements.get(${JSON.stringify(nodeId)})`};
+    const heldElement = held && typeof held.deref === "function" ? held.deref() : null;
+    const target = (state && state.refs && state.refs.get(ref)) || heldElement;
+    if (${ref !== null || nodeId !== undefined} && (!target || !target.isConnected)) return { ok: false };
     const root = document.scrollingElement || document.documentElement;
     const scrollable = (el) => el && (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth);
     let scroller = target;
@@ -3571,17 +3629,13 @@ function scrollScript(key: string, ref: string | null, deltaX: number, deltaY: n
       scroller = scroller.parentElement;
     }
     if (!scrollable(scroller)) scroller = root;
-    const before = { x: scroller.scrollLeft || 0, y: scroller.scrollTop || 0 };
-    if (scroller === root) {
-      window.scrollBy(${deltaX}, ${deltaY});
-    } else if (typeof scroller.scrollBy === "function") {
-      scroller.scrollBy(${deltaX}, ${deltaY});
-    } else {
-      scroller.scrollLeft += ${deltaX};
-      scroller.scrollTop += ${deltaY};
-    }
-    const after = { x: scroller.scrollLeft || 0, y: scroller.scrollTop || 0 };
-    return { ok: true, x: after.x, y: after.y, changed: before.x !== after.x || before.y !== after.y };
+    const position = { x: scroller.scrollLeft || 0, y: scroller.scrollTop || 0 };
+    return {
+      ok: true,
+      x: position.x,
+      y: position.y,
+      ...( ${beforeX === undefined || beforeY === undefined ? "{}" : `{ changed: position.x !== ${JSON.stringify(beforeX)} || position.y !== ${JSON.stringify(beforeY)} }`} ),
+    };
   })()`;
 }
 
@@ -3889,6 +3943,13 @@ function isScrollResult(value: unknown): value is ScrollResult {
     (result.y === undefined || typeof result.y === "number") &&
     (result.changed === undefined || typeof result.changed === "boolean")
   );
+}
+
+function isPointResult(value: unknown): value is { ok: true; x: number; y: number } {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Record<string, unknown>;
+  return result.ok === true && typeof result.x === "number" && Number.isFinite(result.x)
+    && typeof result.y === "number" && Number.isFinite(result.y);
 }
 
 function isActiveElementInfo(value: unknown): value is ActiveElementInfo {
