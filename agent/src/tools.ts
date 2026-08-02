@@ -61,6 +61,7 @@ export interface AgentToolOperationMap {
   terminal_browser_page_act_status: "page.act.status";
   terminal_browser_page_wait: "page.wait";
   terminal_browser_page_observe: "page.observe";
+  terminal_browser_page_observe_cancel: "page.observe.cancel";
   terminal_browser_page_dialog: "page.dialog";
 }
 
@@ -164,6 +165,10 @@ export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
     events: { type: "array", items: string("Event type.") },
     afterSequence: number("Replay events after this cursor."),
   }, ["pageId", "events"])),
+  tool("terminal_browser_page_observe_cancel", "Stop a resumable page event subscription.", "page.observe.cancel", "page.observe", object({
+    pageId: string("Page identifier."),
+    subscriptionId: string("Subscription identifier returned by page.observe."),
+  }, ["pageId", "subscriptionId"])),
   tool("terminal_browser_page_dialog", "Accept or dismiss a pending native browser dialog.", "page.dialog", "page.dialog", object({
     pageId: string("Page identifier."),
     dialogId: string("Pending dialog identifier."),

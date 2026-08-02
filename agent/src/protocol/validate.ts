@@ -441,6 +441,7 @@ function validateRequest(message: Record<string, unknown>): void {
     case "page.act.status":
     case "page.wait":
     case "page.observe":
+    case "page.observe.cancel":
     case "page.dialog":
       requireString(message.pageId, "pageId");
       break;
@@ -505,6 +506,7 @@ function validateRequest(message: Record<string, unknown>): void {
     for (const [index, event] of (message.events as string[]).entries()) validateEventType(event, `events[${index}]`);
     if (message.afterSequence !== undefined) requireNonNegativeInteger(message.afterSequence, "afterSequence");
   }
+  if (op === "page.observe.cancel") requireString(message.subscriptionId, "subscriptionId");
 }
 
 function validateActionBatch(value: unknown): void {

@@ -10,4 +10,6 @@ Use `page.active` when an agent needs to recover the currently focused semantic 
 
 Emit and consume `focus.changed` as a resumable event instead of making agents poll generic DOM changes for focus state.
 
+Cancel each `page.observe` subscription when its event stream is no longer needed; observation lifecycle is part of the agent contract.
+
 Run `pnpm --filter terminal-browser-agent check` before handing off changes. Build the workspace packages before running a repository-wide typecheck when a package consumes generated declarations.

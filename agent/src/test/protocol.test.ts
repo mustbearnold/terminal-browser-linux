@@ -109,6 +109,13 @@ test("validates request deadlines and cancellation operations", () => {
     events: ["focus.changed"],
   });
   assert.equal(focusObservation.kind, "request");
+  const cancelObservation = parseAgentMessage({
+    ...listRequest(),
+    op: "page.observe.cancel",
+    pageId: "page-1",
+    subscriptionId: "subscription-1",
+  });
+  assert.equal(cancelObservation.kind, "request");
   assert.throws(
     () => parseAgentMessage({
       ...listRequest(),

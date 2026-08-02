@@ -23,7 +23,10 @@ class RouterLoopbackTransport implements AgentTransport {
     this.context = {
       clientId: "loopback",
       emit: (message) => this.emit(message),
-      addSubscription: (cleanup) => this.cleanups.add(cleanup),
+      addSubscription: (cleanup) => {
+        this.cleanups.add(cleanup);
+        return () => this.cleanups.delete(cleanup);
+      },
     };
   }
 

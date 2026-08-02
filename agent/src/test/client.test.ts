@@ -75,6 +75,53 @@ test("records client-side requests, responses, and events when tracing is enable
   }
 });
 
+test("cancels page observations without retaining event listeners", async () => {
+  const client = createFixtureAgentClient({ clientId: "observation-lifecycle-test" });
+  const events: string[] = [];
+  const unsubscribe = client.onEvent((event) => events.push(event.event));
+  try {
+    const observation = await client.observe(FIXTURE_PAGE_ID, ["dom.changed"]);
+    assert.match(observation.subscriptionId, /^subscription-\d+$/);
+    assert.equal((await client.cancelObservation(FIXTURE_PAGE_ID, observation.subscriptionId)).canceled, true);
+
+    await client.call("page.act", {
+      pageId: FIXTURE_PAGE_ID,
+      action: { type: "click", target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } } },
+      output: { snapshot: "none" },
+    });
+    assert.deepEqual(events, []);
+    assert.equal((await client.cancelObservation(FIXTURE_PAGE_ID, observation.subscriptionId)).canceled, false);
+
+    const replacement = await client.observe(FIXTURE_PAGE_ID, ["dom.changed"]);
+    const filled = await client.call("page.act", {
+      pageId: FIXTURE_PAGE_ID,
+      action: {
+        type: "fill",
+        target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } },
+        value: "Ada",
+      },
+      output: { snapshot: "none" },
+    });
+    assert.equal(filled.verified, true);
+    assert.deepEqual(events, ["dom.changed"]);
+    assert.equal((await client.cancelObservation(FIXTURE_PAGE_ID, replacement.subscriptionId)).canceled, true);
+
+    await client.call("page.act", {
+      pageId: FIXTURE_PAGE_ID,
+      action: {
+        type: "fill",
+        target: { locator: { kind: "role", role: "textbox", name: "Name", exact: true } },
+        value: "Grace",
+      },
+      output: { snapshot: "none" },
+    });
+    assert.deepEqual(events, ["dom.changed"]);
+  } finally {
+    unsubscribe();
+    await client.close();
+  }
+});
+
 test("turns a caller abort into protocol cancellation", async () => {
   const client = createFixtureAgentClient({ clientId: "abort-test" });
   const controller = new AbortController();

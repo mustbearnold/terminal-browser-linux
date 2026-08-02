@@ -15,6 +15,7 @@ import {
   type AgentRequest,
   type AgentResponse,
   type PageObserveResult,
+  type PageObserveCancelResult,
   type CaptureOptions,
   type DialogAction,
   type PageCapture,
@@ -92,6 +93,7 @@ export interface AgentOperationResults {
   "page.act.status": ActionStatusResult;
   "page.wait": WaitResult;
   "page.observe": PageObserveResult;
+  "page.observe.cancel": PageObserveCancelResult;
   "page.dialog": PageDialogResult;
 }
 
@@ -373,6 +375,14 @@ export class AgentClient {
       this.trace?.record("outbound", request);
       void this.transport.send(request).catch((error) => settle(transportError(error)));
     });
+  }
+
+  cancelObservation(
+    pageId: PageId,
+    subscriptionId: string,
+    options?: AgentCallOptions,
+  ): Promise<PageObserveCancelResult> {
+    return this.call("page.observe.cancel", { pageId, subscriptionId }, options);
   }
 
   private sendCancellation(targetRequestId: string): void {

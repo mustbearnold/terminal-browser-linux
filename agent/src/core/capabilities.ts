@@ -72,6 +72,7 @@ export function operationCapability(request: AgentRequest): AgentCapability | un
     case "page.wait":
       return "page.wait";
     case "page.observe":
+    case "page.observe.cancel":
       return "page.observe";
     case "page.dialog":
       return "page.dialog";

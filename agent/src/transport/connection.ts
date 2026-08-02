@@ -14,7 +14,10 @@ export function attachAgentConnection(
       if (closed) return;
       return transport.send(message).catch(() => {});
     },
-    addSubscription: (cleanup) => subscriptions.add(cleanup),
+    addSubscription: (cleanup) => {
+      subscriptions.add(cleanup);
+      return () => subscriptions.delete(cleanup);
+    },
   };
 
   const cleanup = () => {

@@ -8,6 +8,7 @@ import type {
   AgentRequest,
   AgentResponse,
 } from "../protocol/types";
+import type { EventSubscription } from "./events";
 import {
   AGENT_PROTOCOL,
   AGENT_PROTOCOL_VERSION,
@@ -24,11 +25,19 @@ import { MemoryTrace, TraceRecorder, type TraceDirection } from "./trace";
 export interface AgentConnectionContext {
   clientId: string;
   emit(message: AgentMessage): Promise<void> | void;
-  addSubscription(cleanup: () => void): void;
+  addSubscription(cleanup: () => void): void | (() => void);
+}
+
+interface ActiveSubscription {
+  pageId: PageId;
+  subscription: EventSubscription;
+  removeCleanup?: () => void;
 }
 
 export class AgentRequestRouter {
   private readonly requests = new WeakMap<AgentConnectionContext, RequestCancellationRegistry>();
+  private readonly subscriptions = new WeakMap<AgentConnectionContext, Map<string, ActiveSubscription>>();
+  private readonly subscriptionSequences = new WeakMap<AgentConnectionContext, number>();
   private readonly actionJournal: ActionJournal<ActionResult>;
   private readonly defaultContext = idleContext();
   readonly trace: TraceRecorder;
@@ -44,6 +53,10 @@ export class AgentRequestRouter {
   }
 
   close(context: AgentConnectionContext): void {
+    const subscriptions = this.subscriptions.get(context);
+    for (const subscriptionId of subscriptions?.keys() ?? []) {
+      this.cancelSubscription(context, subscriptionId);
+    }
     this.registry(context).cancelAll();
   }
 
@@ -225,13 +238,22 @@ export class AgentRequestRouter {
           subscription.unsubscribe();
           throw error;
         }
-        context.addSubscription(subscription.unsubscribe);
+        const subscriptionId = this.registerSubscription(context, request.pageId, subscription);
         return {
           pageId: request.pageId,
+          subscriptionId,
           events: request.events,
           ...(request.afterSequence === undefined ? {} : { afterSequence: request.afterSequence }),
           sequence: subscription.sequence,
           replayed: subscription.replayed,
+        };
+      }
+      case "page.observe.cancel": {
+        this.page(request.pageId);
+        return {
+          pageId: request.pageId,
+          subscriptionId: request.subscriptionId,
+          canceled: this.cancelSubscription(context, request.subscriptionId, request.pageId),
         };
       }
       default:
@@ -287,6 +309,42 @@ export class AgentRequestRouter {
       this.requests.set(context, registry);
     }
     return registry;
+  }
+
+  private registerSubscription(
+    context: AgentConnectionContext,
+    pageId: PageId,
+    subscription: EventSubscription,
+  ): string {
+    let active = this.subscriptions.get(context);
+    if (!active) {
+      active = new Map();
+      this.subscriptions.set(context, active);
+    }
+    const sequence = (this.subscriptionSequences.get(context) ?? 0) + 1;
+    this.subscriptionSequences.set(context, sequence);
+    const subscriptionId = `subscription-${sequence}`;
+    const cleanup = () => {
+      this.cancelSubscription(context, subscriptionId);
+    };
+    const removeCleanup = context.addSubscription(cleanup);
+    active.set(subscriptionId, {
+      pageId,
+      subscription,
+      ...(typeof removeCleanup === "function" ? { removeCleanup } : {}),
+    });
+    return subscriptionId;
+  }
+
+  private cancelSubscription(context: AgentConnectionContext, subscriptionId: string, pageId?: PageId): boolean {
+    const active = this.subscriptions.get(context);
+    const entry = active?.get(subscriptionId);
+    if (!entry || (pageId !== undefined && entry.pageId !== pageId)) return false;
+    active!.delete(subscriptionId);
+    entry.subscription.unsubscribe();
+    entry.removeCleanup?.();
+    if (active!.size === 0) this.subscriptions.delete(context);
+    return true;
   }
 
   private success(request: AgentRequest, result: unknown): AgentResponse {

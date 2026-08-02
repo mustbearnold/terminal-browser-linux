@@ -548,6 +548,11 @@ export type AgentRequest =
       afterSequence?: number;
     })
   | (AgentRequestEnvelope & {
+      op: "page.observe.cancel";
+      pageId: PageId;
+      subscriptionId: string;
+    })
+  | (AgentRequestEnvelope & {
       op: "page.dialog";
       pageId: PageId;
       dialogId: string;
@@ -556,10 +561,17 @@ export type AgentRequest =
 
 export interface PageObserveResult {
   pageId: PageId;
+  subscriptionId: string;
   events: readonly AgentEventType[];
   afterSequence?: number;
   sequence: number;
   replayed: number;
+}
+
+export interface PageObserveCancelResult {
+  pageId: PageId;
+  subscriptionId: string;
+  canceled: boolean;
 }
 
 export interface AgentResponse {

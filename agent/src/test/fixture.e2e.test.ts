@@ -37,7 +37,13 @@ test("runs the deterministic agent control contract", async () => {
     emit: (message) => {
       events.push(message as AgentEvent);
     },
-    addSubscription: (cleanup) => cleanups.push(cleanup),
+    addSubscription: (cleanup) => {
+      cleanups.push(cleanup);
+      return () => {
+        const index = cleanups.indexOf(cleanup);
+        if (index >= 0) cleanups.splice(index, 1);
+      };
+    },
   };
 
   const hello = result<{ capabilities: readonly string[] }>(
@@ -674,6 +680,7 @@ test("replays missed fixture events from an observation cursor", async () => {
   );
   assert.deepEqual(observed.result, {
     pageId: FIXTURE_PAGE_ID,
+    subscriptionId: "subscription-1",
     events: ["dom.changed"],
     afterSequence: 0,
     sequence: 1,

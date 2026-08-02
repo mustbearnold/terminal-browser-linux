@@ -31,6 +31,15 @@ test("validates and dispatches structured calls through the typed client", async
   const harness = createFixtureAgentHarness({ clientId: "tool-call-test" });
   const tools = new AgentToolClient(harness.client);
 
+  const observation = await tools.callTool("terminal_browser_page_observe", {
+    pageId: String(FIXTURE_PAGE_ID),
+    events: ["dom.changed"],
+  });
+  assert.equal((await tools.callTool("terminal_browser_page_observe_cancel", {
+    pageId: String(FIXTURE_PAGE_ID),
+    subscriptionId: observation.subscriptionId,
+  })).canceled, true);
+
   const snapshot = await tools.callTool("terminal_browser_page_snapshot", {
     pageId: String(FIXTURE_PAGE_ID),
     options: { interactiveOnly: false },

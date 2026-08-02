@@ -38,6 +38,10 @@ Each event includes the affected frame, that frame's new DOM revision, and
 whether the transition entered or left focus; call `page.active` to recover the
 current page revision-bound control.
 
+`page.observe` returns a `subscriptionId`; use `page.observe.cancel` when the
+agent no longer needs that event stream so a long-lived connection does not
+accumulate listeners.
+
 Use `page.wait` with an `element` condition to wait on semantic state such as
 `attached`, `visible`, `enabled`, `disabled`, `focused`, `value`, `checked`,
 `expanded`, `invalid`, `pressed`, `readOnly`, `required`, `selected`, or `text`.
