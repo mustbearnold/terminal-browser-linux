@@ -57,6 +57,79 @@ class HelloTransport implements AgentTransport {
   }
 }
 
+class ReplayTransport implements AgentTransport {
+  private readonly delegate: RouterLoopbackTransport;
+  private readonly listeners = new Set<(message: AgentMessage) => void>();
+  private blockedObserve: { message: AgentMessage; resolve: () => void } | null = null;
+
+  constructor(private readonly router: AgentRequestRouter, private readonly failResume: boolean) {
+    this.delegate = new RouterLoopbackTransport(router);
+    this.delegate.onMessage((message) => {
+      for (const listener of this.listeners) listener(message);
+    });
+  }
+
+  get observeBlocked(): boolean {
+    return this.blockedObserve !== null;
+  }
+
+  send(message: AgentMessage): Promise<void> {
+    if (message.kind === "request" && message.op === "page.observe") {
+      if (this.failResume) {
+        const response: AgentMessage = {
+          kind: "response",
+          protocol: AGENT_PROTOCOL,
+          version: AGENT_PROTOCOL_VERSION,
+          requestId: message.requestId,
+          ok: false,
+          error: { code: "EVENT_GAP", message: "replay history is unavailable", retryable: true },
+        };
+        queueMicrotask(() => {
+          for (const listener of this.listeners) listener(response);
+        });
+        return Promise.resolve();
+      }
+      return new Promise<void>((resolve) => {
+        this.blockedObserve = { message, resolve };
+      });
+    }
+    return this.delegate.send(message);
+  }
+
+  releaseObserve(): void {
+    const blocked = this.blockedObserve;
+    this.blockedObserve = null;
+    if (!blocked) return;
+    void this.delegate.send(blocked.message).then(blocked.resolve);
+  }
+
+  onMessage(listener: (message: AgentMessage) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  onError(listener: (error: unknown) => void): () => void {
+    return this.delegate.onError(listener);
+  }
+
+  onClose(listener: () => void): () => void {
+    return this.delegate.onClose(listener);
+  }
+
+  close(): Promise<void> {
+    this.releaseObserve();
+    return Promise.resolve(this.delegate.close());
+  }
+}
+
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  assert.equal(predicate(), true);
+}
+
 test("correlates typed calls and delivers observed events", async () => {
   const client = createFixtureAgentClient({ clientId: "client-test" });
   const events: string[] = [];
@@ -157,6 +230,70 @@ test("reconnects explicitly and resumes observations from the latest requested e
   } finally {
     unsubscribe();
     await second.close();
+    await client.close();
+  }
+});
+
+test("announces connected only after observation replay finishes", async () => {
+  const router = new AgentRequestRouter(new FixtureRuntime());
+  let reconnectTransport: ReplayTransport | undefined;
+  const client = new AgentClient(new RouterLoopbackTransport(router), {
+    clientId: "reconnect-lifecycle-client",
+    reconnect: async () => {
+      const transport = new ReplayTransport(router, false);
+      reconnectTransport = transport;
+      return transport;
+    },
+  });
+  const states: string[] = [];
+  const unsubscribe = client.onConnectionState((state) => states.push(state));
+  try {
+    await client.hello();
+    await client.observe(FIXTURE_PAGE_ID, ["dom.changed"]);
+    await client.disconnect();
+    assert.deepEqual(states, ["disconnected"]);
+
+    const reconnecting = client.reconnect();
+    await waitUntil(() => reconnectTransport?.observeBlocked === true);
+    assert.equal(client.state, "disconnected");
+    assert.deepEqual(states, ["disconnected"]);
+
+    reconnectTransport?.releaseObserve();
+    await reconnecting;
+    assert.equal(client.state, "connected");
+    assert.deepEqual(states, ["disconnected", "connected"]);
+  } finally {
+    unsubscribe();
+    await client.close();
+  }
+});
+
+test("returns to disconnected when observation replay fails", async () => {
+  const router = new AgentRequestRouter(new FixtureRuntime());
+  let reconnectAttempt = 0;
+  const client = new AgentClient(new RouterLoopbackTransport(router), {
+    clientId: "reconnect-failure-client",
+    reconnect: async () => {
+      reconnectAttempt += 1;
+      return new ReplayTransport(router, reconnectAttempt === 1);
+    },
+  });
+  try {
+    await client.hello();
+    await client.observe(FIXTURE_PAGE_ID, ["dom.changed"]);
+    await client.disconnect();
+
+    await assert.rejects(
+      client.reconnect(),
+      (error: unknown) => error instanceof AgentError && error.code === "EVENT_GAP",
+    );
+    assert.equal(client.state, "disconnected");
+
+    const hello = await client.reconnect();
+    assert.equal(hello.clientId, "reconnect-failure-client");
+    assert.equal(client.state, "connected");
+    assert.equal(reconnectAttempt, 2);
+  } finally {
     await client.close();
   }
 });

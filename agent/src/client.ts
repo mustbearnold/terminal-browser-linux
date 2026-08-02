@@ -165,6 +165,7 @@ export class AgentClient {
   private readonly resumedObservationIds = new Set<number>();
   private connectionState: AgentConnectionState = "connected";
   private reconnectPromise: Promise<AgentHelloResult> | null = null;
+  private reconnecting = false;
   private closed = false;
 
   constructor(transport: AgentTransport, options: AgentClientOptions = {}) {
@@ -208,10 +209,17 @@ export class AgentClient {
   }
 
   hello(options?: AgentCallOptions): Promise<AgentHelloResult> {
-    return this.call("hello", {
+    return this.negotiateHello(options, false);
+  }
+
+  private negotiateHello(
+    options: AgentCallOptions | undefined,
+    allowWhileReconnecting: boolean,
+  ): Promise<AgentHelloResult> {
+    return this.startInternal("hello", {
       clientId: this.clientId,
       ...(this.capabilities === undefined ? {} : { capabilities: this.capabilities }),
-    }, options).then((result) => {
+    }, options ?? {}, true, allowWhileReconnecting).promise.then((result) => {
       try {
         const validated = validateHelloResult(result, this.clientId);
         this.maxPendingRequests = Math.min(this.maxPendingRequests, validated.limits.maxInFlightRequests);
@@ -393,6 +401,7 @@ export class AgentClient {
     this.closed = true;
     const transport = this.transport;
     this.unbindTransport();
+    this.reconnecting = false;
     this.connectionState = "closed";
     this.failPending(new AgentError("TRANSPORT_CLOSED", "agent transport closed", { retryable: true }));
     this.observations.clear();
@@ -412,6 +421,7 @@ export class AgentClient {
     fields: AgentRequestFields<Operation>,
     options: AgentCallOptions,
     trackObservation: boolean,
+    allowWhileReconnecting = false,
   ): AgentCall<AgentOperationResults[Operation]> {
     const deadlineMs = options.deadlineMs ?? this.defaultDeadlineMs;
     validateDeadline(deadlineMs);
@@ -430,7 +440,7 @@ export class AgentClient {
       const observation = this.findObservation(request.pageId, request.subscriptionId);
       if (observation) request = { ...request, subscriptionId: observation.serverSubscriptionId };
     }
-    const promise = this.send(request, { ...options, deadlineMs }).then((response) => {
+    const promise = this.send(request, { ...options, deadlineMs }, allowWhileReconnecting).then((response) => {
       if (!response.ok) throw responseError(response);
       const result = response.result as AgentOperationResults[Operation];
       if (trackObservation) this.trackObservationResult(request, result);
@@ -456,24 +466,36 @@ export class AgentClient {
       await transport.close();
       throw closedClientError();
     }
+    this.reconnecting = true;
     this.bindTransport(transport);
-    this.connectionState = "connected";
-    this.notifyConnectionState("connected");
-    let negotiated = false;
     try {
-      const hello = await this.hello(options);
-      negotiated = true;
+      const hello = await this.negotiateHello(options, true);
       await this.resumeObservations(options?.signal);
+      this.reconnecting = false;
+      this.connectionState = "connected";
+      this.notifyConnectionState("connected");
       return hello;
     } catch (error) {
-      if (!negotiated && !this.closed) this.handleClose();
-      if (this.connectionState !== "connected") await transport.close();
+      this.reconnecting = false;
+      if (!this.closed && this.transport === transport) {
+        this.unbindTransport();
+        this.connectionState = "disconnected";
+        this.failPending(new AgentError("TRANSPORT_CLOSED", "agent transport closed", { retryable: true }));
+      }
+      await transport.close();
       throw error;
     }
   }
 
-  private send(request: AgentRequest, options: AgentCallOptions): Promise<AgentResponse> {
-    if (this.closed || this.connectionState !== "connected") return Promise.reject(closedClientError());
+  private send(
+    request: AgentRequest,
+    options: AgentCallOptions,
+    allowWhileReconnecting = false,
+  ): Promise<AgentResponse> {
+    if (
+      this.closed ||
+      (this.connectionState !== "connected" && !(allowWhileReconnecting && this.reconnecting))
+    ) return Promise.reject(closedClientError());
     if (request.op !== "request.cancel" && this.pending.size >= this.maxPendingRequests) {
       return Promise.reject(new AgentError("RESOURCE_EXHAUSTED", "too many agent requests are pending", {
         retryable: true,
@@ -574,8 +596,9 @@ export class AgentClient {
   }
 
   private handleClose(): void {
-    if (this.closed || this.connectionState !== "connected") return;
+    if (this.closed || (this.connectionState !== "connected" && !this.reconnecting)) return;
     this.unbindTransport();
+    this.reconnecting = false;
     this.connectionState = "disconnected";
     this.failPending(new AgentError("TRANSPORT_CLOSED", "agent transport closed", { retryable: true }));
     this.notifyConnectionState("disconnected");
@@ -671,14 +694,14 @@ export class AgentClient {
     this.resumedObservationIds.clear();
     try {
       for (const observation of [...this.observations.values()]) {
-        if (this.connectionState !== "connected") break;
+        if (this.connectionState !== "connected" && !this.reconnecting) break;
         this.resumingObservationId = observation.id;
         try {
           const result = await this.startInternal("page.observe", {
             pageId: observation.pageId,
             events: observation.events,
             after: observation.cursor,
-          }, signal === undefined ? {} : { signal }, false).promise;
+          }, signal === undefined ? {} : { signal }, false, true).promise;
           observation.serverSubscriptionId = result.subscriptionId;
           if (result.cursor.sequence > observation.cursor.sequence) {
             observation.cursor = result.cursor;
