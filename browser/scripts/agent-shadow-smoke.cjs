@@ -91,6 +91,10 @@ async function run() {
       });
       const typedDelta = await client.snapshotDelta(pageId, valueDelta);
       assert.equal(typedDelta.mode, "incremental", "typing did not use the incremental delta path");
+      const selectBase = await client.call("page.snapshot", {
+        pageId,
+        options: { interactiveOnly: false, includeGeometry: false },
+      });
       const selected = await client.call("page.act", {
         pageId,
         action: {
@@ -100,6 +104,11 @@ async function run() {
         },
       });
       assert.equal(selected.proof?.value, "two");
+      const selectDelta = await client.snapshotDelta(pageId, selectBase);
+      assert.equal(selectDelta.mode, "incremental", "select state did not use the incremental delta path");
+      assert.ok(selectDelta.updated.some((entry) => entry.node.name === "Shadow choices"), "select delta omitted the control state");
+      assert.ok(selectDelta.updated.some((entry) => entry.node.name === "Two" && entry.node.state?.selected === true), "select delta omitted the selected option state");
+      assert.ok(selectDelta.updated.some((entry) => entry.node.name === "One" && entry.node.state?.selected === false), "select delta omitted the cleared option state");
       await client.call("page.wait", {
         pageId,
         condition: {
@@ -164,6 +173,7 @@ async function run() {
         captureBytes: captured?.data.length ?? 0,
         incrementalDeltaMode: typedDelta.mode,
         fallbackDeltaMode: delta.mode,
+        selectDeltaMode: selectDelta.mode,
         deltaAdded: delta.added.length,
         deltaUpdated: delta.updated.length,
         revisionDelta: after.revision - initial.revision,

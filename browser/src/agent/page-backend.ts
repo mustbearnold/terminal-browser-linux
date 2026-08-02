@@ -2979,17 +2979,36 @@ function incrementalSnapshotScript(
       entries[entries.length - 1].revision !== state.revision
     )) return { ok: false, reason: "mutation-history-gap" };
     const changedNodeIds = new Set();
+    const addSelectState = (select) => {
+      if (!select || select.tagName !== "SELECT" || !select.isConnected) return false;
+      const elements = [select, ...Array.from(select.options)];
+      for (const element of elements) {
+        const nodeId = state.elementNodeIds.get(element);
+        if (!nodeId || !wanted.has(nodeId)) return false;
+        changedNodeIds.add(nodeId);
+      }
+      return true;
+    };
+    const selectFor = (element) => {
+      if (!element || !["SELECT", "OPTION"].includes(element.tagName)) return null;
+      return element.tagName === "SELECT" ? element : element.closest("select");
+    };
     for (const entry of entries) {
       for (const change of entry.changes || []) {
-        if (!change || !["input", "change", "focusin", "focusout", "property.value"].includes(change.kind)) return { ok: false, reason: "broad-change" };
+        if (!change || !["input", "change", "focusin", "focusout", "property.value", "property.selected"].includes(change.kind)) return { ok: false, reason: "broad-change" };
         if (includeGeometry) return { ok: false, reason: "geometry-sensitive" };
         const element = change.element;
         if (!element || !element.isConnected) return { ok: false, reason: "detached-target" };
-        if (change.kind === "property.value" && !["INPUT", "TEXTAREA"].includes(element.tagName)) {
+        if (change.kind === "property.value" && !["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName)) {
           return { ok: false, reason: "value-property-change" };
         }
-        if (change.kind === "change" && (element.tagName === "SELECT" || element.tagName === "OPTION")) {
-          return { ok: false, reason: "select-change" };
+        if (change.kind === "property.selected" && element.tagName !== "OPTION") {
+          return { ok: false, reason: "selected-property-change" };
+        }
+        const select = selectFor(element);
+        if (select && (change.kind === "change" || change.kind === "property.value" || change.kind === "property.selected")) {
+          if (!addSelectState(select)) return { ok: false, reason: "select-state-not-in-base" };
+          continue;
         }
         const nodeId = state.elementNodeIds.get(element);
         if (!nodeId || !wanted.has(nodeId)) return { ok: false, reason: "target-not-in-base" };
