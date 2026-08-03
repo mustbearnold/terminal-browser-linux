@@ -56,8 +56,12 @@ export function agentBrowserPath(): string {
   return execFileSync(script, ["--path"], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] }).trim();
 }
 
+function sessionNameForKey(browserKey: string): string {
+  return `tb-${browserKey}`;
+}
+
 function sessionName(browser: Browser): string {
-  return `tb-${recordKey(browser)}`;
+  return sessionNameForKey(recordKey(browser));
 }
 
 function childEnv(): NodeJS.ProcessEnv {
@@ -105,6 +109,17 @@ function agentFailure(result: { stdout: string; stderr: string }, fallback: stri
     if (typeof parsed.error === "string") return parsed.error;
   } catch {}
   return output.split("\n").pop() ?? fallback;
+}
+
+export function closeAgentSession(browserKey: string): boolean {
+  const session = sessionNameForKey(browserKey);
+  if (!fs.existsSync(path.join(AGENT_SOCKETS_DIR, `${session}.pid`))) return false;
+  try {
+    const result = runAgent(agentBrowserPath(), ["--session", session, "close", "--json"], false);
+    return result.status === 0;
+  } catch {
+    return false;
+  }
 }
 
 function pause(ms: number): Promise<void> {

@@ -1,7 +1,7 @@
 import { strictEqual, rejects } from "node:assert";
 import test from "node:test";
 
-import { waitForReadyTab } from "./action";
+import { closeAgentSession, waitForReadyTab } from "./action";
 import type { Browser, TabTarget } from "./instances";
 
 const browser = { key: "browser-1" } as Browser;
@@ -28,4 +28,8 @@ test("fails closed when the selected tab disappears", async () => {
     ]),
     /no tab 1 in browser browser-1/,
   );
+});
+
+test("does not start an agent helper when the browser has no session", () => {
+  strictEqual(closeAgentSession(`missing-${process.pid}`), false);
 });

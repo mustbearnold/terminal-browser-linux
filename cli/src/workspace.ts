@@ -42,6 +42,7 @@ export {
 export type { WorkspaceBinding } from "terminal-browser-workspace";
 
 import { agentSocketPath, selectBrowser } from "./agent";
+import { closeAgentSession } from "./action";
 import { browsers, recordKey } from "./instances";
 import type { Browser } from "./instances";
 
@@ -225,8 +226,9 @@ async function closeWorkspace(backend: Backend, args: string[]): Promise<void> {
   if (!backend.closePane) throw new Error(`${backend.app} cannot close panes through its control interface`);
   const closed = await backend.closePane(`terminal-browser:${browserKey}`);
   if (!closed) throw new Error(`no browser pane found for ${browserKey}`);
+  const agentSessionClosed = closeAgentSession(browserKey);
   removeBinding(browserKey);
-  print({ browser: browserKey, closed: true });
+  print({ browser: browserKey, closed: true, agentSessionClosed });
 }
 
 async function createNote(backend: Backend, args: string[]): Promise<void> {
