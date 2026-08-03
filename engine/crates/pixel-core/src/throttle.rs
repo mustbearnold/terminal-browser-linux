@@ -9,7 +9,9 @@ pub struct CpuThrottle {
 }
 
 const MAX_THREADS: usize = 8;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const RUN_QUANTUM: Duration = Duration::from_millis(4);
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const IDLE_POLL: Duration = Duration::from_millis(30);
 
 struct Inner {
