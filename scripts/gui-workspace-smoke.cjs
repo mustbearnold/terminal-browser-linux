@@ -332,6 +332,31 @@ async function runSmoke() {
     fail("forced workspace note replay did not preserve stale status");
   }
   await assertPaneText(agentPaneId, "status=stale", "forced stale annotation replay reached agent pane", 30000);
+  await kittyCommand(["close-window", "--match", `id:${agentPaneId}`]);
+  await waitFor("agent pane replacement", kittyWindows, (windows) => {
+    return allKittyWindows(windows).some((window) => window.id === agentPaneId) ? false : windows;
+  });
+  await kittyCommand(["focus-window", "--match", `id:${browserPaneId}`]);
+  await kittyCommand(["launch", "--location=vsplit", "--title=claude", "--", "bash", "--noprofile", "--norc"]);
+  const replacementWindows = await waitFor("replacement agent pane", kittyWindows, (windows) => {
+    const candidates = allKittyWindows(windows).filter((window) => window.title === "claude");
+    return candidates.length === 1 ? candidates : false;
+  });
+  const replacementPaneId = allKittyWindows(replacementWindows).find((window) => window.title === "claude")?.id;
+  if (!replacementPaneId) fail("replacement agent pane did not expose an id");
+  const replacementAttachResult = await run("terminal-browser", [
+    "workspace", "attach", "--browser", browser.key, "--pane", String(replacementPaneId), "--sync-notes",
+  ], {
+    env: { ...environment, DISPLAY: display },
+    cwd: root,
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 8000,
+  });
+  const replacementAttach = JSON.parse(replacementAttachResult.stdout);
+  if (!replacementAttach.notes?.delivered?.includes("annotation-2") || !replacementAttach.notes?.skippedStale?.includes("annotation-1")) {
+    fail("replacement agent pane did not receive fresh notes while skipping stale notes");
+  }
+  await assertPaneText(replacementPaneId, "@tb-2", "replacement agent pane received synced note", 30000);
   const closeResult = await run("terminal-browser", ["workspace", "close", "--browser", browser.key], {
     env: { ...environment, DISPLAY: display },
     cwd: root,
