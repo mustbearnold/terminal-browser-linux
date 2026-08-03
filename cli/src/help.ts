@@ -101,6 +101,8 @@ switched off, so this turns "terminal.integrated.enableImages" on in each one.
 An agent-browser compatible CLI for the browser you already have open.
 Everything after -- is an agent-browser command. With no selectors it targets
 the browser in this terminal tab and that browser's active tab.
+Actions wait briefly for a starting tab to expose its CDP target and for the
+agent session to become usable.
 
 Selectors:
   --browser <key>     A browser key from terminal-browser ls

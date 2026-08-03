@@ -23,6 +23,9 @@ interface Selection {
   tab: TabTarget;
 }
 
+const ACTION_READY_TIMEOUT_MS = 15_000;
+const ACTION_READY_POLL_MS = 100;
+
 export interface ActionOptions {
   browserKey?: string;
   tabId?: number;
@@ -62,15 +65,20 @@ function childEnv(): NodeJS.ProcessEnv {
   return { ...process.env, AGENT_BROWSER_SOCKET_DIR: AGENT_SOCKETS_DIR };
 }
 
-function runAgent(binary: string, args: string[]): { status: number; stdout: string } {
+function runAgent(
+  binary: string,
+  args: string[],
+  writeStderr = true,
+): { status: number; stdout: string; stderr: string } {
   const result = spawnSync(binary, args, {
     encoding: "utf8",
     env: childEnv(),
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (result.error) throw result.error;
-  if (result.stderr) process.stderr.write(result.stderr);
-  return { status: result.status ?? 1, stdout: result.stdout ?? "" };
+  const stderr = result.stderr ?? "";
+  if (writeStderr && stderr) process.stderr.write(stderr);
+  return { status: result.status ?? 1, stdout: result.stdout ?? "", stderr };
 }
 
 function parseTabs(stdout: string): AgentTab[] {
@@ -89,22 +97,91 @@ function evalResult(stdout: string): unknown {
   return parsed.data?.result;
 }
 
-function agentTabs(binary: string, browser: Browser): AgentTab[] {
+function pause(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function waitForReadyTab(
+  browser: Browser,
+  tabId: number,
+  timeoutMs = ACTION_READY_TIMEOUT_MS,
+  pollMs = ACTION_READY_POLL_MS,
+  readTargets: (browser: Browser) => Promise<TabTarget[]> = targets,
+): Promise<TabTarget> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+  let lastTab: TabTarget | undefined;
+
+  while (Date.now() <= deadline) {
+    try {
+      const tabs = await readTargets(browser);
+      const tab = tabs.find((entry) => entry.id === tabId);
+      if (tabs.length > 0 && !tab) {
+        const known = tabs.map((entry) => `${entry.id} ${entry.url}`).join("\n  ");
+        throw new Error(`no tab ${tabId} in browser ${recordKey(browser)}\n\ntabs:\n  ${known}`);
+      }
+      if (tab) {
+        lastTab = tab;
+        if (tab.targetId) return tab;
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("no tab ")) throw error;
+      lastError = error;
+    }
+    await pause(Math.min(pollMs, Math.max(0, deadline - Date.now())));
+  }
+
+  const tabLabel = lastTab ? `tab ${lastTab.id}` : `tab ${tabId}`;
+  const cause = lastError instanceof Error ? `: ${lastError.message}` : "";
+  throw new Error(
+    `${tabLabel} in browser ${recordKey(browser)} did not expose a CDP target within ${timeoutMs}ms — ` +
+      `the page may still be starting${cause}`,
+  );
+}
+
+async function agentTabs(binary: string, browser: Browser): Promise<AgentTab[]> {
   const session = sessionName(browser);
   const port = String(browser.cdpPort);
-  const listing = runAgent(binary, ["--session", session, "--cdp", port, "tab", "list", "--json"]);
-  if (listing.status === 0) {
-    try {
-      return parseTabs(listing.stdout);
-    } catch {}
+  const deadline = Date.now() + ACTION_READY_TIMEOUT_MS;
+  let lastError = "agent-browser could not list tabs";
+  let firstListing = true;
+  let nextReconnect = 0;
+
+  while (Date.now() <= deadline) {
+    const listing = runAgent(
+      binary,
+      firstListing
+        ? ["--session", session, "--cdp", port, "tab", "list", "--json"]
+        : ["--session", session, "tab", "list", "--json"],
+      false,
+    );
+    firstListing = false;
+    if (listing.status === 0) {
+      try {
+        const tabs = parseTabs(listing.stdout);
+        if (tabs.length > 0) return tabs;
+        lastError = "agent-browser connected but reported no tabs";
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : "agent-browser returned invalid tab JSON";
+      }
+    } else if (listing.stderr) {
+      lastError = listing.stderr.trim().split("\n").pop() ?? lastError;
+    }
+
+    if (Date.now() >= nextReconnect) {
+      const reconnect = runAgent(binary, ["--session", session, "connect", port, "--json"], false);
+      nextReconnect = Date.now() + 1_000;
+      if (reconnect.status !== 0 && reconnect.stderr) {
+        lastError = reconnect.stderr.trim().split("\n").pop() ?? lastError;
+      }
+    }
+    await pause(Math.min(ACTION_READY_POLL_MS, Math.max(0, deadline - Date.now())));
   }
-  const reconnect = runAgent(binary, ["--session", session, "connect", port, "--json"]);
-  if (reconnect.status !== 0) {
-    throw new Error(`could not connect agent-browser to terminal browser ${recordKey(browser)} on port ${port}`);
-  }
-  const retry = runAgent(binary, ["--session", session, "tab", "list", "--json"]);
-  if (retry.status !== 0) throw new Error("agent-browser could not list tabs after reconnecting");
-  return parseTabs(retry.stdout);
+
+  throw new Error(
+    `could not connect agent-browser to terminal browser ${recordKey(browser)} on port ${port} ` +
+      `within ${ACTION_READY_TIMEOUT_MS}ms: ${lastError}`,
+  );
 }
 
 function matchTab(
@@ -261,19 +338,17 @@ export async function actionCommand(backend: Backend, options: ActionOptions) {
   if (browser.cdpPort === null) {
     throw new Error(`browser ${recordKey(browser)} has no debugging port`);
   }
-  if (!tab.targetId) {
-    throw new Error(`tab ${tab.id} has no CDP target yet — is the page still starting?`);
-  }
+  const readyTab = await waitForReadyTab(browser, tab.id);
 
   const binary = agentBrowserPath();
   const session = sessionName(browser);
-  const match = matchTab(binary, session, agentTabs(binary, browser), tab);
+  const match = matchTab(binary, session, await agentTabs(binary, browser), readyTab);
   if (!match.active) {
     const switched = runAgent(binary, ["--session", session, "tab", match.tabId]);
     if (switched.status !== 0) throw new Error(`agent-browser could not switch to ${match.tabId}`);
   }
-  if (options.follow && !tab.active) {
-    await control(browser.socket, { cmd: "activate-tab", tab: tab.id });
+  if (options.follow && !readyTab.active) {
+    await control(browser.socket, { cmd: "activate-tab", tab: readyTab.id });
   }
 
   const child = spawnSync(binary, ["--session", session, ...options.passthrough], {

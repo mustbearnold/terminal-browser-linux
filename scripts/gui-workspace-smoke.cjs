@@ -247,6 +247,18 @@ async function runSmoke() {
   await startDisplay();
   await startKitty();
   const { browser, agentPaneId } = await openWorkspace();
+  const startupAction = await run("terminal-browser", [
+    "action", "--browser", browser.key, "--", "eval", "document.title",
+  ], {
+    env: { ...environment, DISPLAY: display },
+    cwd: root,
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 20000,
+  });
+  if (!startupAction.stdout.includes("Example Domain")) {
+    fail("packaged action did not reach the page during browser startup");
+  }
+  process.stdout.write("packaged action startup readiness: ok\n");
   await waitForPageContent(browser.key);
   await clickDomNote(browserPaneId);
   await run("xdotool", ["type", "--delay", "2", "GUI smoke handoff"], { env: environment, timeout: 8000 });
