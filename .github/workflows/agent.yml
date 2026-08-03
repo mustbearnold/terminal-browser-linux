@@ -23,6 +23,7 @@ jobs:
       - run: pnpm --filter pixel-react exec tsc -p tsconfig.json
       - run: pnpm --filter pixel-store build
       - run: pnpm --filter pixel-terminals build
+      - run: pnpm --filter terminal-browser-workspace build
       - run: pnpm --filter terminal-browser-cli test
       - run: pnpm --filter terminal-browser typecheck
       - run: pnpm --filter terminal-browser build
