@@ -208,6 +208,19 @@ async function runSmoke() {
   const agentText = await assertPaneText(agentPaneId, "@tb-1", "annotation tag reached agent pane", 30000);
   if (!agentText.includes("schema=1") || !agentText.includes("observation={")) fail("agent pane received an unversioned annotation payload");
   if (!agentText.includes("note=GUI smoke handoff")) fail("agent pane received the tag without the note payload");
+  const closeResult = await run("terminal-browser", ["workspace", "close", "--browser", browser.key], {
+    env: { ...environment, DISPLAY: display },
+    cwd: root,
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 8000,
+  });
+  if (!JSON.parse(closeResult.stdout).closed) fail("workspace close did not report a closed browser");
+  await waitFor("browser pane close", kittyWindows, (windows) => {
+    return allKittyWindows(windows).some((window) => window.id === browserPaneId) ? false : windows;
+  });
+  const remainingBindings = await workspaceBindings();
+  if (remainingBindings.length !== 0) fail("workspace close left a persisted binding");
+  process.stdout.write("workspace close cleanup: ok\n");
   process.stdout.write(`browser=${browser.key}\n`);
   process.stdout.write("packaged GUI workspace handoff: passed\n");
 }
