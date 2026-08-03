@@ -91,6 +91,7 @@ async function openWorkspace(
   const left = takeBool(args, "--left");
   const requestedAgentKind = takeFlag(args, "--agent");
   const syncExistingNotes = takeBool(args, "--sync-notes");
+  const refreshStaleNotes = takeBool(args, "--refresh-stale");
   if (left && agentPaneId !== undefined) {
     throw new Error("workspace open cannot combine --left with --agent-pane");
   }
@@ -105,6 +106,9 @@ async function openWorkspace(
   if (syncExistingNotes && agentPaneId === undefined) {
     throw new Error("workspace open --sync-notes requires --left or --agent-pane");
   }
+  if (refreshStaleNotes && !syncExistingNotes) {
+    throw new Error("workspace open --refresh-stale requires --sync-notes");
+  }
   const before = new Set((await browsers(backend)).map(recordKey));
   if (!args.some((value) => isDirection(value))) args.push("right");
   await openBrowser(args);
@@ -117,7 +121,7 @@ async function openWorkspace(
     ? undefined
     : await saveBinding(backend, recordKey(browser), agentPaneId, requestedAgentKind, browser.pane);
   const notes = syncExistingNotes
-    ? await syncWorkspaceNotes(backend, browser, undefined, false)
+    ? await syncWorkspaceNotes(backend, browser, undefined, false, refreshStaleNotes)
     : undefined;
   print({ browser: recordKey(browser), pane: browser.pane, binding, ...(notes ? { notes } : {}) });
 }
@@ -128,14 +132,18 @@ async function attachWorkspace(backend: Backend, args: string[]): Promise<void> 
   const left = takeBool(args, "--left");
   const requestedAgentKind = takeFlag(args, "--agent");
   const syncExistingNotes = takeBool(args, "--sync-notes");
+  const refreshStaleNotes = takeBool(args, "--refresh-stale");
   rejectRemaining(args);
   const browser = await selectBrowser(backend, browserKey);
   if (left) agentPaneId = await peerPane(backend, browser.pane);
   if (!agentPaneId) throw new Error("workspace attach requires --pane <pane-id> or --left");
+  if (refreshStaleNotes && !syncExistingNotes) {
+    throw new Error("workspace attach --refresh-stale requires --sync-notes");
+  }
   await requirePane(backend, agentPaneId, browser.pane);
   const binding = await saveBinding(backend, recordKey(browser), agentPaneId, requestedAgentKind, browser.pane);
   const notes = syncExistingNotes
-    ? await syncWorkspaceNotes(backend, browser, undefined, false)
+    ? await syncWorkspaceNotes(backend, browser, undefined, false, refreshStaleNotes)
     : undefined;
   print(notes ? { binding, notes } : binding);
 }
@@ -317,9 +325,11 @@ async function syncNotes(backend: Backend, args: string[]): Promise<void> {
   const browserKey = takeFlag(args, "--browser");
   const requestedPageId = takeFlag(args, "--page");
   const force = takeBool(args, "--force");
+  const refreshStale = takeBool(args, "--refresh-stale");
   rejectRemaining(args);
+  if (force && refreshStale) throw new Error("workspace sync cannot combine --force and --refresh-stale");
   const browser = await selectBrowser(backend, browserKey);
-  const result = await syncWorkspaceNotes(backend, browser, requestedPageId, force);
+  const result = await syncWorkspaceNotes(backend, browser, requestedPageId, force, refreshStale);
   print({ browser: recordKey(browser), ...result });
 }
 
@@ -328,7 +338,9 @@ async function syncWorkspaceNotes(
   browser: Browser,
   requestedPageId: string | undefined,
   force: boolean,
-): Promise<{ agentPane: string; delivered: string[]; skippedStale: string[]; forced: boolean }> {
+  refreshStale: boolean,
+): Promise<{ agentPane: string; delivered: string[]; skippedStale: string[]; refreshed: string[]; forced: boolean }> {
+  if (force && refreshStale) throw new Error("workspace sync cannot combine --force and --refresh-stale");
   const binding = loadBindings().find((candidate) => candidate.browserKey === recordKey(browser));
   if (!binding) throw new Error(`browser ${recordKey(browser)} has no agent pane binding; run workspace attach first`);
   const destination = await resolveBindingPane(backend, browser.pane, binding);
@@ -337,13 +349,25 @@ async function syncWorkspaceNotes(
   const selectedPages = requestedPageId === undefined
     ? pages.pages
     : [choosePage(pages.pages, requestedPageId)];
-  const annotations = await withClient(browser, async (client) => {
+  const annotationResult = await withClient(browser, async (client) => {
     const results = await Promise.all(selectedPages.map((page) => client.annotationList(page.pageId)));
-    return results.flatMap((result) => result.annotations);
+    const annotations = results.flatMap((result) => result.annotations);
+    const refreshed: string[] = [];
+    const current = [];
+    for (const annotation of annotations) {
+      if (!annotation.stale || !refreshStale) {
+        current.push(annotation);
+        continue;
+      }
+      const result = await client.annotationRefresh(annotation.pageId, annotation.annotationId);
+      current.push(result.annotation);
+      refreshed.push(result.refreshedFrom);
+    }
+    return { annotations: current, refreshed };
   });
   const delivered: string[] = [];
   const skippedStale: string[] = [];
-  for (const annotation of annotations) {
+  for (const annotation of annotationResult.annotations) {
     if (annotation.stale && !force) {
       skippedStale.push(annotation.annotationId);
       continue;
@@ -355,6 +379,7 @@ async function syncWorkspaceNotes(
     agentPane: destination,
     delivered,
     skippedStale,
+    refreshed: annotationResult.refreshed,
     forced: force,
   };
 }

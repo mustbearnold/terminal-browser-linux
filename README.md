@@ -55,8 +55,14 @@ into the current binding and reports stale notes without sending them. Add
 terminal-browser workspace sync --browser <browser-key>
 terminal-browser workspace sync --browser <browser-key> --force
 ```
+Use `--refresh-stale` to re-resolve every stale semantic target and deliver the
+new fresh annotations in one pass; the original stale notes remain available:
+```
+terminal-browser workspace sync --browser <browser-key> --refresh-stale
+```
 The same sync can be requested while creating or replacing a binding with
-`workspace attach ... --sync-notes` or `workspace open ... --sync-notes`.
+`workspace attach ... --sync-notes` or `workspace open ... --sync-notes`; add
+`--refresh-stale` to those commands to refresh stale notes during the handoff.
 
 The agent transport is a versioned JSON-lines session exposed through the
 running browser. The CLI can bridge stdin/stdout to it:
