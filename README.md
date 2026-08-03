@@ -53,6 +53,8 @@ so repeated syncs only paste pending fresh notes and report already-delivered
 ones. Rebinding, recovering a replacement pane, or restarting a foreground agent
 process in the same pane resets that delivery ledger when the terminal exposes a
 process id.
+Workspace commands serialize through a short cross-process lock, so concurrent
+agent syncs cannot both deliver the same pending annotation.
 Add `--force` when the agent should receive a fresh note again or receive stale
 observations too; an explicit `workspace note --annotation` is always a replay:
 ```

@@ -25,6 +25,7 @@ import {
   selectPeerPane,
   selectPeerPaneFromSelf,
   sendToPane,
+  withWorkspaceLock,
 } from "terminal-browser-workspace";
 import type { WorkspaceBinding } from "terminal-browser-workspace";
 export {
@@ -55,35 +56,37 @@ export async function workspaceCommand(
   args: string[],
   options: WorkspaceOpenOptions,
 ): Promise<void> {
-  const subcommand = args.shift() ?? "list";
-  switch (subcommand) {
-    case "open":
-      await openWorkspace(backend, args, options.openBrowser);
-      return;
-    case "attach":
-      await attachWorkspace(backend, args);
-      return;
-    case "list":
-      await listWorkspace(backend, args);
-      return;
-    case "panes":
-      await listPanes(backend, args);
-      return;
-    case "close":
-      await closeWorkspace(backend, args);
-      return;
-    case "note":
-      await createNote(backend, args);
-      return;
-    case "notes":
-      await listNotes(backend, args);
-      return;
-    case "sync":
-      await syncNotes(backend, args);
-      return;
-    default:
-      throw new Error(`unknown workspace command ${subcommand} (try open, attach, list, panes, close, note, notes, or sync)`);
-  }
+  await withWorkspaceLock(async () => {
+    const subcommand = args.shift() ?? "list";
+    switch (subcommand) {
+      case "open":
+        await openWorkspace(backend, args, options.openBrowser);
+        return;
+      case "attach":
+        await attachWorkspace(backend, args);
+        return;
+      case "list":
+        await listWorkspace(backend, args);
+        return;
+      case "panes":
+        await listPanes(backend, args);
+        return;
+      case "close":
+        await closeWorkspace(backend, args);
+        return;
+      case "note":
+        await createNote(backend, args);
+        return;
+      case "notes":
+        await listNotes(backend, args);
+        return;
+      case "sync":
+        await syncNotes(backend, args);
+        return;
+      default:
+        throw new Error(`unknown workspace command ${subcommand} (try open, attach, list, panes, close, note, notes, or sync)`);
+    }
+  });
 }
 
 async function openWorkspace(

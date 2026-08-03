@@ -42,6 +42,10 @@ interface PersistedWorkspaces {
 }
 
 const WORKSPACE_FILE = path.join(DATA_DIR, "workspaces.json");
+const WORKSPACE_LOCK = `${WORKSPACE_FILE}.lock`;
+const WORKSPACE_LOCK_TIMEOUT_MS = 30_000;
+const WORKSPACE_LOCK_STALE_MS = 120_000;
+const WORKSPACE_LOCK_RETRY_MS = 25;
 
 export function promptTag(annotation: PromptAnnotation, commit = false): string {
   const target = compact(JSON.stringify(annotation.target));
@@ -102,6 +106,15 @@ export function saveBindings(bindings: WorkspaceBinding[]): void {
   const temporaryPath = `${WORKSPACE_FILE}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(temporaryPath, JSON.stringify(data), { encoding: "utf8", mode: 0o600 });
   fs.renameSync(temporaryPath, WORKSPACE_FILE);
+}
+
+export async function withWorkspaceLock<T>(operation: () => Promise<T>): Promise<T> {
+  const release = await acquireWorkspaceLock();
+  try {
+    return await operation();
+  } finally {
+    release();
+  }
 }
 
 export function removeBinding(browserKey: string): void {
@@ -330,6 +343,94 @@ function compact(value: string, limit = 1000): string {
   return normalized.length <= limit ? normalized : `${normalized.slice(0, limit - 1)}…`;
 }
 
+interface WorkspaceLockOwner {
+  pid: number;
+  token: string;
+  acquiredAt: number;
+}
+
+async function acquireWorkspaceLock(): Promise<() => void> {
+  ensureDataDir();
+  const owner: WorkspaceLockOwner = {
+    pid: process.pid,
+    token: `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    acquiredAt: Date.now(),
+  };
+  const deadline = Date.now() + WORKSPACE_LOCK_TIMEOUT_MS;
+  while (true) {
+    try {
+      fs.mkdirSync(WORKSPACE_LOCK, { mode: 0o700 });
+      try {
+        fs.writeFileSync(path.join(WORKSPACE_LOCK, "owner"), JSON.stringify(owner), {
+          encoding: "utf8",
+          mode: 0o600,
+        });
+      } catch (error) {
+        removeWorkspaceLock();
+        throw error;
+      }
+      return () => releaseWorkspaceLock(owner);
+    } catch (error) {
+      if (!isAlreadyExists(error)) throw error;
+      if (isStaleWorkspaceLock()) {
+        removeWorkspaceLock();
+        continue;
+      }
+      if (Date.now() >= deadline) throw new Error("workspace lock timed out");
+      await delay(WORKSPACE_LOCK_RETRY_MS);
+    }
+  }
+}
+
+function releaseWorkspaceLock(owner: WorkspaceLockOwner): void {
+  try {
+    const current = JSON.parse(fs.readFileSync(path.join(WORKSPACE_LOCK, "owner"), "utf8")) as Partial<WorkspaceLockOwner>;
+    if (current.token !== owner.token) return;
+    removeWorkspaceLock();
+  } catch {}
+}
+
+function isStaleWorkspaceLock(): boolean {
+  const age = () => {
+    try {
+      return Date.now() - fs.statSync(WORKSPACE_LOCK).mtimeMs > WORKSPACE_LOCK_STALE_MS;
+    } catch {
+      return false;
+    }
+  };
+  let owner: Partial<WorkspaceLockOwner>;
+  try {
+    owner = JSON.parse(fs.readFileSync(path.join(WORKSPACE_LOCK, "owner"), "utf8")) as Partial<WorkspaceLockOwner>;
+  } catch {
+    return age();
+  }
+  if (!Number.isSafeInteger(owner.pid) || Number(owner.pid) < 1) return age();
+  try {
+    process.kill(Number(owner.pid), 0);
+    return false;
+  } catch (error) {
+    return isNodeError(error) && error.code === "ESRCH";
+  }
+}
+
+function removeWorkspaceLock(): void {
+  try {
+    fs.rmSync(WORKSPACE_LOCK, { recursive: true, force: true });
+  } catch {}
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function isAlreadyExists(error: unknown): boolean {
+  return isNodeError(error) && error.code === "EEXIST";
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }

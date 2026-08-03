@@ -50,7 +50,8 @@ silently sending a note to an unrelated shell. Sync remembers which annotation
 tags reached the current pane, skips them on later syncs, and resets that ledger
 when the binding moves to a replacement pane or the foreground agent process
 restarts in place. Use --force to replay delivered notes or stale observations;
-an explicit note replay always sends.
+an explicit note replay always sends. Workspace commands serialize through a
+short cross-process lock so concurrent syncs do not duplicate pending notes.
 Stale refresh reuses an existing fresh descendant at the current revision
 instead of creating duplicate annotations.
 

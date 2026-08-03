@@ -353,18 +353,28 @@ async function runSmoke() {
     staleReplayRejected = String(error.stderr ?? error).includes("pass --force");
   }
   if (!staleReplayRejected) fail("workspace note replay accepted a stale annotation without --force");
-  const bulkRefreshResult = await run("terminal-browser", [
-    "workspace", "sync", "--browser", browser.key, "--refresh-stale",
-  ], {
-    env: { ...environment, DISPLAY: display },
-    cwd: root,
-    maxBuffer: 8 * 1024 * 1024,
-    timeout: 8000,
-  });
-  const bulkRefresh = JSON.parse(bulkRefreshResult.stdout);
-  if (!bulkRefresh.refreshed?.includes(staleNotes.annotations[0].annotationId) || !bulkRefresh.delivered?.includes("annotation-2") || bulkRefresh.skippedStale?.length !== 0) {
-    fail("workspace sync --refresh-stale did not refresh and deliver the stale annotation");
+  const bulkRefreshResults = await Promise.all([
+    run("terminal-browser", ["workspace", "sync", "--browser", browser.key, "--refresh-stale"], {
+      env: { ...environment, DISPLAY: display },
+      cwd: root,
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: 8000,
+    }),
+    run("terminal-browser", ["workspace", "sync", "--browser", browser.key, "--refresh-stale"], {
+      env: { ...environment, DISPLAY: display },
+      cwd: root,
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: 8000,
+    }),
+  ]);
+  const bulkRefreshes = bulkRefreshResults.map((result) => JSON.parse(result.stdout));
+  const bulkDelivered = bulkRefreshes.flatMap((result) => result.delivered ?? []);
+  const bulkReused = bulkRefreshes.flatMap((result) => result.reused ?? []);
+  if (bulkDelivered.length !== 1 || !bulkDelivered.includes("annotation-2") || bulkReused.length < 1 ||
+    bulkRefreshes.some((result) => !result.refreshed?.includes(staleNotes.annotations[0].annotationId) || result.skippedStale?.length !== 0)) {
+    fail("concurrent workspace sync --refresh-stale calls duplicated or lost the stale annotation");
   }
+  process.stdout.write("concurrent workspace sync serialized: ok\n");
   await assertPaneText(agentPaneId, "@tb-2", "bulk stale annotation refresh reached agent pane", 30000);
   const repeatedBulkRefreshResult = await run("terminal-browser", [
     "workspace", "sync", "--browser", browser.key, "--refresh-stale",
