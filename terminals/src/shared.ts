@@ -10,6 +10,7 @@ export interface Pane {
   title: string;
   cwd?: string;
   command?: string;
+  processId?: string;
   self: boolean;
 }
 

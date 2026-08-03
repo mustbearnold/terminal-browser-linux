@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   agentKindForPane,
   hasDeliveredAnnotation,
+  paneIdentityChanged,
   promptTag,
   recordAnnotationDelivery,
   requireAnnotationFresh,
@@ -84,11 +85,42 @@ test("tracks delivered notes without duplicating the pane ledger", () => {
   assert.equal(hasDeliveredAnnotation(first, "annotation-2"), false);
 });
 
+test("workspace binding detects a foreground process restart in the same pane", () => {
+  const binding = {
+    browserKey: "browser-1",
+    agentPaneId: "agent",
+    agentKind: "claude",
+    agentPaneWindow: "window-1",
+    agentPaneTab: "tab-1",
+    agentPaneTitle: "claude",
+    agentPaneCwd: "/work/project",
+    agentPaneCommand: "bash",
+    agentPaneProcessId: "100",
+    deliveredAnnotationIds: ["annotation-1"],
+    updatedAt: "2026-08-03T00:00:00.000Z",
+  };
+  assert.equal(
+    paneIdentityChanged(binding, pane("agent", false, "claude", {
+      cwd: "/work/project",
+      command: "bash",
+      processId: "101",
+    })),
+    true,
+  );
+  assert.equal(
+    paneIdentityChanged(binding, pane("agent", false, "claude", {
+      cwd: "/work/project",
+      command: "bash",
+    })),
+    false,
+  );
+});
+
 function pane(
   paneId: string,
   self = false,
   title = "agent",
-  metadata: Pick<Pane, "cwd" | "command"> = {},
+  metadata: Pick<Pane, "cwd" | "command" | "processId"> = {},
 ): Pane {
   return { window: "window-1", tab: "tab-1", pane: paneId, title, self, ...metadata };
 }

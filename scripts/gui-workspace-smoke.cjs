@@ -252,6 +252,33 @@ async function runSmoke() {
   if (sync.delivered?.length !== 0 || !sync.skippedDelivered?.includes("annotation-1") || sync.skippedStale?.length !== 0) {
     fail("workspace sync did not suppress the already-delivered fresh annotation");
   }
+  const initialBinding = (await workspaceBindings())[0];
+  if (Number(initialBinding?.agentPane) !== agentPaneId || !initialBinding.agentPaneProcessId) {
+    fail("workspace binding did not expose the agent process identity");
+  }
+  const initialProcessId = initialBinding.agentPaneProcessId;
+  await kittyCommand(["send-text", "--match", `id:${agentPaneId}`, "--", "\u0003"]);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await kittyCommand(["send-text", "--match", `id:${agentPaneId}`, "--", "bash --noprofile --norc\n"]);
+  await waitFor("same-pane agent process restart", workspaceBindings, (value) => {
+    const binding = value[0];
+    return Number(binding?.agentPane) === agentPaneId &&
+      binding.agentPaneProcessId &&
+      binding.agentPaneProcessId !== initialProcessId
+      ? binding
+      : false;
+  }, 30000);
+  const restartSyncResult = await run("terminal-browser", ["workspace", "sync", "--browser", browser.key], {
+    env: { ...environment, DISPLAY: display },
+    cwd: root,
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 8000,
+  });
+  const restartSync = JSON.parse(restartSyncResult.stdout);
+  if (!restartSync.delivered?.includes("annotation-1") || restartSync.skippedDelivered?.includes("annotation-1")) {
+    fail("workspace sync did not reset delivery after a same-pane agent process restart");
+  }
+  await assertPaneText(agentPaneId, "@tb-1", "same-pane agent restart replayed fresh note", 30000);
   const replayResult = await run("terminal-browser", [
     "workspace", "note", "--browser", browser.key, "--annotation", notes.annotations[0].annotationId,
   ], {

@@ -72,13 +72,15 @@ Usage: terminal-browser workspace <open|attach|list|panes|close|note|notes|sync>
 Manages an explicit browser-to-agent pane binding. Notes are stored against a
 semantic DOM target and can be pasted into the attached agent prompt as a
 compact @tb-* tag. Pasting never submits the prompt unless --commit is used.
-Bindings remember the pane's title, working directory, and foreground command;
+Bindings remember the pane's title, working directory, foreground command, and
+process identity when the terminal exposes one;
 workspace list reconciles replacements and reports whether the agent pane is
 attached, missing, or ambiguous. A stable binding fails closed rather than
 silently sending a note to an unrelated shell. Sync remembers which annotation
 tags reached the current pane, skips them on later syncs, and resets that ledger
-when the binding moves to a replacement pane. Use --force to replay delivered
-notes or stale observations; an explicit note replay always sends.
+when the binding moves to a replacement pane or the foreground agent process
+restarts in place. Use --force to replay delivered notes or stale observations;
+an explicit note replay always sends.
 Stale refresh reuses an existing fresh descendant at the current revision
 instead of creating duplicate annotations.
 

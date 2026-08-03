@@ -24,6 +24,7 @@ interface KittyWindow {
 interface KittyProcess {
   cwd?: string;
   cmdline?: string[];
+  pid?: number;
 }
 
 interface KittyTab {
@@ -121,6 +122,7 @@ export function createKitty(env: NodeJS.ProcessEnv = process.env): Backend {
               title: window.title,
               cwd: window.cwd ?? foreground?.cwd,
               command: foreground?.cmdline?.[0] ? path.basename(foreground.cmdline[0]) : undefined,
+              processId: foreground?.pid === undefined ? undefined : String(foreground.pid),
               self: window.id === self,
             });
           }

@@ -50,7 +50,9 @@ available for audit.
 
 `workspace sync` remembers which annotation tags reached the current agent pane,
 so repeated syncs only paste pending fresh notes and report already-delivered
-ones. Rebinding or recovering a replacement pane resets that delivery ledger.
+ones. Rebinding, recovering a replacement pane, or restarting a foreground agent
+process in the same pane resets that delivery ledger when the terminal exposes a
+process id.
 Add `--force` when the agent should receive a fresh note again or receive stale
 observations too; an explicit `workspace note --annotation` is always a replay:
 ```

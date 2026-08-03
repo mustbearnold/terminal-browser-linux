@@ -13,6 +13,7 @@ export interface WorkspaceBinding {
   agentPaneTitle?: string;
   agentPaneCwd?: string;
   agentPaneCommand?: string;
+  agentPaneProcessId?: string;
   deliveredAnnotationIds?: string[];
   updatedAt: string;
 }
@@ -79,7 +80,7 @@ export function loadBindings(): WorkspaceBinding[] {
     if (!isRecord(value) || typeof value.browserKey !== "string" || typeof value.agentPaneId !== "string" || typeof value.agentKind !== "string" || typeof value.updatedAt !== "string") {
       throw new Error("workspace bindings contain an invalid entry");
     }
-    for (const field of ["agentPaneWindow", "agentPaneTab", "agentPaneTitle", "agentPaneCwd", "agentPaneCommand"]) {
+    for (const field of ["agentPaneWindow", "agentPaneTab", "agentPaneTitle", "agentPaneCwd", "agentPaneCommand", "agentPaneProcessId"]) {
       if (value[field] !== undefined && typeof value[field] !== "string") {
         throw new Error("workspace bindings contain an invalid entry");
       }
@@ -129,6 +130,7 @@ export async function saveBinding(
     agentPaneTitle: agentPane.title,
     agentPaneCwd: agentPane.cwd,
     agentPaneCommand: agentPane.command,
+    agentPaneProcessId: agentPane.processId,
     deliveredAnnotationIds: [],
     updatedAt: new Date().toISOString(),
   };
@@ -262,7 +264,8 @@ export function paneIdentityChanged(binding: WorkspaceBinding, pane: Pane): bool
     binding.agentPaneTab !== pane.tab ||
     binding.agentPaneTitle !== pane.title ||
     (pane.cwd !== undefined && binding.agentPaneCwd !== pane.cwd) ||
-    (pane.command !== undefined && binding.agentPaneCommand !== pane.command);
+    (pane.command !== undefined && binding.agentPaneCommand !== pane.command) ||
+    (pane.processId !== undefined && binding.agentPaneProcessId !== pane.processId);
 }
 
 export function saveRecoveredBinding(binding: WorkspaceBinding, pane: Pane): WorkspaceBinding {
@@ -282,6 +285,7 @@ function recoveredBinding(binding: WorkspaceBinding, pane: Pane): WorkspaceBindi
     agentPaneTitle: pane.title,
     agentPaneCwd: pane.cwd ?? binding.agentPaneCwd,
     agentPaneCommand: pane.command ?? binding.agentPaneCommand,
+    agentPaneProcessId: pane.processId ?? binding.agentPaneProcessId,
     deliveredAnnotationIds: [],
     updatedAt: new Date().toISOString(),
   };
@@ -307,7 +311,8 @@ function hasPaneIdentity(binding: WorkspaceBinding): boolean {
     binding.agentPaneTab !== undefined ||
     binding.agentPaneTitle !== undefined ||
     binding.agentPaneCwd !== undefined ||
-    binding.agentPaneCommand !== undefined;
+    binding.agentPaneCommand !== undefined ||
+    binding.agentPaneProcessId !== undefined;
 }
 
 function matchesPaneIdentity(pane: Pane, binding: WorkspaceBinding): boolean {
