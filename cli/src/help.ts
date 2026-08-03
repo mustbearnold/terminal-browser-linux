@@ -32,7 +32,11 @@ ids it prints are what --tab takes in terminal-browser action.
 
 Options:
   --all               Every browser, not just this terminal tab
-  --json              Machine readable, including cdp ports and pane ids
+  --json              Machine readable, including cdp ports, pane ids, and readiness state
+
+JSON state:
+  ready               At least one tab has a CDP target and the browser has a debugging port
+  loading             The active page is navigating; ready can remain true during navigation
 `,
   },
   workspace: {

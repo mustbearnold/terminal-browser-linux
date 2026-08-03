@@ -13,25 +13,36 @@ interface Listed {
   splitDir: Browser["splitDir"];
   parentTty: string | null;
   inCurrentTab: boolean;
+  loading: boolean;
+  ready: boolean;
   viewport: { width: number; height: number } | null;
   tabs: TabTarget[];
 }
 
+export function browserReady(browser: Pick<Browser, "cdpPort">, tabs: TabTarget[]): boolean {
+  return browser.cdpPort !== null && tabs.some((tab) => tab.targetId !== null);
+}
+
 async function collect(list: Browser[]): Promise<Listed[]> {
   return Promise.all(
-    list.map(async (browser) => ({
-      key: recordKey(browser),
-      pid: browser.pid,
-      cdpPort: browser.cdpPort,
-      socket: browser.socket,
-      tty: browser.tty,
-      pane: { window: browser.window, tab: browser.tab, pane: browser.pane },
-      splitDir: browser.splitDir,
-      parentTty: browser.parentTty,
-      inCurrentTab: browser.inCurrentTab,
-      viewport: browser.viewport,
-      tabs: await targets(browser).catch(() => []),
-    })),
+    list.map(async (browser) => {
+      const tabs = await targets(browser).catch(() => []);
+      return {
+        key: recordKey(browser),
+        pid: browser.pid,
+        cdpPort: browser.cdpPort,
+        socket: browser.socket,
+        tty: browser.tty,
+        pane: { window: browser.window, tab: browser.tab, pane: browser.pane },
+        splitDir: browser.splitDir,
+        parentTty: browser.parentTty,
+        inCurrentTab: browser.inCurrentTab,
+        loading: browser.loading,
+        ready: browserReady(browser, tabs),
+        viewport: browser.viewport,
+        tabs,
+      };
+    }),
   );
 }
 
@@ -42,7 +53,8 @@ function render(list: Listed[]): string {
     const where = browser.pane.window
       ? `${browser.pane.window}:${browser.pane.tab}:${browser.pane.pane}`
       : "no pane";
-    lines.push(`${browser.key}  ${where}${browser.inCurrentTab ? "  (this tab)" : ""}`);
+    const state = browser.ready ? (browser.loading ? "loading" : "ready") : "starting";
+    lines.push(`${browser.key}  ${where}${browser.inCurrentTab ? "  (this tab)" : ""}  [${state}]`);
     for (const tab of browser.tabs) {
       const mark = tab.active ? "*" : " ";
       lines.push(`  ${mark} ${tab.id}  ${tab.title || tab.url}`);
