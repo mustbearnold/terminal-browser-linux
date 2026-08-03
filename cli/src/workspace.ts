@@ -211,10 +211,13 @@ async function createNote(backend: Backend, args: string[]): Promise<void> {
   const agentPaneId = takeFlag(args, "--pane");
   const commit = takeBool(args, "--commit");
   const force = takeBool(args, "--force");
+  const refresh = takeBool(args, "--refresh");
   rejectRemaining(args);
   if (annotationId && (targetJson || point)) throw new Error("workspace note --annotation cannot combine with --target or --at");
   if (annotationId && note) throw new Error("workspace note --annotation uses the stored note; omit --note");
   if (force && !annotationId) throw new Error("workspace note --force requires --annotation <id>");
+  if (refresh && !annotationId) throw new Error("workspace note --refresh requires --annotation <id>");
+  if (refresh && force) throw new Error("workspace note --refresh cannot combine with --force");
   if (annotationId && tokenJson) throw new Error("workspace note --annotation cannot use --token");
   if (targetJson && point) throw new Error("workspace note accepts either --target or --at, not both");
   if (!annotationId && !targetJson && !point) throw new Error("workspace note requires --annotation <id>, --target '<json target>', or --at <x> <y>");
@@ -227,17 +230,24 @@ async function createNote(backend: Backend, args: string[]): Promise<void> {
   const pages = await withClient(browser, (client) => client.call("pages.list", {}));
   if (annotationId) {
     const annotation = await withClient(browser, (client) => findAnnotation(client, pages.pages, requestedPageId, annotationId));
-    requireAnnotationFresh(annotation, force);
-    const payload = promptTag(annotation, commit);
+    const outbound = refresh
+      ? await withClient(browser, async (client) => {
+        const read = await client.read(annotation.pageId, annotation.target);
+        return client.annotationCreate(annotation.pageId, read.target, annotation.note);
+      })
+      : annotation;
+    requireAnnotationFresh(outbound, force);
+    const payload = promptTag(outbound, commit);
     const sent = destination === undefined
       ? false
       : await sendToPane(backend, destination, payload, browser.pane);
     print({
-      annotation,
+      annotation: outbound,
       promptTag: payload,
       attached: sent,
       submitted: commit && sent,
       replayed: true,
+      ...(refresh ? { refreshedFrom: annotation.annotationId } : {}),
       ...(destination === undefined ? { reason: "no agent pane is attached" } : {}),
     });
     return;

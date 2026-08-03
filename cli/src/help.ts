@@ -56,7 +56,7 @@ Commands:
   panes [--json]
   close --browser <key>
   notes --browser <key> [--page <page-id>]
-  note --browser <key> (--annotation <id> | --target '<json>' | --at <x> <y>) [--note <text>] [--commit] [--force]
+  note --browser <key> (--annotation <id> | --target '<json>' | --at <x> <y>) [--note <text>] [--commit] [--force] [--refresh]
 
 Examples:
   terminal-browser workspace panes
@@ -66,6 +66,7 @@ Examples:
   terminal-browser workspace note --browser 90107-1 --at 280 160 --note 'this card needs a clearer heading'
   terminal-browser workspace notes --browser 90107-1
   terminal-browser workspace note --browser 90107-1 --annotation annotation-1 --force
+  terminal-browser workspace note --browser 90107-1 --annotation annotation-1 --refresh
 `,
   },
   setup: {

@@ -266,6 +266,19 @@ async function runSmoke() {
     staleReplayRejected = String(error.stderr ?? error).includes("pass --force");
   }
   if (!staleReplayRejected) fail("workspace note replay accepted a stale annotation without --force");
+  const refreshResult = await run("terminal-browser", [
+    "workspace", "note", "--browser", browser.key, "--annotation", staleNotes.annotations[0].annotationId, "--refresh",
+  ], {
+    env: { ...environment, DISPLAY: display },
+    cwd: root,
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 8000,
+  });
+  const refreshedPayload = JSON.parse(refreshResult.stdout);
+  if (!refreshedPayload.replayed || refreshedPayload.refreshedFrom !== staleNotes.annotations[0].annotationId || !refreshedPayload.promptTag.includes("status=fresh")) {
+    fail("workspace note refresh did not produce a fresh annotation");
+  }
+  await assertPaneText(agentPaneId, "@tb-2", "stale annotation refresh reached agent pane", 30000);
   const forcedReplay = await run("terminal-browser", [
     "workspace", "note", "--browser", browser.key, "--annotation", staleNotes.annotations[0].annotationId, "--force",
   ], {

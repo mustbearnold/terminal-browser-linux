@@ -44,6 +44,9 @@ terminal-browser workspace note --browser <browser-key> --annotation annotation-
 Replay refuses to send a note whose observed document revision is stale unless
 `--force` is supplied. Forced replays keep the stale status and current
 revision in the prompt tag so the agent can re-read before acting.
+Use `--refresh` instead to re-resolve the stored semantic target against the
+current DOM and create a new fresh annotation; the original note remains
+available for audit.
 
 The agent transport is a versioned JSON-lines session exposed through the
 running browser. The CLI can bridge stdin/stdout to it:
