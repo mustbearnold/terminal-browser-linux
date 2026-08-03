@@ -5,6 +5,12 @@ import { Backend } from "./shared";
 
 const run = promisify(execFile);
 
+type WeztermRun = (
+  file: string,
+  args: string[],
+  options: { env: NodeJS.ProcessEnv; maxBuffer: number; timeout: number },
+) => Promise<{ stdout: string }>;
+
 interface WeztermPane {
   window_id: number;
   tab_id: number;
@@ -14,9 +20,9 @@ interface WeztermPane {
   cwd_url?: string;
 }
 
-export function createWezterm(env: NodeJS.ProcessEnv = process.env): Backend {
+export function createWezterm(env: NodeJS.ProcessEnv = process.env, execute: WeztermRun = run): Backend {
   function wezterm(args: string[]) {
-    return run("wezterm", args, { env, maxBuffer: 4 * 1024 * 1024, timeout: 8000 });
+    return execute("wezterm", args, { env, maxBuffer: 4 * 1024 * 1024, timeout: 8000 });
   }
 
   const backend: Backend = {
@@ -56,6 +62,12 @@ export function createWezterm(env: NodeJS.ProcessEnv = process.env): Backend {
       const selfId = env.WEZTERM_PANE;
       if (!selfId) return false;
       await wezterm(["cli", "activate-pane", "--pane-id", selfId]);
+      return true;
+    },
+    async closePane(titleNeedle) {
+      const target = (await backend.panes()).find((pane) => pane.title.includes(titleNeedle));
+      if (!target) return false;
+      await wezterm(["cli", "kill-pane", "--pane-id", target.pane]);
       return true;
     },
   };
