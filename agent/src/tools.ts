@@ -161,6 +161,7 @@ export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
   tool("terminal_browser_page_annotation_refresh", "Re-resolve a stored semantic DOM note against the current page revision and create a fresh annotation.", "page.annotation.refresh", "page.annotation.write", object({
     pageId: string("Page identifier."),
     annotationId: string("Annotation identifier."),
+    idempotencyKey: string("Stable key for safe retry and replay."),
   }, ["pageId", "annotationId"])),
   tool("terminal_browser_page_active", "Read the currently focused semantic element and its revision token.", "page.active", "page.active", pageInput()),
   tool("terminal_browser_page_act", "Perform a verified browser action against a semantic target.", "page.act", "page.act", withLocatorDefinitions(object({

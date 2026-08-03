@@ -2,25 +2,26 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { AgentError } from "../protocol/errors";
-import type { ActionResult, AgentEvent, PageId } from "../protocol/types";
+import type { ActionResult, AgentEvent, PageAnnotationRefreshResult, PageId } from "../protocol/types";
 import type { EventHistoryStore } from "./events";
 import type { ActionJournal, ActionJournalStatus, IdempotentResult } from "./idempotency";
 
 export interface AgentJournal {
   readonly actions: ActionJournal<ActionResult>;
+  readonly annotations: ActionJournal<PageAnnotationRefreshResult>;
   eventHistory(pageId: PageId): EventHistoryStore;
 }
 
-interface PersistedActionEntry {
+interface PersistedActionEntry<Result> {
   key: string;
   fingerprint: string;
   status: "pending" | "completed";
-  result?: ActionResult;
+  result?: Result;
 }
 
-interface PersistedActionJournal {
+interface PersistedActionJournal<Result> {
   version: 1;
-  entries: PersistedActionEntry[];
+  entries: PersistedActionEntry<Result>[];
 }
 
 interface PersistedEventHistory {
@@ -28,21 +29,22 @@ interface PersistedEventHistory {
   events: AgentEvent[];
 }
 
-interface StoredActionEntry {
+interface StoredActionEntry<Result> {
   fingerprint: string;
   status: "pending" | "completed";
-  result?: ActionResult;
+  result?: Result;
 }
 
 let tempSequence = 0;
 
-export class DurableActionJournal implements ActionJournal<ActionResult> {
-  private readonly entries = new Map<string, StoredActionEntry>();
-  private readonly inFlight = new Map<string, Promise<ActionResult>>();
+export class DurableActionJournal<Result = ActionResult> implements ActionJournal<Result> {
+  private readonly entries = new Map<string, StoredActionEntry<Result>>();
+  private readonly inFlight = new Map<string, Promise<Result>>();
 
   constructor(
     private readonly filePath: string,
     private readonly limit = 256,
+    private readonly retryFailedOperation: (error: unknown) => boolean = safeToRetryBeforeExecution,
   ) {
     validateLimit(limit, "action journal limit");
     this.load();
@@ -51,8 +53,8 @@ export class DurableActionJournal implements ActionJournal<ActionResult> {
   execute(
     key: string,
     fingerprint: string,
-    operation: () => Promise<ActionResult>,
-  ): Promise<IdempotentResult<ActionResult>> {
+    operation: () => Promise<Result>,
+  ): Promise<IdempotentResult<Result>> {
     const existing = this.entries.get(key);
     if (existing) {
       this.assertFingerprint(key, existing.fingerprint, fingerprint);
@@ -68,7 +70,7 @@ export class DurableActionJournal implements ActionJournal<ActionResult> {
       });
     }
 
-    const entry: StoredActionEntry = { fingerprint, status: "pending" };
+    const entry: StoredActionEntry<Result> = { fingerprint, status: "pending" };
     this.entries.set(key, entry);
     try {
       this.persist();
@@ -95,7 +97,7 @@ export class DurableActionJournal implements ActionJournal<ActionResult> {
       () => this.inFlight.delete(key),
       (error) => {
         this.inFlight.delete(key);
-        if (!safeToRetryBeforeExecution(error) || this.entries.get(key) !== entry) return;
+        if (!this.retryFailedOperation(error) || this.entries.get(key) !== entry) return;
         this.entries.delete(key);
         try {
           this.persist();
@@ -107,7 +109,7 @@ export class DurableActionJournal implements ActionJournal<ActionResult> {
     return execution.then((result) => ({ result, replayed: false }));
   }
 
-  status(key: string): ActionJournalStatus<ActionResult> {
+  status(key: string): ActionJournalStatus<Result> {
     const entry = this.entries.get(key);
     if (!entry) return { status: "missing" };
     if (entry.status === "completed") {
@@ -141,14 +143,14 @@ export class DurableActionJournal implements ActionJournal<ActionResult> {
       this.entries.set(value.key, {
         fingerprint: value.fingerprint,
         status: value.status,
-        ...(value.result === undefined ? {} : { result: value.result as ActionResult }),
+        ...(value.result === undefined ? {} : { result: value.result as Result }),
       });
     }
     this.evictCompleted();
   }
 
   private persist(): void {
-    const data: PersistedActionJournal = {
+    const data: PersistedActionJournal<Result> = {
       version: 1,
       entries: [...this.entries].map(([key, entry]) => ({
         key,
@@ -226,6 +228,7 @@ export class DurableEventHistory implements EventHistoryStore {
 
 export class DurableAgentJournal implements AgentJournal {
   readonly actions: DurableActionJournal;
+  readonly annotations: DurableActionJournal<PageAnnotationRefreshResult>;
   private readonly eventHistories = new Map<string, DurableEventHistory>();
 
   constructor(
@@ -233,6 +236,11 @@ export class DurableAgentJournal implements AgentJournal {
     private readonly limit = 256,
   ) {
     this.actions = new DurableActionJournal(`${basePath}.actions.json`, limit);
+    this.annotations = new DurableActionJournal<PageAnnotationRefreshResult>(
+      `${basePath}.annotations.json`,
+      limit,
+      () => true,
+    );
   }
 
   eventHistory(pageId: PageId): DurableEventHistory {

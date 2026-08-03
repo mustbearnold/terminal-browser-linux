@@ -123,11 +123,19 @@ test("validates and dispatches structured calls through the typed client", async
   const refreshed = await tools.callTool("terminal_browser_page_annotation_refresh", {
     pageId: String(FIXTURE_PAGE_ID),
     annotationId: annotation.annotationId,
+    idempotencyKey: "tool-refresh-1",
   });
   assert.equal(refreshed.refreshedFrom, annotation.annotationId);
   assert.equal(refreshed.annotation.tag, "@tb-2");
   assert.equal(refreshed.annotation.stale, false);
   assert.equal(refreshed.annotation.revision, 1);
+  const replayedRefresh = await tools.callTool("terminal_browser_page_annotation_refresh", {
+    pageId: String(FIXTURE_PAGE_ID),
+    annotationId: annotation.annotationId,
+    idempotencyKey: "tool-refresh-1",
+  });
+  assert.equal(replayedRefresh.replayed, true);
+  assert.equal(replayedRefresh.annotation.annotationId, refreshed.annotation.annotationId);
 
   const focused = await tools.callTool("terminal_browser_page_act", {
     pageId: String(FIXTURE_PAGE_ID),

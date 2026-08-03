@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { AgentEventBus } from "../core/events";
 import { DurableAgentJournal, DurableActionJournal, DurableEventHistory } from "../core/journal";
+import type { PageAnnotationRefreshResult } from "../protocol/types";
 import { AgentError } from "../protocol/errors";
 import { AGENT_PROTOCOL, AGENT_PROTOCOL_VERSION, asPageId, type ActionResult, type AgentEvent } from "../protocol/types";
 
@@ -29,6 +30,28 @@ test("replays completed actions from a new durable journal instance", async () =
     assert.deepEqual(second.status("key"), { status: "completed", result });
     assert.deepEqual(second.status("missing"), { status: "missing" });
     assert.equal(calls, 1);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("persists generic annotation refresh outcomes for safe replay", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-browser-agent-annotation-journal-"));
+  try {
+    const filePath = path.join(directory, "annotations.json");
+    const result = { pageId: "page-1", refreshedFrom: "annotation-1", annotation: {} } as unknown as PageAnnotationRefreshResult;
+    const first = new DurableActionJournal<PageAnnotationRefreshResult>(filePath, 8, () => true);
+    assert.deepEqual(await first.execute("refresh-1", "fingerprint", async () => result), {
+      result,
+      replayed: false,
+    });
+    const second = new DurableActionJournal<PageAnnotationRefreshResult>(filePath, 8, () => true);
+    assert.deepEqual(await second.execute("refresh-1", "fingerprint", async () => {
+      throw new Error("should not execute a completed refresh");
+    }), {
+      result,
+      replayed: true,
+    });
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

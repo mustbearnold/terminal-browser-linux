@@ -336,9 +336,14 @@ export class AgentClient {
   annotationRefresh(
     pageId: PageId,
     annotationId: string,
+    idempotencyKey?: string,
     options?: AgentCallOptions,
   ): Promise<PageAnnotationRefreshResult> {
-    return this.call("page.annotation.refresh", { pageId, annotationId }, options);
+    return this.call("page.annotation.refresh", {
+      pageId,
+      annotationId,
+      ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+    }, options);
   }
 
   actBatch(

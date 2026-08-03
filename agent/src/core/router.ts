@@ -8,6 +8,7 @@ import type {
   AgentRequest,
   AgentResponse,
   PageAnnotation,
+  PageAnnotationRefreshResult,
   PageAnnotationView,
 } from "../protocol/types";
 import type { EventSubscription } from "./events";
@@ -55,6 +56,7 @@ export class AgentRequestRouter {
   private readonly subscriptionSequences = new WeakMap<AgentConnectionContext, number>();
   private readonly contexts = new Set<AgentConnectionContext>();
   private readonly actionJournal: ActionJournal<ActionResult>;
+  private readonly annotationJournal: ActionJournal<PageAnnotationRefreshResult>;
   private readonly defaultContext = idleContext();
   readonly trace: TraceRecorder;
 
@@ -64,12 +66,14 @@ export class AgentRequestRouter {
     private readonly policy: PolicyEngine = new DefaultPolicy(),
     actionJournal: ActionJournal<ActionResult> = new IdempotencyCache<ActionResult>(),
     private readonly maxInFlightRequests = MAX_AGENT_IN_FLIGHT_REQUESTS,
+    annotationJournal: ActionJournal<PageAnnotationRefreshResult> = new IdempotencyCache<PageAnnotationRefreshResult>(),
   ) {
     if (!Number.isSafeInteger(maxInFlightRequests) || maxInFlightRequests < 1) {
       throw new AgentError("INVALID_REQUEST", "max in-flight requests must be a positive safe integer");
     }
     this.trace = trace;
     this.actionJournal = actionJournal;
+    this.annotationJournal = annotationJournal;
     this.runtime.onPageClosed?.((pageId) => this.pageClosed(pageId));
   }
 
@@ -100,7 +104,7 @@ export class AgentRequestRouter {
       this.reserve(connection);
       reserved = true;
       execution = this.registry(connection).begin(request.requestId, request.deadlineMs, {
-        cancelOnClose: !isIdempotentActionRequest(request),
+        cancelOnClose: !isRetryableRequest(request),
       });
       throwIfAborted(execution.signal);
       const result = await this.dispatch(request, connection, execution.signal);
@@ -238,22 +242,33 @@ export class AgentRequestRouter {
         if (!existing) {
           throw new AgentError("ANNOTATION_NOT_FOUND", `unknown annotation: ${request.annotationId}`);
         }
-        const read = await page.read(existing.target, undefined, signal);
-        const annotation = this.annotationStore().create({
-          pageId: read.pageId,
-          documentId: read.documentId,
-          revision: read.revision,
-          url: read.url,
-          title: read.title,
-          target: read.target,
-          node: read.node,
-          note: existing.note,
-        });
-        return {
-          pageId: request.pageId,
-          annotation: this.annotationView(annotation, page),
-          refreshedFrom: existing.annotationId,
+        if (request.idempotencyKey !== undefined) requireIdempotencyKey(request.idempotencyKey);
+        const execute = async (): Promise<PageAnnotationRefreshResult> => {
+          const read = await page.read(existing.target, undefined, signal);
+          const annotation = this.annotationStore().create({
+            pageId: read.pageId,
+            documentId: read.documentId,
+            revision: read.revision,
+            url: read.url,
+            title: read.title,
+            target: read.target,
+            node: read.node,
+            note: existing.note,
+          });
+          return {
+            pageId: request.pageId,
+            annotation: this.annotationView(annotation, page),
+            refreshedFrom: existing.annotationId,
+          };
         };
+        if (request.idempotencyKey === undefined) return await execute();
+        const key = annotationJournalKey(context.clientId, request.pageId, request.idempotencyKey);
+        const fingerprint = stableSerialize({
+          pageId: request.pageId,
+          annotationId: request.annotationId,
+        });
+        const outcome = await this.annotationJournal.execute(key, fingerprint, execute);
+        return outcome.replayed ? { ...outcome.result, replayed: true } : outcome.result;
       }
       case "page.active":
         return await this.page(request.pageId).active(signal);
@@ -528,15 +543,20 @@ function requireIdempotencyKey(key: string): void {
   }
 }
 
-function isIdempotentActionRequest(request: AgentRequest): boolean {
+function isRetryableRequest(request: AgentRequest): boolean {
   return (
-    (request.op === "page.act" || request.op === "page.act.batch") &&
-    request.idempotencyKey !== undefined
+    ((request.op === "page.act" || request.op === "page.act.batch") &&
+      request.idempotencyKey !== undefined) ||
+    (request.op === "page.annotation.refresh" && request.idempotencyKey !== undefined)
   );
 }
 
 function actionJournalKey(clientId: string, pageId: PageId, idempotencyKey: string): string {
   return `${clientId}\u0000${String(pageId)}\u0000${idempotencyKey}`;
+}
+
+function annotationJournalKey(clientId: string, pageId: PageId, idempotencyKey: string): string {
+  return `annotation\u0000${clientId}\u0000${String(pageId)}\u0000${idempotencyKey}`;
 }
 
 function requestPolicyContext(request: AgentRequest): Omit<PolicyContext, "clientId" | "capability"> {

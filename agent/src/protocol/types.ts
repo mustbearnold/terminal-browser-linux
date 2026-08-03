@@ -261,6 +261,7 @@ export interface PageAnnotationRefreshResult {
   pageId: PageId;
   annotation: PageAnnotationView;
   refreshedFrom: string;
+  replayed?: boolean;
 }
 
 export interface PageActiveResult extends SnapshotToken {
@@ -567,7 +568,12 @@ export type AgentRequest =
   | (AgentRequestEnvelope & { op: "page.annotation.list"; pageId: PageId })
   | (AgentRequestEnvelope & { op: "page.annotation.get"; pageId: PageId; annotationId: string })
   | (AgentRequestEnvelope & { op: "page.annotation.delete"; pageId: PageId; annotationId: string })
-  | (AgentRequestEnvelope & { op: "page.annotation.refresh"; pageId: PageId; annotationId: string })
+  | (AgentRequestEnvelope & {
+      op: "page.annotation.refresh";
+      pageId: PageId;
+      annotationId: string;
+      idempotencyKey?: string;
+    })
   | (AgentRequestEnvelope & { op: "page.active"; pageId: PageId })
   | (AgentRequestEnvelope & {
       op: "page.act";

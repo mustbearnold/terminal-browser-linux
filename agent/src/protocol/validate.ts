@@ -492,6 +492,10 @@ function validateRequest(message: Record<string, unknown>): void {
   if (op === "page.annotation.get" || op === "page.annotation.delete" || op === "page.annotation.refresh") {
     requireString(message.annotationId, "annotationId");
   }
+  if (op === "page.annotation.refresh" && message.idempotencyKey !== undefined) {
+    const key = requireString(message.idempotencyKey, "idempotencyKey");
+    if (key.length > 256) throw new AgentError("INVALID_MESSAGE", "idempotencyKey must be at most 256 characters");
+  }
   if (op === "page.act") {
     validateAction(message.action);
     if (message.token !== undefined) validateSnapshotToken(message.token, "token");

@@ -112,6 +112,50 @@ test("routes annotation creation and reports stale revisions", async () => {
   assert.equal(refreshedResult.annotation.revision, 1);
 });
 
+test("replays an idempotent annotation refresh without creating a duplicate", async () => {
+  const runtime = new FixtureRuntime();
+  const router = new AgentRequestRouter(runtime);
+  const context = { clientId: "annotation-retry", emit: () => {}, addSubscription: () => {} };
+  const created = await router.handle(request("page.annotation.create", {
+    pageId: FIXTURE_PAGE_ID,
+    target: { locator: { kind: "role", role: "button", name: "Continue", exact: true } },
+    note: "Retry this refresh safely.",
+  }), context);
+  const annotation = created.result as PageAnnotationView;
+  await router.handle(request("page.act", {
+    pageId: FIXTURE_PAGE_ID,
+    action: { type: "click", target: { ref: annotation.node.ref } },
+  }), context);
+
+  const refresh = request("page.annotation.refresh", {
+    pageId: FIXTURE_PAGE_ID,
+    annotationId: annotation.annotationId,
+    idempotencyKey: "refresh-1",
+  });
+  const first = await router.handle(refresh, context);
+  const replay = await router.handle({ ...refresh, requestId: "annotation-refresh-retry" }, {
+    clientId: "annotation-retry",
+    emit: () => {},
+    addSubscription: () => {},
+  });
+  assert.equal(first.ok, true);
+  assert.equal(replay.ok, true);
+  const firstResult = first.result as { annotation: PageAnnotationView };
+  const replayResult = replay.result as { annotation: PageAnnotationView; replayed?: boolean };
+  assert.equal(replayResult.replayed, true);
+  assert.equal(replayResult.annotation.annotationId, firstResult.annotation.annotationId);
+  const listed = await router.handle(request("page.annotation.list", { pageId: FIXTURE_PAGE_ID }), context);
+  assert.equal((listed.result as { annotations: PageAnnotationView[] }).annotations.length, 2);
+
+  const conflict = await router.handle(request("page.annotation.refresh", {
+    pageId: FIXTURE_PAGE_ID,
+    annotationId: replayResult.annotation.annotationId,
+    idempotencyKey: "refresh-1",
+  }), context);
+  assert.equal(conflict.ok, false);
+  assert.equal(conflict.error?.code, "IDEMPOTENCY_CONFLICT");
+});
+
 function request<T extends AgentRequest["op"]>(op: T, fields: Record<string, unknown>): AgentRequest {
   return {
     kind: "request",

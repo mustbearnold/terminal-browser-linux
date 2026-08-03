@@ -334,7 +334,14 @@ class Session {
     const agentServer = new UnixSocketAgentServer(
       path.join(INSTANCES_DIR, `${this.ctx.key}.agent.sock`),
     );
-    const agentRouter = new AgentRequestRouter(this.agentRuntime, undefined, undefined, agentJournal?.actions);
+    const agentRouter = new AgentRequestRouter(
+      this.agentRuntime,
+      undefined,
+      undefined,
+      agentJournal?.actions,
+      undefined,
+      agentJournal?.annotations,
+    );
     agentServer.accept((transport) => attachAgentConnection(transport, agentRouter));
     await agentServer.listen();
     this.agentServer = agentServer;
