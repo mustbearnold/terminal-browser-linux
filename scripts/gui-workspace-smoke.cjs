@@ -232,6 +232,16 @@ async function runSmoke() {
   if (notes.annotations?.length !== 1 || notes.annotations[0].annotationId !== "annotation-1") {
     fail("workspace notes did not expose the stored DOM annotation");
   }
+  const attachSyncResult = await run("terminal-browser", [
+    "workspace", "attach", "--browser", browser.key, "--pane", String(agentPaneId), "--sync-notes",
+  ], {
+    env: { ...environment, DISPLAY: display },
+    cwd: root,
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 8000,
+  });
+  const attachSync = JSON.parse(attachSyncResult.stdout);
+  if (!attachSync.notes?.delivered?.includes("annotation-1")) fail("workspace attach --sync-notes did not deliver the stored annotation");
   const syncResult = await run("terminal-browser", ["workspace", "sync", "--browser", browser.key], {
     env: { ...environment, DISPLAY: display },
     cwd: root,

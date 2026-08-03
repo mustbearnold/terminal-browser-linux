@@ -55,6 +55,8 @@ into the current binding and reports stale notes without sending them. Add
 terminal-browser workspace sync --browser <browser-key>
 terminal-browser workspace sync --browser <browser-key> --force
 ```
+The same sync can be requested while creating or replacing a binding with
+`workspace attach ... --sync-notes` or `workspace open ... --sync-notes`.
 
 The agent transport is a versioned JSON-lines session exposed through the
 running browser. The CLI can bridge stdin/stdout to it:

@@ -80,8 +80,9 @@ silently sending a note to an unrelated shell.
 Commands:
   open [url] [direction] --agent-pane <pane-id> [--agent <kind>]
   open [url] [direction] --left [--agent <kind>]
-  attach --browser <key> --pane <pane-id> [--agent <kind>]
-  attach --browser <key> --left [--agent <kind>]
+  attach --browser <key> --pane <pane-id> [--agent <kind>] [--sync-notes]
+  attach --browser <key> --left [--agent <kind>] [--sync-notes]
+  open [url] [direction] --left [--agent <kind>] [--sync-notes]
   list
   panes [--json]
   close --browser <key>
@@ -99,6 +100,7 @@ Examples:
   terminal-browser workspace note --browser 90107-1 --annotation annotation-1 --force
   terminal-browser workspace note --browser 90107-1 --annotation annotation-1 --refresh
   terminal-browser workspace sync --browser 90107-1
+  terminal-browser workspace attach --browser 90107-1 --left --sync-notes
 ```
 
 ```

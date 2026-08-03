@@ -90,6 +90,7 @@ async function openWorkspace(
   let agentPaneId = takeFlag(args, "--agent-pane");
   const left = takeBool(args, "--left");
   const requestedAgentKind = takeFlag(args, "--agent");
+  const syncExistingNotes = takeBool(args, "--sync-notes");
   if (left && agentPaneId !== undefined) {
     throw new Error("workspace open cannot combine --left with --agent-pane");
   }
@@ -100,6 +101,9 @@ async function openWorkspace(
     if (!agentPane || !(await backend.focusPane(agentPane.title))) {
       throw new Error(`could not focus agent pane ${agentPaneId}`);
     }
+  }
+  if (syncExistingNotes && agentPaneId === undefined) {
+    throw new Error("workspace open --sync-notes requires --left or --agent-pane");
   }
   const before = new Set((await browsers(backend)).map(recordKey));
   if (!args.some((value) => isDirection(value))) args.push("right");
@@ -112,7 +116,10 @@ async function openWorkspace(
   const binding = agentPaneId === undefined
     ? undefined
     : await saveBinding(backend, recordKey(browser), agentPaneId, requestedAgentKind, browser.pane);
-  print({ browser: recordKey(browser), pane: browser.pane, binding });
+  const notes = syncExistingNotes
+    ? await syncWorkspaceNotes(backend, browser, undefined, false)
+    : undefined;
+  print({ browser: recordKey(browser), pane: browser.pane, binding, ...(notes ? { notes } : {}) });
 }
 
 async function attachWorkspace(backend: Backend, args: string[]): Promise<void> {
@@ -120,13 +127,17 @@ async function attachWorkspace(backend: Backend, args: string[]): Promise<void> 
   let agentPaneId = takeFlag(args, "--pane") ?? takeFlag(args, "--agent-pane");
   const left = takeBool(args, "--left");
   const requestedAgentKind = takeFlag(args, "--agent");
+  const syncExistingNotes = takeBool(args, "--sync-notes");
   rejectRemaining(args);
   const browser = await selectBrowser(backend, browserKey);
   if (left) agentPaneId = await peerPane(backend, browser.pane);
   if (!agentPaneId) throw new Error("workspace attach requires --pane <pane-id> or --left");
   await requirePane(backend, agentPaneId, browser.pane);
   const binding = await saveBinding(backend, recordKey(browser), agentPaneId, requestedAgentKind, browser.pane);
-  print(binding);
+  const notes = syncExistingNotes
+    ? await syncWorkspaceNotes(backend, browser, undefined, false)
+    : undefined;
+  print(notes ? { binding, notes } : binding);
 }
 
 async function listWorkspace(backend: Backend, args: string[]): Promise<void> {
@@ -310,6 +321,16 @@ async function syncNotes(backend: Backend, args: string[]): Promise<void> {
   const force = takeBool(args, "--force");
   rejectRemaining(args);
   const browser = await selectBrowser(backend, browserKey);
+  const result = await syncWorkspaceNotes(backend, browser, requestedPageId, force);
+  print({ browser: recordKey(browser), ...result });
+}
+
+async function syncWorkspaceNotes(
+  backend: Backend,
+  browser: Browser,
+  requestedPageId: string | undefined,
+  force: boolean,
+): Promise<{ agentPane: string; delivered: string[]; skippedStale: string[]; forced: boolean }> {
   const binding = loadBindings().find((candidate) => candidate.browserKey === recordKey(browser));
   if (!binding) throw new Error(`browser ${recordKey(browser)} has no agent pane binding; run workspace attach first`);
   const destination = await resolveBindingPane(backend, browser.pane, binding);
@@ -332,13 +353,12 @@ async function syncNotes(backend: Backend, args: string[]): Promise<void> {
     await sendToPane(backend, destination, `${promptTag(annotation)} `, browser.pane);
     delivered.push(annotation.annotationId);
   }
-  print({
-    browser: recordKey(browser),
+  return {
     agentPane: destination,
     delivered,
     skippedStale,
     forced: force,
-  });
+  };
 }
 
 async function findAnnotation(
