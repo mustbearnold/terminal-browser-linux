@@ -57,7 +57,7 @@ export function agentBrowserPath(): string {
 }
 
 function sessionName(browser: Browser): string {
-  return `terminal-browser-${recordKey(browser)}`;
+  return `tb-${recordKey(browser)}`;
 }
 
 function childEnv(): NodeJS.ProcessEnv {
@@ -95,6 +95,16 @@ function parseTabs(stdout: string): AgentTab[] {
 function evalResult(stdout: string): unknown {
   const parsed = JSON.parse(stdout) as { data?: { result?: unknown } };
   return parsed.data?.result;
+}
+
+function agentFailure(result: { stdout: string; stderr: string }, fallback: string): string {
+  const output = `${result.stderr}\n${result.stdout}`.trim();
+  if (!output) return fallback;
+  try {
+    const parsed = JSON.parse(output) as { error?: unknown };
+    if (typeof parsed.error === "string") return parsed.error;
+  } catch {}
+  return output.split("\n").pop() ?? fallback;
 }
 
 function pause(ms: number): Promise<void> {
@@ -164,15 +174,15 @@ async function agentTabs(binary: string, browser: Browser): Promise<AgentTab[]> 
       } catch (error) {
         lastError = error instanceof Error ? error.message : "agent-browser returned invalid tab JSON";
       }
-    } else if (listing.stderr) {
-      lastError = listing.stderr.trim().split("\n").pop() ?? lastError;
+    } else {
+      lastError = agentFailure(listing, lastError);
     }
 
     if (Date.now() >= nextReconnect) {
       const reconnect = runAgent(binary, ["--session", session, "connect", port, "--json"], false);
       nextReconnect = Date.now() + 1_000;
-      if (reconnect.status !== 0 && reconnect.stderr) {
-        lastError = reconnect.stderr.trim().split("\n").pop() ?? lastError;
+      if (reconnect.status !== 0) {
+        lastError = agentFailure(reconnect, lastError);
       }
     }
     await pause(Math.min(ACTION_READY_POLL_MS, Math.max(0, deadline - Date.now())));
