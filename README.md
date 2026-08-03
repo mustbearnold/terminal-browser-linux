@@ -48,9 +48,11 @@ Use `--refresh` instead to re-resolve the stored semantic target against the
 current DOM and create a new fresh annotation; the original note remains
 available for audit.
 
-After replacing an agent pane, `workspace sync` pastes all fresh stored notes
-into the current binding and reports stale notes without sending them. Add
-`--force` only when the agent should receive the stale observations too:
+`workspace sync` remembers which annotation tags reached the current agent pane,
+so repeated syncs only paste pending fresh notes and report already-delivered
+ones. Rebinding or recovering a replacement pane resets that delivery ledger.
+Add `--force` when the agent should receive a fresh note again or receive stale
+observations too; an explicit `workspace note --annotation` is always a replay:
 ```
 terminal-browser workspace sync --browser <browser-key>
 terminal-browser workspace sync --browser <browser-key> --force

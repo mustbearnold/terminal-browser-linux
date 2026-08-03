@@ -3,7 +3,9 @@ import test from "node:test";
 
 import {
   agentKindForPane,
+  hasDeliveredAnnotation,
   promptTag,
+  recordAnnotationDelivery,
   requireAnnotationFresh,
   resolveAgentPane,
   selectPeerPane,
@@ -64,6 +66,22 @@ test("marks replayed annotations with their current revision status", () => {
     /annotation annotation-7 is stale.*pass --force/,
   );
   assert.doesNotThrow(() => requireAnnotationFresh(annotation, true));
+});
+
+test("tracks delivered notes without duplicating the pane ledger", () => {
+  const binding = {
+    browserKey: "browser-1",
+    agentPaneId: "agent",
+    agentKind: "claude",
+    updatedAt: "2026-08-03T00:00:00.000Z",
+  };
+  const first = recordAnnotationDelivery(binding, "annotation-1");
+  const second = recordAnnotationDelivery(first, "annotation-1");
+  assert.equal(hasDeliveredAnnotation(binding, "annotation-1"), false);
+  assert.deepEqual(first.deliveredAnnotationIds, ["annotation-1"]);
+  assert.equal(second, first);
+  assert.equal(hasDeliveredAnnotation(first, "annotation-1"), true);
+  assert.equal(hasDeliveredAnnotation(first, "annotation-2"), false);
 });
 
 function pane(

@@ -10,7 +10,9 @@ import type {
 import type { Backend } from "pixel-terminals";
 import {
   agentKindForPane,
+  hasDeliveredAnnotation,
   loadBindings,
+  markAnnotationDelivered,
   paneIdentityChanged,
   promptTag,
   requireAnnotationFresh,
@@ -27,8 +29,10 @@ import {
 import type { WorkspaceBinding } from "terminal-browser-workspace";
 export {
   agentKindForPane,
+  hasDeliveredAnnotation,
   paneIdentityChanged,
   promptTag,
+  recordAnnotationDelivery,
   requireAnnotationFresh,
   resolveAgentPane,
   selectPeerPane,
@@ -270,6 +274,7 @@ async function createNote(backend: Backend, args: string[]): Promise<void> {
       ...(refreshed ? { refreshedFrom: refreshed.refreshedFrom } : {}),
       ...(destination === undefined ? { reason: "no agent pane is attached" } : {}),
     });
+    if (sent && agentPaneId === undefined) markAnnotationDelivered(recordKey(browser), outbound.annotationId);
     return;
   }
   const page = choosePage(pages.pages, requestedPageId);
@@ -303,6 +308,7 @@ async function createNote(backend: Backend, args: string[]): Promise<void> {
     submitted: commit && sent,
     ...(destination === undefined ? { reason: "no agent pane is attached" } : {}),
   });
+  if (sent && agentPaneId === undefined) markAnnotationDelivered(recordKey(browser), annotation.annotationId);
 }
 
 async function listNotes(backend: Backend, args: string[]): Promise<void> {
@@ -339,7 +345,7 @@ async function syncWorkspaceNotes(
   requestedPageId: string | undefined,
   force: boolean,
   refreshStale: boolean,
-): Promise<{ agentPane: string; delivered: string[]; skippedStale: string[]; refreshed: string[]; forced: boolean }> {
+): Promise<{ agentPane: string; delivered: string[]; skippedStale: string[]; skippedDelivered: string[]; refreshed: string[]; forced: boolean }> {
   if (force && refreshStale) throw new Error("workspace sync cannot combine --force and --refresh-stale");
   const binding = loadBindings().find((candidate) => candidate.browserKey === recordKey(browser));
   if (!binding) throw new Error(`browser ${recordKey(browser)} has no agent pane binding; run workspace attach first`);
@@ -367,18 +373,26 @@ async function syncWorkspaceNotes(
   });
   const delivered: string[] = [];
   const skippedStale: string[] = [];
+  const skippedDelivered: string[] = [];
+  const currentBinding = loadBindings().find((candidate) => candidate.browserKey === recordKey(browser));
   for (const annotation of annotationResult.annotations) {
     if (annotation.stale && !force) {
       skippedStale.push(annotation.annotationId);
       continue;
     }
+    if (!force && currentBinding && hasDeliveredAnnotation(currentBinding, annotation.annotationId)) {
+      skippedDelivered.push(annotation.annotationId);
+      continue;
+    }
     await sendToPane(backend, destination, `${promptTag(annotation)} `, browser.pane);
+    markAnnotationDelivered(recordKey(browser), annotation.annotationId);
     delivered.push(annotation.annotationId);
   }
   return {
     agentPane: destination,
     delivered,
     skippedStale,
+    skippedDelivered,
     refreshed: annotationResult.refreshed,
     forced: force,
   };

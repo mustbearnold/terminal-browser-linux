@@ -249,8 +249,8 @@ async function runSmoke() {
     timeout: 8000,
   });
   const sync = JSON.parse(syncResult.stdout);
-  if (!sync.delivered?.includes("annotation-1") || sync.skippedStale?.length !== 0) {
-    fail("workspace sync did not deliver the fresh stored annotation");
+  if (sync.delivered?.length !== 0 || !sync.skippedDelivered?.includes("annotation-1") || sync.skippedStale?.length !== 0) {
+    fail("workspace sync did not suppress the already-delivered fresh annotation");
   }
   const replayResult = await run("terminal-browser", [
     "workspace", "note", "--browser", browser.key, "--annotation", notes.annotations[0].annotationId,

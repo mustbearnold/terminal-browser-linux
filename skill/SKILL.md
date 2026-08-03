@@ -75,7 +75,10 @@ compact @tb-* tag. Pasting never submits the prompt unless --commit is used.
 Bindings remember the pane's title, working directory, and foreground command;
 workspace list reconciles replacements and reports whether the agent pane is
 attached, missing, or ambiguous. A stable binding fails closed rather than
-silently sending a note to an unrelated shell.
+silently sending a note to an unrelated shell. Sync remembers which annotation
+tags reached the current pane, skips them on later syncs, and resets that ledger
+when the binding moves to a replacement pane. Use --force to replay delivered
+notes or stale observations; an explicit note replay always sends.
 
 Commands:
   open [url] [direction] --agent-pane <pane-id> [--agent <kind>]

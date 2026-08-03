@@ -49,6 +49,7 @@ import { BrowserAgentRuntime } from "../agent/runtime";
 import {
   findBrowserPane,
   loadBindings,
+  markAnnotationDelivered,
   promptTag,
   resolveBindingPane,
   sendToPane,
@@ -1063,6 +1064,7 @@ class Session {
     const destination = await resolveBindingPane(backend, browserPane?.pane ?? null, binding);
     if (destination === undefined) return { attached: false, tag: annotation.tag };
     await sendToPane(backend, destination, payload, browserPane?.pane ?? null);
+    markAnnotationDelivered(this.ctx.key, annotation.annotationId);
     return { attached: true, tag: annotation.tag };
   }
 

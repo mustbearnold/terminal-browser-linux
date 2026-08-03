@@ -13,6 +13,7 @@ export interface WorkspaceBinding {
   agentPaneTitle?: string;
   agentPaneCwd?: string;
   agentPaneCommand?: string;
+  deliveredAnnotationIds?: string[];
   updatedAt: string;
 }
 
@@ -83,7 +84,14 @@ export function loadBindings(): WorkspaceBinding[] {
         throw new Error("workspace bindings contain an invalid entry");
       }
     }
-    return value as unknown as WorkspaceBinding;
+    if (value.deliveredAnnotationIds !== undefined &&
+      (!Array.isArray(value.deliveredAnnotationIds) || value.deliveredAnnotationIds.some((id) => typeof id !== "string"))) {
+      throw new Error("workspace bindings contain an invalid entry");
+    }
+    return {
+      ...value,
+      deliveredAnnotationIds: value.deliveredAnnotationIds as string[] | undefined ?? [],
+    } as unknown as WorkspaceBinding;
   });
 }
 
@@ -121,6 +129,7 @@ export async function saveBinding(
     agentPaneTitle: agentPane.title,
     agentPaneCwd: agentPane.cwd,
     agentPaneCommand: agentPane.command,
+    deliveredAnnotationIds: [],
     updatedAt: new Date().toISOString(),
   };
   const bindings = loadBindings().filter((candidate) => candidate.browserKey !== browserKey);
@@ -209,6 +218,30 @@ export async function sendToPane(
   return sent;
 }
 
+export function hasDeliveredAnnotation(binding: WorkspaceBinding, annotationId: string): boolean {
+  return binding.deliveredAnnotationIds?.includes(annotationId) ?? false;
+}
+
+export function recordAnnotationDelivery(binding: WorkspaceBinding, annotationId: string): WorkspaceBinding {
+  if (hasDeliveredAnnotation(binding, annotationId)) return binding;
+  return {
+    ...binding,
+    deliveredAnnotationIds: [...(binding.deliveredAnnotationIds ?? []), annotationId],
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export function markAnnotationDelivered(browserKey: string, annotationId: string): WorkspaceBinding | undefined {
+  const bindings = loadBindings();
+  const index = bindings.findIndex((binding) => binding.browserKey === browserKey);
+  if (index < 0) return undefined;
+  const updated = recordAnnotationDelivery(bindings[index], annotationId);
+  if (updated === bindings[index]) return updated;
+  bindings[index] = updated;
+  saveBindings(bindings);
+  return updated;
+}
+
 export function requireAnnotationFresh(
   annotation: { annotationId: string; stale: boolean; currentDocumentId: string; currentRevision: number },
   force: boolean,
@@ -249,6 +282,7 @@ function recoveredBinding(binding: WorkspaceBinding, pane: Pane): WorkspaceBindi
     agentPaneTitle: pane.title,
     agentPaneCwd: pane.cwd ?? binding.agentPaneCwd,
     agentPaneCommand: pane.command ?? binding.agentPaneCommand,
+    deliveredAnnotationIds: [],
     updatedAt: new Date().toISOString(),
   };
 }
