@@ -13,6 +13,7 @@ import {
   loadBindings,
   paneIdentityChanged,
   promptTag,
+  requireAnnotationFresh,
   requirePane,
   removeBinding,
   resolveAgentPane,
@@ -28,6 +29,7 @@ export {
   agentKindForPane,
   paneIdentityChanged,
   promptTag,
+  requireAnnotationFresh,
   resolveAgentPane,
   selectPeerPane,
   selectPeerPaneFromSelf,
@@ -69,8 +71,11 @@ export async function workspaceCommand(
     case "note":
       await createNote(backend, args);
       return;
+    case "notes":
+      await listNotes(backend, args);
+      return;
     default:
-      throw new Error(`unknown workspace command ${subcommand} (try open, attach, list, panes, close, or note)`);
+      throw new Error(`unknown workspace command ${subcommand} (try open, attach, list, panes, close, note, or notes)`);
   }
 }
 
@@ -198,22 +203,45 @@ async function closeWorkspace(backend: Backend, args: string[]): Promise<void> {
 async function createNote(backend: Backend, args: string[]): Promise<void> {
   const browserKey = takeFlag(args, "--browser");
   const requestedPageId = takeFlag(args, "--page");
+  const annotationId = takeFlag(args, "--annotation");
   const targetJson = takeFlag(args, "--target");
   const point = takePair(args, "--at");
   const note = takeFlag(args, "--note");
   const tokenJson = takeFlag(args, "--token");
   const agentPaneId = takeFlag(args, "--pane");
   const commit = takeBool(args, "--commit");
+  const force = takeBool(args, "--force");
   rejectRemaining(args);
+  if (annotationId && (targetJson || point)) throw new Error("workspace note --annotation cannot combine with --target or --at");
+  if (annotationId && note) throw new Error("workspace note --annotation uses the stored note; omit --note");
+  if (force && !annotationId) throw new Error("workspace note --force requires --annotation <id>");
+  if (annotationId && tokenJson) throw new Error("workspace note --annotation cannot use --token");
   if (targetJson && point) throw new Error("workspace note accepts either --target or --at, not both");
-  if (!targetJson && !point) throw new Error("workspace note requires --target '<json target>' or --at <x> <y>");
+  if (!annotationId && !targetJson && !point) throw new Error("workspace note requires --annotation <id>, --target '<json target>', or --at <x> <y>");
   if (point && tokenJson) throw new Error("workspace note --at creates its own fresh snapshot token");
-  if (!note) throw new Error("workspace note requires --note <text>");
+  if (!annotationId && !note) throw new Error("workspace note requires --note <text>");
 
   const browser = await selectBrowser(backend, browserKey);
   const binding = loadBindings().find((candidate) => candidate.browserKey === recordKey(browser));
   const destination = agentPaneId ?? await resolveBindingPane(backend, browser.pane, binding);
   const pages = await withClient(browser, (client) => client.call("pages.list", {}));
+  if (annotationId) {
+    const annotation = await withClient(browser, (client) => findAnnotation(client, pages.pages, requestedPageId, annotationId));
+    requireAnnotationFresh(annotation, force);
+    const payload = promptTag(annotation, commit);
+    const sent = destination === undefined
+      ? false
+      : await sendToPane(backend, destination, payload, browser.pane);
+    print({
+      annotation,
+      promptTag: payload,
+      attached: sent,
+      submitted: commit && sent,
+      replayed: true,
+      ...(destination === undefined ? { reason: "no agent pane is attached" } : {}),
+    });
+    return;
+  }
   const page = choosePage(pages.pages, requestedPageId);
   const captured = point === undefined
     ? {
@@ -231,7 +259,7 @@ async function createNote(backend: Backend, args: string[]): Promise<void> {
   const annotation = await withClient(browser, (client) => client.annotationCreate(
     page.pageId,
     captured.target,
-    note,
+    note!,
     captured.token,
   ));
   const payload = promptTag(annotation, commit);
@@ -245,6 +273,38 @@ async function createNote(backend: Backend, args: string[]): Promise<void> {
     submitted: commit && sent,
     ...(destination === undefined ? { reason: "no agent pane is attached" } : {}),
   });
+}
+
+async function listNotes(backend: Backend, args: string[]): Promise<void> {
+  const browserKey = takeFlag(args, "--browser");
+  const requestedPageId = takeFlag(args, "--page");
+  rejectRemaining(args);
+  const browser = await selectBrowser(backend, browserKey);
+  const pages = await withClient(browser, (client) => client.call("pages.list", {}));
+  const selectedPages = requestedPageId === undefined
+    ? pages.pages
+    : [choosePage(pages.pages, requestedPageId)];
+  const annotations = await withClient(browser, async (client) => {
+    const results = await Promise.all(selectedPages.map((page) => client.annotationList(page.pageId)));
+    return results.flatMap((result) => result.annotations);
+  });
+  print({ browser: recordKey(browser), annotations });
+}
+
+async function findAnnotation(
+  client: AgentClient,
+  pages: readonly PageIdentity[],
+  requestedPageId: string | undefined,
+  annotationId: string,
+) {
+  const selectedPages = requestedPageId === undefined
+    ? pages
+    : [choosePage(pages, requestedPageId)];
+  const results = await Promise.all(selectedPages.map((page) => client.annotationList(page.pageId)));
+  const matches = results.flatMap((result) => result.annotations.filter((annotation) => annotation.annotationId === annotationId));
+  if (matches.length === 0) throw new Error(`no annotation ${annotationId}`);
+  if (matches.length > 1) throw new Error(`annotation ${annotationId} is ambiguous; pass --page <page-id>`);
+  return matches[0];
 }
 
 async function peerPane(backend: Backend, browserPaneId: string | null): Promise<string> {

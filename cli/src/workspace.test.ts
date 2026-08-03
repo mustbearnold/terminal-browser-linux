@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   agentKindForPane,
   promptTag,
+  requireAnnotationFresh,
   resolveAgentPane,
   selectPeerPane,
   selectPeerPaneFromSelf,
@@ -40,6 +41,29 @@ test("formats a compact annotation tag without submitting by default", () => {
     '@tb-7 schema=1 page=browser/tab/1 url=https://example.com/settings target={"locator":{"kind":"role","role":"button","name":"Save"}} observation={"documentId":"document-1","revision":4,"frameId":"main","role":"button","name":"Save"} note=save control loses focus',
   );
   assert.equal(promptTag(annotation, true).endsWith("\n"), true);
+});
+
+test("marks replayed annotations with their current revision status", () => {
+  const annotation = {
+    annotationId: "annotation-7",
+    tag: "@tb-7",
+    pageId: "browser/tab/1",
+    documentId: "document-1",
+    revision: 4,
+    currentDocumentId: "document-2",
+    currentRevision: 5,
+    stale: true,
+    url: "https://example.com/settings",
+    target: { locator: { kind: "role", role: "button", name: "Save" } },
+    node: { frameId: "main", role: "button", name: "Save" },
+    note: "save control",
+  };
+  assert.match(promptTag(annotation), /status=stale current=\{"documentId":"document-2","revision":5\}/);
+  assert.throws(
+    () => requireAnnotationFresh(annotation, false),
+    /annotation annotation-7 is stale.*pass --force/,
+  );
+  assert.doesNotThrow(() => requireAnnotationFresh(annotation, true));
 });
 
 function pane(

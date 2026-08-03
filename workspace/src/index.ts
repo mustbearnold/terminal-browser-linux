@@ -29,6 +29,9 @@ export interface PromptAnnotation {
     name: string;
   };
   note: string;
+  stale?: boolean;
+  currentDocumentId?: string;
+  currentRevision?: number;
 }
 
 interface PersistedWorkspaces {
@@ -47,8 +50,16 @@ export function promptTag(annotation: PromptAnnotation, commit = false): string 
     role: annotation.node.role,
     name: annotation.node.name,
   }), 640);
+  const freshness = annotation.stale === undefined
+    ? ""
+    : annotation.stale
+      ? ` status=stale current=${compact(JSON.stringify({
+        documentId: annotation.currentDocumentId,
+        revision: annotation.currentRevision,
+      }), 240)}`
+      : " status=fresh";
   const note = compact(annotation.note, 800);
-  const value = `${annotation.tag} schema=1 page=${annotation.pageId} url=${compact(annotation.url, 240)} target=${target} observation=${observation} note=${note}`;
+  const value = `${annotation.tag} schema=1 page=${annotation.pageId} url=${compact(annotation.url, 240)} target=${target} observation=${observation}${freshness} note=${note}`;
   return commit ? `${value}\n` : value;
 }
 
@@ -196,6 +207,16 @@ export async function sendToPane(
   const sent = await backend.sendText(paneId, text);
   if (!sent) throw new Error(`could not write to agent pane ${paneId}`);
   return sent;
+}
+
+export function requireAnnotationFresh(
+  annotation: { annotationId: string; stale: boolean; currentDocumentId: string; currentRevision: number },
+  force: boolean,
+): void {
+  if (!annotation.stale || force) return;
+  throw new Error(
+    `annotation ${annotation.annotationId} is stale (current ${annotation.currentDocumentId}@${annotation.currentRevision}); pass --force to resend`,
+  );
 }
 
 export function agentKindForPane(pane: Pane, requested?: string): string {

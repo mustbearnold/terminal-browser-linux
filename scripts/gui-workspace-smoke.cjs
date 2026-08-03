@@ -4,6 +4,7 @@ const { execFile, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const { promisify } = require("node:util");
+const { AgentClient } = require(path.resolve(__dirname, "..", "agent", "dist", "index.js"));
 
 const run = promisify(execFile);
 const root = path.resolve(__dirname, "..");
@@ -129,6 +130,19 @@ async function workspaceBindings() {
   return JSON.parse(result.stdout);
 }
 
+async function reloadThroughAgent(browserKey) {
+  const socket = path.join(environment.XDG_RUNTIME_DIR, "terminal-browser", "instances", `${browserKey}.agent.sock`);
+  const client = await AgentClient.connect(socket, { clientId: "gui-workspace-smoke" });
+  try {
+    const pages = await client.call("pages.list", {});
+    const page = pages.pages.find((candidate) => candidate.active) ?? pages.pages[0];
+    if (!page) fail("agent did not expose a page to reload");
+    await client.call("page.act", { pageId: page.pageId, action: { type: "reload" } });
+  } finally {
+    await client.close();
+  }
+}
+
 async function paneText(paneId) {
   return kittyCommand(["get-text", "--match", `id:${paneId}`, "--extent", "screen"]);
 }
@@ -208,6 +222,63 @@ async function runSmoke() {
   const agentText = await assertPaneText(agentPaneId, "@tb-1", "annotation tag reached agent pane", 30000);
   if (!agentText.includes("schema=1") || !agentText.includes("observation={")) fail("agent pane received an unversioned annotation payload");
   if (!agentText.includes("note=GUI smoke handoff")) fail("agent pane received the tag without the note payload");
+  const notesResult = await run("terminal-browser", ["workspace", "notes", "--browser", browser.key], {
+    env: { ...environment, DISPLAY: display },
+    cwd: root,
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 8000,
+  });
+  const notes = JSON.parse(notesResult.stdout);
+  if (notes.annotations?.length !== 1 || notes.annotations[0].annotationId !== "annotation-1") {
+    fail("workspace notes did not expose the stored DOM annotation");
+  }
+  const replayResult = await run("terminal-browser", [
+    "workspace", "note", "--browser", browser.key, "--annotation", notes.annotations[0].annotationId,
+  ], {
+    env: { ...environment, DISPLAY: display },
+    cwd: root,
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 8000,
+  });
+  if (!JSON.parse(replayResult.stdout).replayed) fail("workspace note replay did not report replayed");
+  await assertPaneText(agentPaneId, "status=fresh", "stored annotation replay reached agent pane", 30000);
+  await reloadThroughAgent(browser.key);
+  const staleNotes = await waitFor("stale annotation", async () => {
+    const result = await run("terminal-browser", ["workspace", "notes", "--browser", browser.key], {
+      env: { ...environment, DISPLAY: display },
+      cwd: root,
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: 8000,
+    });
+    return JSON.parse(result.stdout);
+  }, (value) => value.annotations?.[0]?.stale === true ? value : false, 30000);
+  let staleReplayRejected = false;
+  try {
+    await run("terminal-browser", [
+      "workspace", "note", "--browser", browser.key, "--annotation", staleNotes.annotations[0].annotationId,
+    ], {
+      env: { ...environment, DISPLAY: display },
+      cwd: root,
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: 8000,
+    });
+  } catch (error) {
+    staleReplayRejected = String(error.stderr ?? error).includes("pass --force");
+  }
+  if (!staleReplayRejected) fail("workspace note replay accepted a stale annotation without --force");
+  const forcedReplay = await run("terminal-browser", [
+    "workspace", "note", "--browser", browser.key, "--annotation", staleNotes.annotations[0].annotationId, "--force",
+  ], {
+    env: { ...environment, DISPLAY: display },
+    cwd: root,
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 8000,
+  });
+  const forcedPayload = JSON.parse(forcedReplay.stdout);
+  if (!forcedPayload.replayed || !forcedPayload.promptTag.includes("status=stale")) {
+    fail("forced workspace note replay did not preserve stale status");
+  }
+  await assertPaneText(agentPaneId, "status=stale", "forced stale annotation replay reached agent pane", 30000);
   const closeResult = await run("terminal-browser", ["workspace", "close", "--browser", browser.key], {
     env: { ...environment, DISPLAY: display },
     cwd: root,

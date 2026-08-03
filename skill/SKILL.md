@@ -67,7 +67,7 @@ Options:
 
 ```
 $ terminal-browser workspace --help
-Usage: terminal-browser workspace <open|attach|list|panes|close|note>
+Usage: terminal-browser workspace <open|attach|list|panes|close|note|notes>
 
 Manages an explicit browser-to-agent pane binding. Notes are stored against a
 semantic DOM target and can be pasted into the attached agent prompt as a
@@ -85,7 +85,8 @@ Commands:
   list
   panes [--json]
   close --browser <key>
-  note --browser <key> (--target '<json>' | --at <x> <y>) --note <text> [--commit]
+  notes --browser <key> [--page <page-id>]
+  note --browser <key> (--annotation <id> | --target '<json>' | --at <x> <y>) [--note <text>] [--commit] [--force]
 
 Examples:
   terminal-browser workspace panes
@@ -93,6 +94,8 @@ Examples:
   terminal-browser workspace attach --browser 90107-1 --pane 3 --agent claude
   terminal-browser workspace note --browser 90107-1 --target '{"locator":{"kind":"role","role":"button","name":"Save"}}' --note 'save control is unreliable'
   terminal-browser workspace note --browser 90107-1 --at 280 160 --note 'this card needs a clearer heading'
+  terminal-browser workspace notes --browser 90107-1
+  terminal-browser workspace note --browser 90107-1 --annotation annotation-1 --force
 ```
 
 ```

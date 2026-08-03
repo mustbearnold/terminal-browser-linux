@@ -36,6 +36,15 @@ shell when a point is known:
 terminal-browser workspace note --browser <browser-key> --at 280 160 --note 'the heading needs a clearer explanation'
 ```
 
+Stored notes can be inspected and reattached after an agent pane is replaced:
+```
+terminal-browser workspace notes --browser <browser-key>
+terminal-browser workspace note --browser <browser-key> --annotation annotation-1
+```
+Replay refuses to send a note whose observed document revision is stale unless
+`--force` is supplied. Forced replays keep the stale status and current
+revision in the prompt tag so the agent can re-read before acting.
+
 The agent transport is a versioned JSON-lines session exposed through the
 running browser. The CLI can bridge stdin/stdout to it:
 ```
