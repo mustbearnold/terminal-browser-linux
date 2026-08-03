@@ -40,9 +40,10 @@ export function createWezterm(env: NodeJS.ProcessEnv = process.env, execute: Wez
         self: pane.pane_id === selfId,
       }));
     },
-    async split(direction, command) {
+    async split(direction, command, size) {
       const flag = { right: "--right", left: "--left", down: "--bottom", up: "--top" }[direction];
-      await wezterm(["cli", "split-pane", flag, "--", ...command]);
+      const percent = size === undefined || size === null ? [] : ["--percent", String(Math.round(size * 100))];
+      await wezterm(["cli", "split-pane", flag, ...percent, "--", ...command]);
     },
     async listAll() {
       return backend.panes();
@@ -68,6 +69,12 @@ export function createWezterm(env: NodeJS.ProcessEnv = process.env, execute: Wez
       const target = (await backend.panes()).find((pane) => pane.title.includes(titleNeedle));
       if (!target) return false;
       await wezterm(["cli", "kill-pane", "--pane-id", target.pane]);
+      return true;
+    },
+    async zoomPane(titleNeedle) {
+      const target = (await backend.panes()).find((pane) => pane.title.includes(titleNeedle));
+      if (!target) return false;
+      await wezterm(["cli", "zoom-pane", "--pane-id", target.pane, "--toggle"]);
       return true;
     },
   };
