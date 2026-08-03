@@ -61,6 +61,7 @@ export interface AgentToolOperationMap {
   terminal_browser_page_annotation_list: "page.annotation.list";
   terminal_browser_page_annotation_get: "page.annotation.get";
   terminal_browser_page_annotation_delete: "page.annotation.delete";
+  terminal_browser_page_annotation_refresh: "page.annotation.refresh";
   terminal_browser_page_active: "page.active";
   terminal_browser_page_act: "page.act";
   terminal_browser_page_act_batch: "page.act.batch";
@@ -154,6 +155,10 @@ export const AGENT_TOOL_DEFINITIONS: readonly AgentToolDefinition[] = [
     annotationId: string("Annotation identifier."),
   }, ["pageId", "annotationId"])),
   tool("terminal_browser_page_annotation_delete", "Delete a semantic DOM note from a page.", "page.annotation.delete", "page.annotation.write", object({
+    pageId: string("Page identifier."),
+    annotationId: string("Annotation identifier."),
+  }, ["pageId", "annotationId"])),
+  tool("terminal_browser_page_annotation_refresh", "Re-resolve a stored semantic DOM note against the current page revision and create a fresh annotation.", "page.annotation.refresh", "page.annotation.write", object({
     pageId: string("Page identifier."),
     annotationId: string("Annotation identifier."),
   }, ["pageId", "annotationId"])),

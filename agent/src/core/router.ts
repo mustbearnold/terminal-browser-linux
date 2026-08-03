@@ -231,6 +231,30 @@ export class AgentRequestRouter {
         const deleted = this.annotationStore().delete(request.pageId, request.annotationId);
         return { pageId: request.pageId, annotationId: request.annotationId, deleted };
       }
+      case "page.annotation.refresh": {
+        const page = this.page(request.pageId);
+        await page.frames(signal);
+        const existing = this.annotationStore().get(request.pageId, request.annotationId);
+        if (!existing) {
+          throw new AgentError("ANNOTATION_NOT_FOUND", `unknown annotation: ${request.annotationId}`);
+        }
+        const read = await page.read(existing.target, undefined, signal);
+        const annotation = this.annotationStore().create({
+          pageId: read.pageId,
+          documentId: read.documentId,
+          revision: read.revision,
+          url: read.url,
+          title: read.title,
+          target: read.target,
+          node: read.node,
+          note: existing.note,
+        });
+        return {
+          pageId: request.pageId,
+          annotation: this.annotationView(annotation, page),
+          refreshedFrom: existing.annotationId,
+        };
+      }
       case "page.active":
         return await this.page(request.pageId).active(signal);
       case "page.act": {

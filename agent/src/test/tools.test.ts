@@ -115,6 +115,20 @@ test("validates and dispatches structured calls through the typed client", async
     pageId: String(FIXTURE_PAGE_ID),
   })).annotations.length, 1);
 
+  await tools.callTool("terminal_browser_page_act", {
+    pageId: String(FIXTURE_PAGE_ID),
+    action: { type: "click", target: { ref: String(annotation.node.ref) } },
+    output: { snapshot: "none" },
+  });
+  const refreshed = await tools.callTool("terminal_browser_page_annotation_refresh", {
+    pageId: String(FIXTURE_PAGE_ID),
+    annotationId: annotation.annotationId,
+  });
+  assert.equal(refreshed.refreshedFrom, annotation.annotationId);
+  assert.equal(refreshed.annotation.tag, "@tb-2");
+  assert.equal(refreshed.annotation.stale, false);
+  assert.equal(refreshed.annotation.revision, 1);
+
   const focused = await tools.callTool("terminal_browser_page_act", {
     pageId: String(FIXTURE_PAGE_ID),
     action: {

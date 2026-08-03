@@ -65,8 +65,15 @@ async function run() {
     });
     assert.equal(annotation.tag, "@tb-1");
     assert.equal(annotation.stale, false);
+    const refreshed = await jsonlCall(jsonl, jsonlMessages, "annotation-refresh", "terminal_browser_page_annotation_refresh", {
+      pageId,
+      annotationId: annotation.annotationId,
+    });
+    assert.equal(refreshed.refreshedFrom, annotation.annotationId);
+    assert.equal(refreshed.annotation.tag, "@tb-2");
+    assert.equal(refreshed.annotation.stale, false);
     const annotationList = await jsonlCall(jsonl, jsonlMessages, "annotations", "terminal_browser_page_annotation_list", { pageId });
-    assert.equal(annotationList.annotations.length, 1);
+    assert.equal(annotationList.annotations.length, 2);
     await jsonlCall(jsonl, jsonlMessages, "close", "terminal_browser_pages_close", { pageId });
     pageId = undefined;
     jsonSupervisor.dispose();
@@ -134,6 +141,7 @@ async function run() {
         pages: pages.pages.length,
         snapshotRevision: snapshot.revision,
         annotationTag: annotation.tag,
+        refreshedAnnotationTag: refreshed.annotation.tag,
       },
       mcp: {
         protocolVersion: initializeResponse.result.protocolVersion,

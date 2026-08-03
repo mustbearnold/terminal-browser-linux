@@ -79,6 +79,9 @@ For MCP-compatible agent hosts, expose the same negotiated tools over stdio:
 ```
 terminal-browser mcp --browser <browser-key>
 ```
+The structured tool manifest includes `terminal_browser_page_annotation_refresh`,
+which re-resolves a stored semantic note against the current DOM and returns a
+new fresh annotation while preserving the original for audit.
 
 For line-oriented named tool calls without an MCP host:
 ```

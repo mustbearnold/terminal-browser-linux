@@ -94,6 +94,22 @@ test("routes annotation creation and reports stale revisions", async () => {
   const annotations = (listed.result as { annotations: PageAnnotationView[] }).annotations;
   assert.equal(annotations[0].stale, true);
   assert.equal(annotations[0].currentRevision, 1);
+
+  const refreshed = await router.handle(request("page.annotation.refresh", {
+    pageId: FIXTURE_PAGE_ID,
+    annotationId: annotation.annotationId,
+  }));
+  assert.equal(refreshed.ok, true);
+  const refreshedResult = refreshed.result as {
+    pageId: typeof FIXTURE_PAGE_ID;
+    refreshedFrom: string;
+    annotation: PageAnnotationView;
+  };
+  assert.equal(refreshedResult.pageId, FIXTURE_PAGE_ID);
+  assert.equal(refreshedResult.refreshedFrom, annotation.annotationId);
+  assert.equal(refreshedResult.annotation.tag, "@tb-2");
+  assert.equal(refreshedResult.annotation.stale, false);
+  assert.equal(refreshedResult.annotation.revision, 1);
 });
 
 function request<T extends AgentRequest["op"]>(op: T, fields: Record<string, unknown>): AgentRequest {

@@ -23,6 +23,7 @@ import {
   type PageEventCursor,
   type PageActiveResult,
   type PageAnnotationListResult,
+  type PageAnnotationRefreshResult,
   type PageAnnotationView,
   type PageDialogResult,
   type PageIdentity,
@@ -110,6 +111,7 @@ export interface AgentOperationResults {
   "page.annotation.list": PageAnnotationListResult;
   "page.annotation.get": PageAnnotationView;
   "page.annotation.delete": { pageId: PageId; annotationId: string; deleted: boolean };
+  "page.annotation.refresh": PageAnnotationRefreshResult;
   "page.active": PageActiveResult;
   "page.act": ActionResult;
   "page.act.batch": ActionBatchResult;
@@ -329,6 +331,14 @@ export class AgentClient {
     options?: AgentCallOptions,
   ): Promise<{ pageId: PageId; annotationId: string; deleted: boolean }> {
     return this.call("page.annotation.delete", { pageId, annotationId }, options);
+  }
+
+  annotationRefresh(
+    pageId: PageId,
+    annotationId: string,
+    options?: AgentCallOptions,
+  ): Promise<PageAnnotationRefreshResult> {
+    return this.call("page.annotation.refresh", { pageId, annotationId }, options);
   }
 
   actBatch(

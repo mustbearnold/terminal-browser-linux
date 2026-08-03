@@ -63,6 +63,7 @@ export function operationCapability(request: AgentRequest): AgentCapability | un
       return "page.read";
     case "page.annotation.create":
     case "page.annotation.delete":
+    case "page.annotation.refresh":
       return "page.annotation.write";
     case "page.annotation.list":
     case "page.annotation.get":

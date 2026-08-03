@@ -244,12 +244,10 @@ async function createNote(backend: Backend, args: string[]): Promise<void> {
   const pages = await withClient(browser, (client) => client.call("pages.list", {}));
   if (annotationId) {
     const annotation = await withClient(browser, (client) => findAnnotation(client, pages.pages, requestedPageId, annotationId));
-    const outbound = refresh
-      ? await withClient(browser, async (client) => {
-        const read = await client.read(annotation.pageId, annotation.target);
-        return client.annotationCreate(annotation.pageId, read.target, annotation.note);
-      })
-      : annotation;
+    const refreshed = refresh
+      ? await withClient(browser, (client) => client.annotationRefresh(annotation.pageId, annotation.annotationId))
+      : undefined;
+    const outbound = refreshed?.annotation ?? annotation;
     requireAnnotationFresh(outbound, force);
     const payload = promptTag(outbound, commit);
     const sent = destination === undefined
@@ -261,7 +259,7 @@ async function createNote(backend: Backend, args: string[]): Promise<void> {
       attached: sent,
       submitted: commit && sent,
       replayed: true,
-      ...(refresh ? { refreshedFrom: annotation.annotationId } : {}),
+      ...(refreshed ? { refreshedFrom: refreshed.refreshedFrom } : {}),
       ...(destination === undefined ? { reason: "no agent pane is attached" } : {}),
     });
     return;

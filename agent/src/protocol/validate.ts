@@ -448,6 +448,7 @@ function validateRequest(message: Record<string, unknown>): void {
     case "page.annotation.list":
     case "page.annotation.get":
     case "page.annotation.delete":
+    case "page.annotation.refresh":
     case "page.active":
     case "page.act":
     case "page.act.batch":
@@ -488,7 +489,7 @@ function validateRequest(message: Record<string, unknown>): void {
     if (note.includes("\u0000")) throw new AgentError("INVALID_MESSAGE", "note must not contain a null byte");
     if (message.token !== undefined) validateSnapshotToken(message.token, "token");
   }
-  if (op === "page.annotation.get" || op === "page.annotation.delete") {
+  if (op === "page.annotation.get" || op === "page.annotation.delete" || op === "page.annotation.refresh") {
     requireString(message.annotationId, "annotationId");
   }
   if (op === "page.act") {
