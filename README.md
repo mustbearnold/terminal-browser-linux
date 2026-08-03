@@ -28,7 +28,8 @@ terminal-browser workspace list
 
 While the page is open, right-click an element and choose `add DOM note`, type
 the note, and press Enter. The note is stored against a revision-bound
-semantic target and its compact `@tb-*` tag is pasted into the attached agent
+semantic target and its versioned compact `@tb-*` tag includes the observed
+document revision, frame, role, and name. It is pasted into the attached agent
 pane without submitting the prompt. The same operation is available from a
 shell when a point is known:
 ```

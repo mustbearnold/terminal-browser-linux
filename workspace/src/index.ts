@@ -19,8 +19,15 @@ export interface WorkspaceBinding {
 export interface PromptAnnotation {
   tag: string;
   pageId: string;
+  documentId: string;
+  revision: number;
   url: string;
   target: unknown;
+  node: {
+    frameId: string;
+    role: string;
+    name: string;
+  };
   note: string;
 }
 
@@ -33,8 +40,15 @@ const WORKSPACE_FILE = path.join(DATA_DIR, "workspaces.json");
 
 export function promptTag(annotation: PromptAnnotation, commit = false): string {
   const target = compact(JSON.stringify(annotation.target));
+  const observation = compact(JSON.stringify({
+    documentId: annotation.documentId,
+    revision: annotation.revision,
+    frameId: annotation.node.frameId,
+    role: annotation.node.role,
+    name: annotation.node.name,
+  }), 640);
   const note = compact(annotation.note, 800);
-  const value = `${annotation.tag} page=${annotation.pageId} url=${compact(annotation.url, 240)} target=${target} note=${note}`;
+  const value = `${annotation.tag} schema=1 page=${annotation.pageId} url=${compact(annotation.url, 240)} target=${target} observation=${observation} note=${note}`;
   return commit ? `${value}\n` : value;
 }
 

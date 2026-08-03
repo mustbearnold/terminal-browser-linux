@@ -37,7 +37,7 @@ test("formats a compact annotation tag without submitting by default", () => {
 
   assert.equal(
     promptTag(annotation),
-    '@tb-7 page=browser/tab/1 url=https://example.com/settings target={"locator":{"kind":"role","role":"button","name":"Save"}} note=save control loses focus',
+    '@tb-7 schema=1 page=browser/tab/1 url=https://example.com/settings target={"locator":{"kind":"role","role":"button","name":"Save"}} observation={"documentId":"document-1","revision":4,"frameId":"main","role":"button","name":"Save"} note=save control loses focus',
   );
   assert.equal(promptTag(annotation, true).endsWith("\n"), true);
 });
