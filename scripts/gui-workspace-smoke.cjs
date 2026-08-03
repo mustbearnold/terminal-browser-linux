@@ -206,6 +206,7 @@ async function runSmoke() {
   await run("xdotool", ["key", "--clearmodifiers", "Return"], { env: environment, timeout: 8000 });
   await new Promise((resolve) => setTimeout(resolve, 1000));
   const agentText = await assertPaneText(agentPaneId, "@tb-1", "annotation tag reached agent pane", 30000);
+  if (!agentText.includes("schema=1") || !agentText.includes("observation={")) fail("agent pane received an unversioned annotation payload");
   if (!agentText.includes("note=GUI smoke handoff")) fail("agent pane received the tag without the note payload");
   process.stdout.write(`browser=${browser.key}\n`);
   process.stdout.write("packaged GUI workspace handoff: passed\n");
