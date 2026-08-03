@@ -58,7 +58,9 @@ terminal-browser workspace sync --browser <browser-key>
 terminal-browser workspace sync --browser <browser-key> --force
 ```
 Use `--refresh-stale` to re-resolve every stale semantic target and deliver the
-new fresh annotations in one pass; the original stale notes remain available:
+new fresh annotations in one pass; the original stale notes remain available.
+If the same stale source was already refreshed at the current revision, the
+existing fresh descendant is reused instead of creating another annotation:
 ```
 terminal-browser workspace sync --browser <browser-key> --refresh-stale
 ```

@@ -136,6 +136,15 @@ test("validates and dispatches structured calls through the typed client", async
   });
   assert.equal(replayedRefresh.replayed, true);
   assert.equal(replayedRefresh.annotation.annotationId, refreshed.annotation.annotationId);
+  const repeatedRefresh = await tools.callTool("terminal_browser_page_annotation_refresh", {
+    pageId: String(FIXTURE_PAGE_ID),
+    annotationId: annotation.annotationId,
+  });
+  assert.equal(repeatedRefresh.replayed, true);
+  assert.equal(repeatedRefresh.annotation.annotationId, refreshed.annotation.annotationId);
+  assert.equal((await tools.callTool("terminal_browser_page_annotation_list", {
+    pageId: String(FIXTURE_PAGE_ID),
+  })).annotations.length, 2);
 
   const focused = await tools.callTool("terminal_browser_page_act", {
     pageId: String(FIXTURE_PAGE_ID),

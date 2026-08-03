@@ -49,6 +49,8 @@ silently sending a note to an unrelated shell. Sync remembers which annotation
 tags reached the current pane, skips them on later syncs, and resets that ledger
 when the binding moves to a replacement pane. Use --force to replay delivered
 notes or stale observations; an explicit note replay always sends.
+Stale refresh reuses an existing fresh descendant at the current revision
+instead of creating duplicate annotations.
 
 Commands:
   open [url] [direction] --agent-pane <pane-id> [--agent <kind>]

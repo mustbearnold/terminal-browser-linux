@@ -60,10 +60,11 @@ test("reloads and deletes durable annotations without reusing tags", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-browser-annotations-"));
   const filePath = path.join(directory, "annotations.json");
   const first = new DurableAnnotationStore(filePath, 8, () => "2026-08-03T00:00:00.000Z");
-  const created = first.create(annotationInput());
+  const created = first.create({ ...annotationInput(), refreshedFrom: "annotation-source" });
 
   const second = new DurableAnnotationStore(filePath, 8, () => "2026-08-03T00:00:01.000Z");
   assert.deepEqual(second.get(pageId, created.annotationId), created);
+  assert.equal(second.get(pageId, created.annotationId)?.refreshedFrom, "annotation-source");
   assert.equal(second.delete(pageId, created.annotationId), true);
   const next = second.create(annotationInput());
   assert.equal(next.tag, "@tb-2");
@@ -110,6 +111,22 @@ test("routes annotation creation and reports stale revisions", async () => {
   assert.equal(refreshedResult.annotation.tag, "@tb-2");
   assert.equal(refreshedResult.annotation.stale, false);
   assert.equal(refreshedResult.annotation.revision, 1);
+  assert.equal(refreshedResult.annotation.refreshedFrom, annotation.annotationId);
+
+  const repeated = await router.handle(request("page.annotation.refresh", {
+    pageId: FIXTURE_PAGE_ID,
+    annotationId: annotation.annotationId,
+  }));
+  assert.equal(repeated.ok, true);
+  const repeatedResult = repeated.result as {
+    annotation: PageAnnotationView;
+    replayed?: boolean;
+  };
+  assert.equal(repeatedResult.replayed, true);
+  assert.equal(repeatedResult.annotation.annotationId, refreshedResult.annotation.annotationId);
+
+  const afterRepeat = await router.handle(request("page.annotation.list", { pageId: FIXTURE_PAGE_ID }));
+  assert.equal((afterRepeat.result as { annotations: PageAnnotationView[] }).annotations.length, 2);
 });
 
 test("replays an idempotent annotation refresh without creating a duplicate", async () => {

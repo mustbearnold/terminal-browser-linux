@@ -319,6 +319,22 @@ async function runSmoke() {
     fail("workspace sync --refresh-stale did not refresh and deliver the stale annotation");
   }
   await assertPaneText(agentPaneId, "@tb-2", "bulk stale annotation refresh reached agent pane", 30000);
+  const repeatedBulkRefreshResult = await run("terminal-browser", [
+    "workspace", "sync", "--browser", browser.key, "--refresh-stale",
+  ], {
+    env: { ...environment, DISPLAY: display },
+    cwd: root,
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 8000,
+  });
+  const repeatedBulkRefresh = JSON.parse(repeatedBulkRefreshResult.stdout);
+  if (!repeatedBulkRefresh.refreshed?.includes(staleNotes.annotations[0].annotationId) ||
+    !repeatedBulkRefresh.reused?.includes(staleNotes.annotations[0].annotationId) ||
+    repeatedBulkRefresh.delivered?.length !== 0 ||
+    !repeatedBulkRefresh.skippedDelivered?.includes("annotation-2") ||
+    repeatedBulkRefresh.skippedStale?.length !== 0) {
+    fail("repeated workspace sync --refresh-stale created or redelivered a duplicate annotation");
+  }
   const refreshResult = await run("terminal-browser", [
     "workspace", "note", "--browser", browser.key, "--annotation", staleNotes.annotations[0].annotationId, "--refresh",
   ], {
@@ -328,10 +344,10 @@ async function runSmoke() {
     timeout: 8000,
   });
   const refreshedPayload = JSON.parse(refreshResult.stdout);
-  if (!refreshedPayload.replayed || refreshedPayload.refreshedFrom !== staleNotes.annotations[0].annotationId || !refreshedPayload.promptTag.includes("status=fresh")) {
+  if (!refreshedPayload.replayed || refreshedPayload.refreshedFrom !== staleNotes.annotations[0].annotationId || !refreshedPayload.refreshReplayed || !refreshedPayload.promptTag.includes("status=fresh")) {
     fail("workspace note refresh did not produce a fresh annotation");
   }
-  await assertPaneText(agentPaneId, "@tb-3", "stale annotation refresh reached agent pane", 30000);
+  await assertPaneText(agentPaneId, "@tb-2", "stale annotation refresh reached agent pane", 30000);
   const forcedReplay = await run("terminal-browser", [
     "workspace", "note", "--browser", browser.key, "--annotation", staleNotes.annotations[0].annotationId, "--force",
   ], {
@@ -366,10 +382,10 @@ async function runSmoke() {
     timeout: 8000,
   });
   const replacementSync = JSON.parse(replacementAttachResult.stdout);
-  if (Number(replacementSync.agentPane) !== Number(replacementPaneId) || !replacementSync.delivered?.includes("annotation-2") || !replacementSync.delivered?.includes("annotation-3") || !replacementSync.skippedStale?.includes("annotation-1")) {
+  if (Number(replacementSync.agentPane) !== Number(replacementPaneId) || !replacementSync.delivered?.includes("annotation-2") || !replacementSync.skippedStale?.includes("annotation-1")) {
     fail("workspace sync did not recover the replacement pane or deliver fresh notes");
   }
-  await assertPaneText(replacementPaneId, "@tb-3", "replacement agent pane received synced note", 30000);
+  await assertPaneText(replacementPaneId, "@tb-2", "replacement agent pane received synced note", 30000);
   const closeResult = await run("terminal-browser", ["workspace", "close", "--browser", browser.key], {
     env: { ...environment, DISPLAY: display },
     cwd: root,

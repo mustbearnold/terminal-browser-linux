@@ -65,6 +65,11 @@ async function run() {
     });
     assert.equal(annotation.tag, "@tb-1");
     assert.equal(annotation.stale, false);
+    await jsonlCall(jsonl, jsonlMessages, "annotation-stale", "terminal_browser_page_act", {
+      pageId,
+      action: { type: "reload" },
+      output: { snapshot: "none" },
+    });
     const refreshed = await jsonlCall(jsonl, jsonlMessages, "annotation-refresh", "terminal_browser_page_annotation_refresh", {
       pageId,
       annotationId: annotation.annotationId,
@@ -80,6 +85,12 @@ async function run() {
     });
     assert.equal(replayedRefresh.replayed, true);
     assert.equal(replayedRefresh.annotation.annotationId, refreshed.annotation.annotationId);
+    const repeatedRefresh = await jsonlCall(jsonl, jsonlMessages, "annotation-refresh-lineage", "terminal_browser_page_annotation_refresh", {
+      pageId,
+      annotationId: annotation.annotationId,
+    });
+    assert.equal(repeatedRefresh.replayed, true);
+    assert.equal(repeatedRefresh.annotation.annotationId, refreshed.annotation.annotationId);
     const annotationList = await jsonlCall(jsonl, jsonlMessages, "annotations", "terminal_browser_page_annotation_list", { pageId });
     assert.equal(annotationList.annotations.length, 2);
     await jsonlCall(jsonl, jsonlMessages, "close", "terminal_browser_pages_close", { pageId });

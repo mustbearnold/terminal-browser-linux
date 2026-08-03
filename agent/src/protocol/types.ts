@@ -243,6 +243,7 @@ export interface PageAnnotation {
   target: Target;
   node: SnapshotNode;
   note: string;
+  refreshedFrom?: string;
   createdAt: string;
 }
 

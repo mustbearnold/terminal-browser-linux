@@ -188,6 +188,9 @@ function validateAnnotation(value: unknown): PageAnnotation {
   if (!Number.isSafeInteger(value.revision) || Number(value.revision) < 0) {
     throw new AgentError("INTERNAL_ERROR", "annotation store contains an invalid revision");
   }
+  if (value.refreshedFrom !== undefined && (typeof value.refreshedFrom !== "string" || value.refreshedFrom.length === 0)) {
+    throw new AgentError("INTERNAL_ERROR", "annotation store contains an invalid refresh lineage");
+  }
   if (!isRecord(value.target) || !isRecord(value.node)) {
     throw new AgentError("INTERNAL_ERROR", "annotation store contains an invalid target or node");
   }

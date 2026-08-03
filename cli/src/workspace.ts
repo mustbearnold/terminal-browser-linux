@@ -272,6 +272,7 @@ async function createNote(backend: Backend, args: string[]): Promise<void> {
       submitted: commit && sent,
       replayed: true,
       ...(refreshed ? { refreshedFrom: refreshed.refreshedFrom } : {}),
+      ...(refreshed?.replayed ? { refreshReplayed: true } : {}),
       ...(destination === undefined ? { reason: "no agent pane is attached" } : {}),
     });
     if (sent && agentPaneId === undefined) markAnnotationDelivered(recordKey(browser), outbound.annotationId);
@@ -345,7 +346,7 @@ async function syncWorkspaceNotes(
   requestedPageId: string | undefined,
   force: boolean,
   refreshStale: boolean,
-): Promise<{ agentPane: string; delivered: string[]; skippedStale: string[]; skippedDelivered: string[]; refreshed: string[]; forced: boolean }> {
+): Promise<{ agentPane: string; delivered: string[]; skippedStale: string[]; skippedDelivered: string[]; refreshed: string[]; reused: string[]; forced: boolean }> {
   if (force && refreshStale) throw new Error("workspace sync cannot combine --force and --refresh-stale");
   const binding = loadBindings().find((candidate) => candidate.browserKey === recordKey(browser));
   if (!binding) throw new Error(`browser ${recordKey(browser)} has no agent pane binding; run workspace attach first`);
@@ -359,17 +360,19 @@ async function syncWorkspaceNotes(
     const results = await Promise.all(selectedPages.map((page) => client.annotationList(page.pageId)));
     const annotations = results.flatMap((result) => result.annotations);
     const refreshed: string[] = [];
-    const current = [];
+    const reused: string[] = [];
+    const current = new Map<string, typeof annotations[number]>();
     for (const annotation of annotations) {
       if (!annotation.stale || !refreshStale) {
-        current.push(annotation);
+        current.set(annotation.annotationId, annotation);
         continue;
       }
       const result = await client.annotationRefresh(annotation.pageId, annotation.annotationId);
-      current.push(result.annotation);
+      current.set(result.annotation.annotationId, result.annotation);
       refreshed.push(result.refreshedFrom);
+      if (result.replayed) reused.push(result.refreshedFrom);
     }
-    return { annotations: current, refreshed };
+    return { annotations: [...current.values()], refreshed, reused };
   });
   const delivered: string[] = [];
   const skippedStale: string[] = [];
@@ -394,6 +397,7 @@ async function syncWorkspaceNotes(
     skippedStale,
     skippedDelivered,
     refreshed: annotationResult.refreshed,
+    reused: annotationResult.reused,
     forced: force,
   };
 }

@@ -10,6 +10,7 @@ import type {
   PageAnnotation,
   PageAnnotationRefreshResult,
   PageAnnotationView,
+  PageRevision,
 } from "../protocol/types";
 import type { EventSubscription } from "./events";
 import {
@@ -238,14 +239,27 @@ export class AgentRequestRouter {
       case "page.annotation.refresh": {
         const page = this.page(request.pageId);
         await page.frames(signal);
-        const existing = this.annotationStore().get(request.pageId, request.annotationId);
+        const store = this.annotationStore();
+        const existing = store.get(request.pageId, request.annotationId);
         if (!existing) {
           throw new AgentError("ANNOTATION_NOT_FOUND", `unknown annotation: ${request.annotationId}`);
         }
         if (request.idempotencyKey !== undefined) requireIdempotencyKey(request.idempotencyKey);
         const execute = async (): Promise<PageAnnotationRefreshResult> => {
+          const current = page.currentRevision();
+          if (isStaleAnnotation(existing, current)) {
+            const descendant = latestFreshDescendant(store, request.pageId, existing.annotationId, current);
+            if (descendant) {
+              return {
+                pageId: request.pageId,
+                annotation: this.annotationView(descendant, page),
+                refreshedFrom: existing.annotationId,
+                replayed: true,
+              };
+            }
+          }
           const read = await page.read(existing.target, undefined, signal);
-          const annotation = this.annotationStore().create({
+          const annotation = store.create({
             pageId: read.pageId,
             documentId: read.documentId,
             revision: read.revision,
@@ -254,6 +268,7 @@ export class AgentRequestRouter {
             target: read.target,
             node: read.node,
             note: existing.note,
+            refreshedFrom: existing.annotationId,
           });
           return {
             pageId: request.pageId,
@@ -541,6 +556,30 @@ function requireIdempotencyKey(key: string): void {
   if (key.length === 0 || key.length > 256) {
     throw new AgentError("INVALID_REQUEST", "idempotencyKey must be between 1 and 256 characters");
   }
+}
+
+type CurrentRevision = Pick<PageRevision, "documentId" | "revision">;
+
+function isStaleAnnotation(annotation: PageAnnotation, current: CurrentRevision): boolean {
+  return annotation.documentId !== current.documentId || annotation.revision !== current.revision;
+}
+
+function latestFreshDescendant(
+  store: AnnotationStore,
+  pageId: PageId,
+  sourceAnnotationId: string,
+  current: CurrentRevision,
+): PageAnnotation | undefined {
+  const annotations = store.list(pageId);
+  for (let index = annotations.length - 1; index >= 0; index -= 1) {
+    const annotation = annotations[index];
+    if (annotation.refreshedFrom === sourceAnnotationId &&
+      annotation.documentId === current.documentId &&
+      annotation.revision === current.revision) {
+      return annotation;
+    }
+  }
+  return undefined;
 }
 
 function isRetryableRequest(request: AgentRequest): boolean {
