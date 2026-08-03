@@ -12,6 +12,7 @@
     "agent:live-frame-smoke": "pnpm agent:build && pnpm agent:browser-deps && pnpm --filter terminal-browser build && pnpm --filter terminal-browser agent:frame-smoke",
     "agent:live-smoke": "pnpm agent:build && pnpm agent:browser-deps && pnpm --filter terminal-browser build && pnpm --filter terminal-browser-cli build && pnpm --filter terminal-browser agent:host-protocol-smoke && pnpm --filter terminal-browser agent:shadow-smoke && pnpm --filter terminal-browser agent:frame-smoke && pnpm --filter terminal-browser agent:reconnect-smoke && pnpm --filter terminal-browser agent:cross-origin-smoke && pnpm --filter terminal-browser agent:semantics-smoke && pnpm --filter terminal-browser agent:evaluation-smoke",
     "agent:test": "pnpm --filter terminal-browser-agent test",
+    "gui:smoke": "node scripts/gui-workspace-smoke.cjs",
     "browser": "pnpm --filter terminal-browser start",
     "build:dist": "scripts/release.sh \"local-$(git rev-parse --short HEAD)\"",
     "install:dist": "scripts/install-local.sh",

@@ -78,6 +78,12 @@ For the browser-compatible control path:
 pnpm agent:live-smoke
 ```
 
+On Linux, the packaged GUI handoff can be exercised with real Kitty and X11 input:
+```
+pnpm gui:smoke
+```
+This requires `Xvfb`, Kitty, and `xdotool`, and uses an isolated temporary runtime.
+
 Native JavaScript dialogs arrive as `dialog` events with a pending `dialogId`.
 Respond with `page.dialog` using `accept` or `dismiss`; prompt responses may
 include `promptText` when the underlying browser supports prompts.
