@@ -232,6 +232,16 @@ async function runSmoke() {
   if (notes.annotations?.length !== 1 || notes.annotations[0].annotationId !== "annotation-1") {
     fail("workspace notes did not expose the stored DOM annotation");
   }
+  const syncResult = await run("terminal-browser", ["workspace", "sync", "--browser", browser.key], {
+    env: { ...environment, DISPLAY: display },
+    cwd: root,
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 8000,
+  });
+  const sync = JSON.parse(syncResult.stdout);
+  if (!sync.delivered?.includes("annotation-1") || sync.skippedStale?.length !== 0) {
+    fail("workspace sync did not deliver the fresh stored annotation");
+  }
   const replayResult = await run("terminal-browser", [
     "workspace", "note", "--browser", browser.key, "--annotation", notes.annotations[0].annotationId,
   ], {
@@ -252,6 +262,26 @@ async function runSmoke() {
     });
     return JSON.parse(result.stdout);
   }, (value) => value.annotations?.[0]?.stale === true ? value : false, 30000);
+  const staleSyncResult = await run("terminal-browser", ["workspace", "sync", "--browser", browser.key], {
+    env: { ...environment, DISPLAY: display },
+    cwd: root,
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 8000,
+  });
+  const staleSync = JSON.parse(staleSyncResult.stdout);
+  if (staleSync.delivered?.length !== 0 || !staleSync.skippedStale?.includes(staleNotes.annotations[0].annotationId)) {
+    fail("workspace sync sent a stale annotation without --force");
+  }
+  const forcedSyncResult = await run("terminal-browser", ["workspace", "sync", "--browser", browser.key, "--force"], {
+    env: { ...environment, DISPLAY: display },
+    cwd: root,
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 8000,
+  });
+  const forcedSync = JSON.parse(forcedSyncResult.stdout);
+  if (!forcedSync.delivered?.includes(staleNotes.annotations[0].annotationId) || forcedSync.skippedStale?.length !== 0 || forcedSync.forced !== true) {
+    fail("workspace sync --force did not deliver the stale annotation");
+  }
   let staleReplayRejected = false;
   try {
     await run("terminal-browser", [

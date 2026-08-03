@@ -48,6 +48,14 @@ Use `--refresh` instead to re-resolve the stored semantic target against the
 current DOM and create a new fresh annotation; the original note remains
 available for audit.
 
+After replacing an agent pane, `workspace sync` pastes all fresh stored notes
+into the current binding and reports stale notes without sending them. Add
+`--force` only when the agent should receive the stale observations too:
+```
+terminal-browser workspace sync --browser <browser-key>
+terminal-browser workspace sync --browser <browser-key> --force
+```
+
 The agent transport is a versioned JSON-lines session exposed through the
 running browser. The CLI can bridge stdin/stdout to it:
 ```

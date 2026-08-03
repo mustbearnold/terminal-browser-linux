@@ -74,8 +74,11 @@ export async function workspaceCommand(
     case "notes":
       await listNotes(backend, args);
       return;
+    case "sync":
+      await syncNotes(backend, args);
+      return;
     default:
-      throw new Error(`unknown workspace command ${subcommand} (try open, attach, list, panes, close, note, or notes)`);
+      throw new Error(`unknown workspace command ${subcommand} (try open, attach, list, panes, close, note, notes, or sync)`);
   }
 }
 
@@ -299,6 +302,43 @@ async function listNotes(backend: Backend, args: string[]): Promise<void> {
     return results.flatMap((result) => result.annotations);
   });
   print({ browser: recordKey(browser), annotations });
+}
+
+async function syncNotes(backend: Backend, args: string[]): Promise<void> {
+  const browserKey = takeFlag(args, "--browser");
+  const requestedPageId = takeFlag(args, "--page");
+  const force = takeBool(args, "--force");
+  rejectRemaining(args);
+  const browser = await selectBrowser(backend, browserKey);
+  const binding = loadBindings().find((candidate) => candidate.browserKey === recordKey(browser));
+  if (!binding) throw new Error(`browser ${recordKey(browser)} has no agent pane binding; run workspace attach first`);
+  const destination = await resolveBindingPane(backend, browser.pane, binding);
+  if (destination === undefined) throw new Error(`browser ${recordKey(browser)} has no agent pane binding; run workspace attach first`);
+  const pages = await withClient(browser, (client) => client.call("pages.list", {}));
+  const selectedPages = requestedPageId === undefined
+    ? pages.pages
+    : [choosePage(pages.pages, requestedPageId)];
+  const annotations = await withClient(browser, async (client) => {
+    const results = await Promise.all(selectedPages.map((page) => client.annotationList(page.pageId)));
+    return results.flatMap((result) => result.annotations);
+  });
+  const delivered: string[] = [];
+  const skippedStale: string[] = [];
+  for (const annotation of annotations) {
+    if (annotation.stale && !force) {
+      skippedStale.push(annotation.annotationId);
+      continue;
+    }
+    await sendToPane(backend, destination, `${promptTag(annotation)} `, browser.pane);
+    delivered.push(annotation.annotationId);
+  }
+  print({
+    browser: recordKey(browser),
+    agentPane: destination,
+    delivered,
+    skippedStale,
+    forced: force,
+  });
 }
 
 async function findAnnotation(
