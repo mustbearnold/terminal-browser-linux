@@ -1,7 +1,7 @@
 import { strictEqual, rejects } from "node:assert";
 import test from "node:test";
 
-import { closeAgentSession, waitForReadyTab } from "./action";
+import { closeAgentSession, waitForReadyTab, waitForTarget } from "./action";
 import type { Browser, TabTarget } from "./instances";
 
 const browser = { key: "browser-1" } as Browser;
@@ -27,6 +27,25 @@ test("fails closed when the selected tab disappears", async () => {
       { ...tab("target-1"), id: 2, url: "https://other.example" },
     ]),
     /no tab 1 in browser browser-1/,
+  );
+});
+
+test("waits for a target selector to appear in a browser", async () => {
+  let attempts = 0;
+  const selected = await waitForTarget([browser], "target-1", 200, 1, async () => {
+    attempts += 1;
+    return attempts === 1 ? [] : [tab("target-1")];
+  });
+
+  strictEqual(selected.browser, browser);
+  strictEqual(selected.tab.targetId, "target-1");
+  strictEqual(attempts, 2);
+});
+
+test("reports a missing target after the readiness window", async () => {
+  await rejects(
+    waitForTarget([browser], "missing-target", 1, 1, async () => []),
+    /no tab with target id missing-target in the running terminal browsers within 1ms/,
   );
 });
 

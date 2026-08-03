@@ -164,6 +164,34 @@ export async function waitForReadyTab(
   );
 }
 
+export async function waitForTarget(
+  browsersToSearch: Browser[],
+  targetId: string,
+  timeoutMs = ACTION_READY_TIMEOUT_MS,
+  pollMs = ACTION_READY_POLL_MS,
+  readTargets: (browser: Browser) => Promise<TabTarget[]> = targets,
+): Promise<Selection> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+
+  while (Date.now() <= deadline) {
+    for (const browser of browsersToSearch) {
+      try {
+        const tab = (await readTargets(browser)).find((entry) => entry.targetId === targetId);
+        if (tab) return { browser, tab };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    await pause(Math.min(pollMs, Math.max(0, deadline - Date.now())));
+  }
+
+  const cause = lastError instanceof Error ? `: ${lastError.message}` : "";
+  throw new Error(
+    `no tab with target id ${targetId} in the running terminal browsers within ${timeoutMs}ms${cause}`,
+  );
+}
+
 async function agentTabs(binary: string, browser: Browser): Promise<AgentTab[]> {
   const session = sessionName(browser);
   const port = String(browser.cdpPort);
@@ -247,11 +275,7 @@ async function select(backend: Backend, options: ActionOptions): Promise<Selecti
   if (all.length === 0) throw new Error("no terminal browsers running — start one with: terminal-browser open");
 
   if (options.targetId) {
-    for (const browser of all) {
-      const tab = (await targets(browser)).find((entry) => entry.targetId === options.targetId);
-      if (tab) return { browser, tab };
-    }
-    throw new Error(`no tab with target id ${options.targetId}`);
+    return waitForTarget(all, options.targetId);
   }
 
   let candidates = all;

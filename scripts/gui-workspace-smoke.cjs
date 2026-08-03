@@ -260,6 +260,21 @@ async function runSmoke() {
   }
   process.stdout.write("packaged action startup readiness: ok\n");
   await waitForPageContent(browser.key);
+  const readyBrowser = (await listedBrowsers()).find((candidate) => candidate.key === browser.key);
+  const targetId = readyBrowser?.tabs?.find((tab) => tab.targetId)?.targetId;
+  if (!targetId) fail("packaged browser did not expose a CDP target for target selection");
+  const targetAction = await run("terminal-browser", [
+    "action", "--target", targetId, "--", "eval", "document.title",
+  ], {
+    env: { ...environment, DISPLAY: display },
+    cwd: root,
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 20000,
+  });
+  if (!targetAction.stdout.includes("Example Domain")) {
+    fail("packaged target action did not reach the selected page");
+  }
+  process.stdout.write("packaged target action selection: ok\n");
   await clickDomNote(browserPaneId);
   await run("xdotool", ["type", "--delay", "2", "GUI smoke handoff"], { env: environment, timeout: 8000 });
   await run("xdotool", ["key", "--clearmodifiers", "Return"], { env: environment, timeout: 8000 });
