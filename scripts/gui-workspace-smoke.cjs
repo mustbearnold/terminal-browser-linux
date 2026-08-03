@@ -345,16 +345,16 @@ async function runSmoke() {
   const replacementPaneId = allKittyWindows(replacementWindows).find((window) => window.title === "claude")?.id;
   if (!replacementPaneId) fail("replacement agent pane did not expose an id");
   const replacementAttachResult = await run("terminal-browser", [
-    "workspace", "attach", "--browser", browser.key, "--pane", String(replacementPaneId), "--sync-notes",
+    "workspace", "sync", "--browser", browser.key,
   ], {
     env: { ...environment, DISPLAY: display },
     cwd: root,
     maxBuffer: 8 * 1024 * 1024,
     timeout: 8000,
   });
-  const replacementAttach = JSON.parse(replacementAttachResult.stdout);
-  if (!replacementAttach.notes?.delivered?.includes("annotation-2") || !replacementAttach.notes?.skippedStale?.includes("annotation-1")) {
-    fail("replacement agent pane did not receive fresh notes while skipping stale notes");
+  const replacementSync = JSON.parse(replacementAttachResult.stdout);
+  if (Number(replacementSync.agentPane) !== Number(replacementPaneId) || !replacementSync.delivered?.includes("annotation-2") || !replacementSync.skippedStale?.includes("annotation-1")) {
+    fail("workspace sync did not recover the replacement pane or deliver fresh notes");
   }
   await assertPaneText(replacementPaneId, "@tb-2", "replacement agent pane received synced note", 30000);
   const closeResult = await run("terminal-browser", ["workspace", "close", "--browser", browser.key], {
