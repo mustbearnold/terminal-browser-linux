@@ -45,7 +45,7 @@ jobs:
           TERMINAL_BROWSER_EVALUATION_ARTIFACT: ${{ github.workspace }}/agent-evaluation-report.json
           TERMINAL_BROWSER_EVALUATION_TRACE: "1"
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agent-evaluation-report
           path: agent-evaluation-report.json
