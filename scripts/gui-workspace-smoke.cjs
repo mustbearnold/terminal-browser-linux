@@ -211,10 +211,30 @@ async function clickDomNote(browserPane) {
   await run("xdotool", ["mousemove", "--sync", "1200", "334", "click", "1"], { env: environment, timeout: 8000 });
 }
 
+async function waitForPageContent(browserKey) {
+  await waitFor("example page content", async () => {
+    const socket = path.join(environment.XDG_RUNTIME_DIR, "terminal-browser", "instances", `${browserKey}.agent.sock`);
+    const client = await AgentClient.connect(socket, { clientId: "gui-workspace-readiness" });
+    try {
+      const pages = await client.call("pages.list", {});
+      const page = pages.pages.find((candidate) => candidate.active) ?? pages.pages[0];
+      if (!page) return "";
+      const snapshot = await client.call("page.snapshot", {
+        pageId: page.pageId,
+        options: { interactiveOnly: false },
+      });
+      return JSON.stringify(snapshot);
+    } finally {
+      await client.close();
+    }
+  }, (value) => value.includes("This domain is for use in documentation examples") ? value : false, 30000);
+}
+
 async function runSmoke() {
   await startDisplay();
   await startKitty();
   const { browser, agentPaneId } = await openWorkspace();
+  await waitForPageContent(browser.key);
   await clickDomNote(browserPaneId);
   await run("xdotool", ["type", "--delay", "2", "GUI smoke handoff"], { env: environment, timeout: 8000 });
   await run("xdotool", ["key", "--clearmodifiers", "Return"], { env: environment, timeout: 8000 });
