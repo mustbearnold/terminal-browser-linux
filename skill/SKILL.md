@@ -80,15 +80,15 @@ silently sending a note to an unrelated shell.
 Commands:
   open [url] [direction] --agent-pane <pane-id> [--agent <kind>]
   open [url] [direction] --left [--agent <kind>]
-  attach --browser <key> --pane <pane-id> [--agent <kind>] [--sync-notes]
-  attach --browser <key> --left [--agent <kind>] [--sync-notes]
-  open [url] [direction] --left [--agent <kind>] [--sync-notes]
+  attach --browser <key> --pane <pane-id> [--agent <kind>] [--sync-notes] [--refresh-stale]
+  attach --browser <key> --left [--agent <kind>] [--sync-notes] [--refresh-stale]
+  open [url] [direction] --left [--agent <kind>] [--sync-notes] [--refresh-stale]
   list
   panes [--json]
   close --browser <key>
   notes --browser <key> [--page <page-id>]
   note --browser <key> (--annotation <id> | --target '<json>' | --at <x> <y>) [--note <text>] [--commit] [--force] [--refresh]
-  sync --browser <key> [--page <page-id>] [--force]
+  sync --browser <key> [--page <page-id>] [--force | --refresh-stale]
 
 Examples:
   terminal-browser workspace panes
@@ -100,6 +100,7 @@ Examples:
   terminal-browser workspace note --browser 90107-1 --annotation annotation-1 --force
   terminal-browser workspace note --browser 90107-1 --annotation annotation-1 --refresh
   terminal-browser workspace sync --browser 90107-1
+  terminal-browser workspace sync --browser 90107-1 --refresh-stale
   terminal-browser workspace attach --browser 90107-1 --left --sync-notes
 ```
 
