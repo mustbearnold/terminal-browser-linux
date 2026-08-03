@@ -336,10 +336,12 @@ async function syncNotes(backend: Backend, args: string[]): Promise<void> {
   const requestedPageId = takeFlag(args, "--page");
   const force = takeBool(args, "--force");
   const refreshStale = takeBool(args, "--refresh-stale");
+  const dryRun = takeBool(args, "--dry-run");
   rejectRemaining(args);
   if (force && refreshStale) throw new Error("workspace sync cannot combine --force and --refresh-stale");
+  if (dryRun && refreshStale) throw new Error("workspace sync --dry-run cannot combine with --refresh-stale");
   const browser = await selectBrowser(backend, browserKey);
-  const result = await syncWorkspaceNotes(backend, browser, requestedPageId, force, refreshStale);
+  const result = await syncWorkspaceNotes(backend, browser, requestedPageId, force, refreshStale, dryRun);
   print({ browser: recordKey(browser), ...result });
 }
 
@@ -349,8 +351,10 @@ async function syncWorkspaceNotes(
   requestedPageId: string | undefined,
   force: boolean,
   refreshStale: boolean,
-): Promise<{ agentPane: string; delivered: string[]; skippedStale: string[]; skippedDelivered: string[]; refreshed: string[]; reused: string[]; forced: boolean }> {
+  dryRun = false,
+): Promise<{ agentPane: string; delivered: string[]; planned: string[]; skippedStale: string[]; skippedDelivered: string[]; refreshed: string[]; reused: string[]; forced: boolean; dryRun: boolean }> {
   if (force && refreshStale) throw new Error("workspace sync cannot combine --force and --refresh-stale");
+  if (dryRun && refreshStale) throw new Error("workspace sync --dry-run cannot combine with --refresh-stale");
   const binding = loadBindings().find((candidate) => candidate.browserKey === recordKey(browser));
   if (!binding) throw new Error(`browser ${recordKey(browser)} has no agent pane binding; run workspace attach first`);
   const destination = await resolveBindingPane(backend, browser.pane, binding);
@@ -378,6 +382,7 @@ async function syncWorkspaceNotes(
     return { annotations: [...current.values()], refreshed, reused };
   });
   const delivered: string[] = [];
+  const planned: string[] = [];
   const skippedStale: string[] = [];
   const skippedDelivered: string[] = [];
   const currentBinding = loadBindings().find((candidate) => candidate.browserKey === recordKey(browser));
@@ -390,6 +395,8 @@ async function syncWorkspaceNotes(
       skippedDelivered.push(annotation.annotationId);
       continue;
     }
+    planned.push(annotation.annotationId);
+    if (dryRun) continue;
     await sendToPane(backend, destination, `${promptTag(annotation)} `, browser.pane);
     markAnnotationDelivered(recordKey(browser), annotation.annotationId);
     delivered.push(annotation.annotationId);
@@ -397,11 +404,13 @@ async function syncWorkspaceNotes(
   return {
     agentPane: destination,
     delivered,
+    planned,
     skippedStale,
     skippedDelivered,
     refreshed: annotationResult.refreshed,
     reused: annotationResult.reused,
     forced: force,
+    dryRun,
   };
 }
 

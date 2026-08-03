@@ -53,7 +53,9 @@ restarts in place. Use --force to replay delivered notes or stale observations;
 an explicit note replay always sends. Workspace commands serialize through a
 short cross-process lock so concurrent syncs do not duplicate pending notes.
 Stale refresh reuses an existing fresh descendant at the current revision
-instead of creating duplicate annotations.
+instead of creating duplicate annotations. Use --dry-run to report the tags that
+would be sent without writing to the agent pane or changing its delivery ledger;
+dry runs cannot combine with --refresh-stale because refresh creates annotations.
 
 Commands:
   open [url] [direction] --agent-pane <pane-id> [--agent <kind>]
@@ -66,7 +68,7 @@ Commands:
   close --browser <key>
   notes --browser <key> [--page <page-id>]
   note --browser <key> (--annotation <id> | --target '<json>' | --at <x> <y>) [--note <text>] [--commit] [--force] [--refresh]
-  sync --browser <key> [--page <page-id>] [--force | --refresh-stale]
+  sync --browser <key> [--page <page-id>] [--force | --refresh-stale | --dry-run]
 
 Examples:
   terminal-browser workspace panes
@@ -79,6 +81,7 @@ Examples:
   terminal-browser workspace note --browser 90107-1 --annotation annotation-1 --refresh
   terminal-browser workspace sync --browser 90107-1
   terminal-browser workspace sync --browser 90107-1 --refresh-stale
+  terminal-browser workspace sync --browser 90107-1 --dry-run
   terminal-browser workspace attach --browser 90107-1 --left --sync-notes
 `,
   },

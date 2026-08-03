@@ -55,6 +55,13 @@ process in the same pane resets that delivery ledger when the terminal exposes a
 process id.
 Workspace commands serialize through a short cross-process lock, so concurrent
 agent syncs cannot both deliver the same pending annotation.
+Use `--dry-run` to inspect pending annotation IDs in `planned` without typing
+anything into the agent pane or changing the delivery ledger. Dry runs cannot
+combine with `--refresh-stale`, because refreshing a stale target creates a new
+annotation:
+```
+terminal-browser workspace sync --browser <browser-key> --dry-run
+```
 Add `--force` when the agent should receive a fresh note again or receive stale
 observations too; an explicit `workspace note --annotation` is always a replay:
 ```

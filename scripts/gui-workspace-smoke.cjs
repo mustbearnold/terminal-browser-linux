@@ -230,6 +230,19 @@ async function waitForPageContent(browserKey) {
   }, (value) => value.includes("This domain is for use in documentation examples") ? value : false, 30000);
 }
 
+async function createStoredAnnotation(browserKey, target, note) {
+  const socket = path.join(environment.XDG_RUNTIME_DIR, "terminal-browser", "instances", `${browserKey}.agent.sock`);
+  const client = await AgentClient.connect(socket, { clientId: "gui-workspace-dry-run" });
+  try {
+    const pages = await client.call("pages.list", {});
+    const page = pages.pages.find((candidate) => candidate.active) ?? pages.pages[0];
+    if (!page) fail("agent did not expose a page for the dry-run annotation");
+    return await client.annotationCreate(page.pageId, target, note);
+  } finally {
+    await client.close();
+  }
+}
+
 async function runSmoke() {
   await startDisplay();
   await startKitty();
@@ -443,6 +456,29 @@ async function runSmoke() {
     fail("workspace sync did not recover the replacement pane or deliver fresh notes");
   }
   await assertPaneText(replacementPaneId, "@tb-2", "replacement agent pane received synced note", 30000);
+  const beforeDryRun = await paneText(replacementPaneId);
+  const pendingAnnotation = await createStoredAnnotation(
+    browser.key,
+    refreshedPayload.annotation.target,
+    "GUI dry-run handoff",
+  );
+  const dryRunResult = await run("terminal-browser", [
+    "workspace", "sync", "--browser", browser.key, "--dry-run",
+  ], {
+    env: { ...environment, DISPLAY: display },
+    cwd: root,
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 8000,
+  });
+  const dryRun = JSON.parse(dryRunResult.stdout);
+  if (!dryRun.dryRun || dryRun.delivered?.length !== 0 ||
+    !dryRun.planned?.includes(pendingAnnotation.annotationId) ||
+    !dryRun.skippedDelivered?.includes("annotation-2")) {
+    fail("workspace sync --dry-run did not report pending notes without delivering them");
+  }
+  const afterDryRun = await paneText(replacementPaneId);
+  if (afterDryRun !== beforeDryRun) fail("workspace sync --dry-run changed the agent pane");
+  process.stdout.write("workspace sync dry-run preserved the agent pane: ok\n");
   const closeResult = await run("terminal-browser", ["workspace", "close", "--browser", browser.key], {
     env: { ...environment, DISPLAY: display },
     cwd: root,
