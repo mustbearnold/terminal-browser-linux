@@ -99,7 +99,7 @@ Commands:
   open [url] [direction] --left [--agent <kind>] [--sync-notes] [--refresh-stale]
   list
   panes [--json]
-  close --browser <key>
+  close --browser <key> (reports whether the browser process exited)
   notes --browser <key> [--page <page-id>]
   note --browser <key> (--annotation <id> | --target '<json>' | --at <x> <y>) [--note <text>] [--commit] [--force] [--refresh]
   sync --browser <key> [--page <page-id>] [--force | --refresh-stale | --dry-run]

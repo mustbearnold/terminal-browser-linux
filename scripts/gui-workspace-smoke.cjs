@@ -513,8 +513,8 @@ async function runSmoke() {
     timeout: 8000,
   });
   const closePayload = JSON.parse(closeResult.stdout);
-  if (!closePayload.closed || closePayload.agentSessionClosed !== true) {
-    fail("workspace close did not reclaim the packaged agent-browser session");
+  if (!closePayload.closed || closePayload.browserExited !== true || closePayload.agentSessionClosed !== true) {
+    fail("workspace close did not confirm browser and agent-session cleanup");
   }
   await waitFor("browser pane close", kittyWindows, (windows) => {
     return allKittyWindows(windows).some((window) => window.id === browserPaneId) ? false : windows;

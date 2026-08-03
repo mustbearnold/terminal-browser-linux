@@ -46,7 +46,26 @@ import { closeAgentSession } from "./action";
 import { browsers, recordKey } from "./instances";
 import type { Browser } from "./instances";
 
+const CLOSE_EXIT_TIMEOUT_MS = 5_000;
+const CLOSE_EXIT_POLL_MS = 100;
 const DIRECTIONS = ["right", "left", "down", "up"] as const;
+
+export async function waitForBrowserExit(
+  backend: Backend,
+  browserKey: string,
+  timeoutMs = CLOSE_EXIT_TIMEOUT_MS,
+  pollMs = CLOSE_EXIT_POLL_MS,
+  readBrowsers: (backend: Backend) => Promise<Browser[]> = browsers,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    try {
+      if (!(await readBrowsers(backend)).some((browser) => recordKey(browser) === browserKey)) return true;
+    } catch {}
+    await delay(Math.min(pollMs, Math.max(0, deadline - Date.now())));
+  }
+  return false;
+}
 
 export interface WorkspaceOpenOptions {
   openBrowser(args: string[]): Promise<void>;
@@ -227,8 +246,9 @@ async function closeWorkspace(backend: Backend, args: string[]): Promise<void> {
   const closed = await backend.closePane(`terminal-browser:${browserKey}`);
   if (!closed) throw new Error(`no browser pane found for ${browserKey}`);
   const agentSessionClosed = closeAgentSession(browserKey);
+  const browserExited = await waitForBrowserExit(backend, browserKey);
   removeBinding(browserKey);
-  print({ browser: browserKey, closed: true, agentSessionClosed });
+  print({ browser: browserKey, closed: true, browserExited, agentSessionClosed });
 }
 
 async function createNote(backend: Backend, args: string[]): Promise<void> {
@@ -509,4 +529,8 @@ function rejectRemaining(args: string[]): void {
 
 function print(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

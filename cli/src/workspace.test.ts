@@ -11,9 +11,11 @@ import {
   resolveAgentPane,
   selectPeerPane,
   selectPeerPaneFromSelf,
+  waitForBrowserExit,
 } from "./workspace";
 import type { PageAnnotation } from "terminal-browser-agent";
-import type { Pane } from "pixel-terminals";
+import type { Backend, Pane } from "pixel-terminals";
+import type { Browser } from "./instances";
 
 test("formats a compact annotation tag without submitting by default", () => {
   const annotation = {
@@ -83,6 +85,17 @@ test("tracks delivered notes without duplicating the pane ledger", () => {
   assert.equal(second, first);
   assert.equal(hasDeliveredAnnotation(first, "annotation-1"), true);
   assert.equal(hasDeliveredAnnotation(first, "annotation-2"), false);
+});
+
+test("waits for a browser process to disappear after closing its pane", async () => {
+  let attempts = 0;
+  const exited = await waitForBrowserExit({} as Backend, "browser-1", 200, 1, async () => {
+    attempts += 1;
+    return attempts === 1 ? [{ key: "browser-1" } as Browser] : [];
+  });
+
+  assert.equal(exited, true);
+  assert.equal(attempts, 2);
 });
 
 test("workspace binding detects a foreground process restart in the same pane", () => {
